@@ -1,0 +1,87 @@
+name: Snorlax
+options:
+  bundleIdPrefix: io.github.perfectpan
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  developmentLanguage: en
+settings:
+  base:
+    MARKETING_VERSION: "0.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    # Signing is Automatic so Xcode asks for the owner's Personal Team.
+    # A local compile without an Apple ID overrides these on the xcodebuild
+    # command line (see README.md). Regenerating the project keeps Automatic.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "Apple Development"
+    CODE_SIGNING_REQUIRED: "YES"
+    CODE_SIGNING_ALLOWED: "YES"
+    ENABLE_HARDENED_RUNTIME: "NO"
+    APP_GROUP_IDENTIFIER: "$(TeamIdentifierPrefix)io.github.perfectpan.snorlax"
+packages:
+  SnorlaxKit:
+    path: SnorlaxKit
+targets:
+  Snorlax:
+    type: application
+    platform: macOS
+    sources:
+      - path: Snorlax
+      - path: Helpers/snorlax
+        type: file
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Helpers
+      - path: LaunchAgents/io.github.perfectpan.snorlax.refresh.plist
+        type: file
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
+    dependencies:
+      - package: SnorlaxKit
+      - target: SnorlaxWidget
+        embed: true
+      - sdk: ServiceManagement.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax
+        PRODUCT_NAME: Snorlax
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Snorlax/Info.plist
+        INFOPLIST_EXPAND_BUILD_SETTINGS: "YES"
+        CODE_SIGN_ENTITLEMENTS: Snorlax/Snorlax.entitlements
+        ENABLE_APP_SANDBOX: "NO"
+  SnorlaxWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: SnorlaxWidget
+    dependencies:
+      - package: SnorlaxKit
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax.widget
+        PRODUCT_NAME: SnorlaxWidget
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: SnorlaxWidget/Info.plist
+        INFOPLIST_EXPAND_BUILD_SETTINGS: "YES"
+        CODE_SIGN_ENTITLEMENTS: SnorlaxWidget/SnorlaxWidget.entitlements
+        SKIP_INSTALL: "YES"
+schemes:
+  Snorlax:
+    build:
+      targets:
+        Snorlax: all
+        SnorlaxWidget: all
+    run:
+      config: Debug
+    archive:
+      config: Release
