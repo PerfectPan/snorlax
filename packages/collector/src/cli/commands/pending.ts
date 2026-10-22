@@ -14,8 +14,6 @@ const pending = (id: string, owner: string): Command => ({
   }
 });
 
-export const refreshCommand: Command = pending("refresh", "Batch 2");
-export const rebuildCommand: Command = pending("rebuild", "Batch 2");
 export const pairCommand: Command = pending("pair", "Batch 7");
 export const unpairCommand: Command = pending("unpair", "Batch 7");
 export const installCommand: Command = pending("install", "Batch 3");

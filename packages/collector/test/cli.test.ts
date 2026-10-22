@@ -88,7 +88,7 @@ describe("calling convention (plan 3.2.1)", () => {
   });
 
   it("exits 1 with the failure shape for a command this build does not implement", () => {
-    const result = run(["refresh", "--json"], home);
+    const result = run(["pair", "--json"], home);
     const failure = z.parse(failureSchema, parseOneJsonObject(result.stdout));
     expect(failure.error.code).toBe("internal");
     expect(result.status).toBe(1);
@@ -120,17 +120,20 @@ describe("snapshot command", () => {
     expect(result.status).toBe(1);
   });
 
-  it("prints a stored snapshot and feeds status from it", async () => {
+  it("prints a stored snapshot and feeds status's sync fields from it", async () => {
     await writeFile(join(home, "data", "snapshot.json"), `${JSON.stringify(makeSnapshot())}\n`, "utf8");
 
     const printed = run(["snapshot", "--json"], home);
     expect(printed.status).toBe(0);
     expect(JSON.parse(printed.stdout).generatedAt).toBe("2026-10-22T12:00:00.000Z");
 
+    // Sync state and decode failures come from the snapshot (the last refresh's); the device id and last
+    // scan come from the ledger (plan 6.8, Batch 2), and no ledger exists in this home yet.
     const status = z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], home).stdout));
-    expect(status.lastScanAt).toBe("2026-10-22T11:59:00.000Z");
-    expect(status.sync.state).toBe("ok");
-    expect(status.device.id).toBe("11111111-2222-4333-8444-555555555555");
+    expect(status.sync).toEqual({ state: "ok", at: "2026-10-22T12:00:00.000Z" });
+    expect(status.failuresByAgent).toEqual({});
+    expect(status.device.id).toBe(null);
+    expect(status.lastScanAt).toBe(null);
   });
 
   it("accepts the protocol package's committed snapshot fixture", async () => {
@@ -141,5 +144,48 @@ describe("snapshot command", () => {
     await mkdir(join(home, "data"), { recursive: true });
     await writeFile(join(home, "data", "snapshot.json"), fixture, "utf8");
     expect(run(["snapshot", "--json"], home).status).toBe(0);
+  });
+});
+
+describe("refresh and rebuild", () => {
+  // A home of its own: a refresh writes a snapshot, and the suites above assert a home without one.
+  let refreshHome: string;
+
+  beforeAll(async () => {
+    refreshHome = await mkdtemp(join(tmpdir(), "snorlax-cli-refresh-"));
+  });
+
+  afterAll(async () => {
+    await rm(refreshHome, { recursive: true, force: true });
+  });
+
+  const runRefreshHome = (args: readonly string[]) =>
+    spawnSync(process.execPath, [bundle, ...args], {
+      encoding: "utf8",
+      env: { HOME: refreshHome, SNORLAX_HOME: join(refreshHome, "data"), PATH: "/usr/bin:/bin" }
+    });
+
+  it("refresh prints the RefreshResult shape and writes a snapshot the snapshot command prints", () => {
+    const refreshed = runRefreshHome(["refresh", "--json"]);
+    expect(refreshed.stderr).toBe("");
+    expect(refreshed.status).toBe(0);
+    const result: unknown = JSON.parse(refreshed.stdout);
+    expect(result).toMatchObject({ ok: true, records: 0, failures: 0, sync: { ok: false, pushed: 0, pulled: 0 } });
+
+    const printed = runRefreshHome(["snapshot", "--json"]);
+    expect(printed.status).toBe(0);
+    expect(JSON.parse(printed.stdout).totals.last30d.requests).toBe(0);
+  });
+
+  it("rebuild accepts 1-30 days and rejects anything else with exit 2", () => {
+    expect(runRefreshHome(["rebuild", "--days", "7", "--json"]).status).toBe(0);
+    for (const days of ["0", "31", "many"]) {
+      const result = runRefreshHome(["rebuild", "--days", days, "--json"]);
+      expect(z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code).toBe("invalid-arguments");
+      expect(result.status).toBe(2);
+    }
+    const missing = runRefreshHome(["rebuild", "--json"]);
+    expect(z.parse(failureSchema, parseOneJsonObject(missing.stdout)).error.code).toBe("invalid-arguments");
+    expect(missing.status).toBe(2);
   });
 });

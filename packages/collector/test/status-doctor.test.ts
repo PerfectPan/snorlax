@@ -101,15 +101,17 @@ describe("status", () => {
     ).toBe("found");
   });
 
-  it("fills scan, sync and device fields from a stored snapshot and the device name from config", async () => {
+  it("fills sync fields from a stored snapshot and the device name from config; scan and id need the ledger", async () => {
     const { stdout } = await runCommand(["status", "--json"], {
       [`${DATA_DIR}/snapshot.json`]: JSON.stringify(makeSnapshot()),
       [`${DATA_DIR}/config.json`]: JSON.stringify({ deviceName: "Studio" })
     });
     const status = z.parse(statusSchema, JSON.parse(stdout));
-    expect(status.lastScanAt).toBe("2026-10-22T11:59:00.000Z");
+    // Batch 2: the device id and last scan come from the ledger (absent here); sync state and decode
+    // failures stay the last refresh's, persisted in the snapshot.
     expect(status.sync).toEqual({ state: "ok", at: "2026-10-22T12:00:00.000Z" });
-    expect(status.device).toEqual({ id: "11111111-2222-4333-8444-555555555555", name: "Studio" });
+    expect(status.device).toEqual({ id: null, name: "Studio" });
+    expect(status.lastScanAt).toBe(null);
   });
 
   it("ignores a snapshot that does not validate instead of failing", async () => {
