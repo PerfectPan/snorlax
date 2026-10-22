@@ -28,3 +28,4 @@ apps/macos/*.xcodeproj/
 apps/macos/DerivedData/
 apps/macos/SnorlaxKit/.build/
 apps/macos/SnorlaxKit/.swiftpm/
+/.build/

@@ -21,6 +21,8 @@ settings:
     CODE_SIGNING_REQUIRED: "YES"
     CODE_SIGNING_ALLOWED: "YES"
     ENABLE_HARDENED_RUNTIME: "NO"
+    # The collector build phase runs pnpm, which lives outside the source tree.
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
     APP_GROUP_IDENTIFIER: "$(TeamIdentifierPrefix)io.github.perfectpan.snorlax"
 packages:
   SnorlaxKit:
@@ -48,6 +50,23 @@ targets:
       - target: SnorlaxWidget
         embed: true
       - sdk: ServiceManagement.framework
+      - sdk: WidgetKit.framework
+      - sdk: Charts.framework
+    preBuildScripts:
+      - name: Bundle collector
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
+          cd "$SRCROOT/../.."
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "error: pnpm is not on PATH; the Snorlax build needs it to bundle the collector" >&2
+            exit 1
+          fi
+          pnpm --filter @rivus/snorlax run build
+          dest="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/collector"
+          mkdir -p "$dest"
+          cp "packages/collector/dist/snorlax.mjs" "$dest/snorlax.mjs"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax
@@ -75,12 +94,37 @@ targets:
         INFOPLIST_EXPAND_BUILD_SETTINGS: "YES"
         CODE_SIGN_ENTITLEMENTS: SnorlaxWidget/SnorlaxWidget.entitlements
         SKIP_INSTALL: "YES"
+  SnorlaxKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SnorlaxKit/Tests/SnorlaxKitTests
+    dependencies:
+      - package: SnorlaxKit
+        product: SnorlaxKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax.kit-tests
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+        # Logic tests. An app host would launch Snorlax and must not.
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
 schemes:
   Snorlax:
     build:
       targets:
         Snorlax: all
         SnorlaxWidget: all
+        SnorlaxKitTests: [test]
+    test:
+      config: Debug
+      targets:
+        - SnorlaxKitTests
     run:
       config: Debug
     archive:

@@ -1,9 +1,8 @@
 #!/bin/sh
-# S1 launcher (plan 3.11). Batch 4 replaces the node -e line with
-# Contents/Resources/collector/snorlax.mjs.
-# Node comes from <data>/node-path when that file names an executable,
-# otherwise from /opt/homebrew/bin:/usr/local/bin:/usr/bin. The login shell
-# and PATH are not searched; the app writes node-path (Batch 4).
+# Launcher (plan 3.11). Node comes from <data>/node-path when that file
+# names an executable, otherwise from /opt/homebrew/bin:/usr/local/bin:/usr/bin.
+# The app writes node-path. This script does not search PATH or a login shell.
+# It execs the collector bundled at Contents/Resources/collector/snorlax.mjs.
 set -eu
 
 data_dir() {
@@ -45,6 +44,11 @@ if ! NODE=$(node_from_file "$DATA"); then
   fi
 fi
 
-mkdir -p "$DATA"
-# One-line stand-in for the collector. Writes <data>/spike-run.json.
-exec "$NODE" -e 'const fs=require("fs");const path=require("path");const dir=process.argv[1];fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"spike-run.json"),JSON.stringify({ok:true})+"\n");' "$DATA"
+HELPER=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+BUNDLE=$(CDPATH= cd -- "$HELPER/../.." && pwd)
+COLLECTOR="$BUNDLE/Contents/Resources/collector/snorlax.mjs"
+if [ ! -f "$COLLECTOR" ]; then
+  echo "snorlax: bundled collector is missing at $COLLECTOR" >&2
+  exit 1
+fi
+exec "$NODE" "$COLLECTOR" "$@"

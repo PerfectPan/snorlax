@@ -27,3 +27,37 @@ jobs:
           # The store cache is keyed on the lockfile content hash; the action restores before installing.
           cache: true
       - run: pnpm run check
+
+  macos:
+    name: macos
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .node-version
+          require-lockfile: true
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - name: Regenerate Swift types
+        run: pnpm --filter @rivus/snorlax-protocol run generate:swift
+      - name: Fail when regeneration changes Swift
+        run: git diff --exit-code -- apps/macos/SnorlaxKit/Sources/SnorlaxKit/Generated
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: apps/macos
+        run: xcodegen generate
+      - name: Test
+        working-directory: apps/macos
+        run: |
+          xcodebuild -project Snorlax.xcodeproj -scheme Snorlax -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM= \
+            test

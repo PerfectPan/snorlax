@@ -2,67 +2,124 @@ import SnorlaxKit
 import SwiftUI
 import WidgetKit
 
-struct SpikeEntry: TimelineEntry {
+struct UsageEntry: TimelineEntry {
     let date: Date
-    let value: String
-    let available: Bool
+    let summary: UsageSummary?
 }
 
-struct SpikeProvider: TimelineProvider {
-    func placeholder(in context: Context) -> SpikeEntry {
-        SpikeEntry(date: Date(), value: "—", available: false)
+struct UsageProvider: TimelineProvider {
+    func placeholder(in context: Context) -> UsageEntry {
+        UsageEntry(date: Date(), summary: nil)
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (SpikeEntry) -> Void) {
+    func getSnapshot(in context: Context, completion: @escaping (UsageEntry) -> Void) {
         completion(load())
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<SpikeEntry>) -> Void) {
+    func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
         let entry = load()
-        // Plan 3.11: one entry, refreshed after 15 minutes. Adding the widget
-        // uses getSnapshot, so the gallery shows the current file immediately.
+        // Plan 3.11: one entry, refreshed after 15 minutes.
         let next = entry.date.addingTimeInterval(15 * 60)
         completion(Timeline(entries: [entry], policy: .after(next)))
     }
 
-    private func load() -> SpikeEntry {
+    private func load() -> UsageEntry {
         let now = Date()
         guard let container = AppGroup.containerURL() else {
-            return SpikeEntry(date: now, value: "—", available: false)
+            return UsageEntry(date: now, summary: nil)
         }
         do {
-            let value = try SpikeValueStore.read(in: container)
-            return SpikeEntry(date: now, value: value.value, available: true)
+            let snapshot = try SnapshotLoader.load(contentsOf: SnapshotFile.url(in: container))
+            return UsageEntry(date: now, summary: UsageSummaryBuilder.make(snapshot))
         } catch {
-            return SpikeEntry(date: now, value: "—", available: false)
+            return UsageEntry(date: now, summary: nil)
         }
     }
 }
 
-struct SpikeWidgetView: View {
-    let entry: SpikeEntry
+struct UsageWidgetView: View {
+    @Environment(\.widgetFamily) private var family
+    let entry: UsageEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(entry.value)
-                .font(.title)
-            Text(entry.available ? "App Group" : "Unavailable")
+        Group {
+            if let summary = entry.summary {
+                switch family {
+                case .systemSmall:
+                    small(summary)
+                default:
+                    medium(summary)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("—")
+                        .font(.title)
+                    Text("No snapshot")
+                        .font(.caption)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
+        }
+        .containerBackground(.background, for: .widget)
+    }
+
+    private func small(_ summary: UsageSummary) -> some View {
+        let today = summary.windows.first { $0.id == "today" }
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Today")
+                .font(.caption)
+            Text(today?.tokensText ?? "—")
+                .font(.title2)
+            Text(today?.costLabel ?? "—")
                 .font(.caption)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .containerBackground(.background, for: .widget)
+    }
+
+    private func medium(_ summary: UsageSummary) -> some View {
+        let today = summary.windows.first { $0.id == "today" }
+        let week = summary.windows.first { $0.id == "last7d" }
+        let agents = Array(summary.topAgents.prefix(UsageSummaryBuilder.widgetAgentLimit))
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                figure("Today", today)
+                figure("7 days", week)
+            }
+            ForEach(agents) { agent in
+                HStack {
+                    Text(agent.name)
+                    Spacer()
+                    Text(agent.tokensText)
+                }
+                .font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private func figure(_ title: String, _ window: DayWindowModel?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(window?.tokensText ?? "—")
+                .font(.headline)
+            Text(window?.costLabel ?? "—")
+                .font(.caption2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 struct SnorlaxWidget: Widget {
-    private let kind = "io.github.perfectpan.snorlax.spike"
+    private let kind = "io.github.perfectpan.snorlax.usage"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SpikeProvider()) { entry in
-            SpikeWidgetView(entry: entry)
+        StaticConfiguration(kind: kind, provider: UsageProvider()) { entry in
+            UsageWidgetView(entry: entry)
         }
         .configurationDisplayName("Snorlax")
-        .description("Spike value from the App Group container.")
+        .description("Today's tokens and cost, and the last 7 days.")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
