@@ -1,0 +1,43 @@
+{
+  "name": "@rivus/snorlax",
+  "version": "0.1.0",
+  "description": "The snorlax collector CLI: reads coding-agent usage logs and reports tokens, requests, sessions and cost.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "bin": {
+    "snorlax": "./dist/snorlax.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vp build",
+    "lint": "vp lint 2>&1",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vp test 2>&1",
+    "format": "vp fmt .",
+    "format:check": "vp fmt --check ."
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PerfectPan/snorlax.git",
+    "directory": "packages/collector"
+  },
+  "dependencies": {
+    "@rivus/agent-kit": "catalog:",
+    "@rivus/snorlax-protocol": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@perfectpan/lint-config": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

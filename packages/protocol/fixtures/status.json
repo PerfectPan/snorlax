@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "version": "0.1.0",
+  "dataDir": "~/Library/Application Support/snorlax",
+  "device": {
+    "id": "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
+    "name": "MacBook Pro"
+  },
+  "lastScanAt": "2026-10-23T02:35:10.205Z",
+  "sync": {
+    "state": "ok",
+    "at": "2026-10-23T02:35:11.901Z"
+  },
+  "failuresByAgent": {
+    "grok": 2
+  },
+  "agents": [
+    {
+      "agent": "claude-code",
+      "displayName": "Claude Code",
+      "status": "found"
+    },
+    {
+      "agent": "codex",
+      "displayName": "Codex CLI",
+      "status": "found"
+    },
+    {
+      "agent": "cursor",
+      "displayName": "Cursor",
+      "status": "missing"
+    }
+  ]
+}

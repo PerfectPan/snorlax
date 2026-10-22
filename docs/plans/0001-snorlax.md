@@ -701,7 +701,7 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | --- | --- | --- | --- | --- |
 | 0 S1 | not started | | | |
 | 0 S2 | not started | | | |
-| 1 | not started | | | |
+| 1 | in review | | `invalid-arguments` added as the failure code for exit 2 (the plan lists codes only for runtime failures); later-batch commands (`refresh`, `rebuild`, `pair`, `unpair`, `install`, `uninstall`) are registered as `internal` stubs instead of omitted; `doctor` checks `config.json` in addition to node-version and data-dir (all local, keychain/backend/scheduling wait); status device id and scan/sync fields come from `snapshot.json` until the ledger exists (Batch 2 replaces the source, not the output); protocol `PairResult`/`Doctor` field sets are provisional pending Batches 4/7 review; `minimumReleaseAgeExclude` in pnpm-workspace.yaml for the owner's agent-kit 0.20.0 (published the same day the catalog pinned it) | Bucket and output schemas drop unknown keys on parse (forward compatibility, plan 3.7); the strict unknown-key rejection required for HTTP bodies (3.2.3) lands with Batch 6's schemas; agent-kit 0.20.0 pinned via catalog — remember to drop the exclude entry after it ages past `minimumReleaseAge` |
 | 2 | not started | | | |
 | 3 | not started | | | |
 | 4 | not started | | | |

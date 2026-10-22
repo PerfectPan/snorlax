@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "healthy": true,
+  "checks": [
+    {
+      "id": "node-version",
+      "status": "ok",
+      "detail": "Node v24.11.0 satisfies >= 22.13"
+    },
+    {
+      "id": "data-dir",
+      "status": "ok",
+      "detail": "~/Library/Application Support/snorlax is a directory with mode 0700"
+    },
+    {
+      "id": "config",
+      "status": "ok",
+      "detail": "config.json parses"
+    }
+  ]
+}

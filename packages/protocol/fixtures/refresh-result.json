@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "scannedAt": "2026-10-23T02:35:10.205Z",
+  "records": 412,
+  "failures": 0,
+  "sync": {
+    "ok": true,
+    "pushed": 9,
+    "pulled": 23
+  }
+}
