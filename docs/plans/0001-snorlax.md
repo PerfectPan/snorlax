@@ -416,7 +416,7 @@ Additions to agent-kit:
 | ID | Addition | Needed by | Notes |
 | --- | --- | --- | --- |
 | K1 | A pricing snapshot shipped by the kit: an entry such as `@rivus/agent-kit/cost/prices` that exports a generated LiteLLM table (with 1-hour cache-write rates and family fallbacks) ready for `createPricing`, plus the weekly update workflow, and a version string | Batch 2 | agent-presence maintains the same snapshot today; with snorlax there are two users, so it moves into the kit and presence switches to it |
-| K2 | Export per-record pricing from `@rivus/agent-kit/cost`: the existing internal `portionsOf(record, pricing)` (or `costOf`), which splits a record by model and prices each part with the same rules as `summarize` | Batch 2 | `summarize` groups only by agent and model over a window; buckets also need the hour |
+| K2 | Export per-record pricing from `@rivus/agent-kit/cost`: the existing internal `portionsOf(record, pricing)` (or `costOf`), which splits a record by model and prices each part with the same rules as `summarize` | Batch 2 | `summarize` groups only by agent and model over a window; buckets also need the hour. Tracked in [agent-kit#190](https://github.com/PerfectPan/agent-kit/issues/190) |
 | K3 | Session activity for presence: per provider, derive working / idle / ended from the tail of a session log, and list the directories to watch | presence plan (8.3) | not part of this plan |
 
 Not added: Cursor (usage is in its cloud account); agents the kit does not decode can be supplied later through the
