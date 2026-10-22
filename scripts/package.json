@@ -2,7 +2,7 @@
   "name": "repo-scripts",
   "version": "0.0.0",
   "private": true,
-  "description": "Repository automation for this monorepo: release identity checks.",
+  "description": "Repository automation for this monorepo: release identity checks and the scan-cost measurement.",
   "type": "module",
   "scripts": {
     "lint": "vp lint 2>&1",
@@ -11,10 +11,14 @@
     "format": "vp fmt .",
     "format:check": "vp fmt --check ."
   },
+  "dependencies": {
+    "@rivus/agent-kit": "catalog:"
+  },
   "devDependencies": {
     "@perfectpan/lint-config": "catalog:",
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "zod": "catalog:"
   }
 }
