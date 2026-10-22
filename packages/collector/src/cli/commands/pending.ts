@@ -16,5 +16,3 @@ const pending = (id: string, owner: string): Command => ({
 
 export const pairCommand: Command = pending("pair", "Batch 7");
 export const unpairCommand: Command = pending("unpair", "Batch 7");
-export const installCommand: Command = pending("install", "Batch 3");
-export const uninstallCommand: Command = pending("uninstall", "Batch 3");
