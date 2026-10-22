@@ -1,7 +1,7 @@
 # Plan 0001: snorlax
 
-- Status: accepted (owner decisions recorded 2026-10-22; Batches 0–7 are executable, see 6.1 for the agent-kit
-  precondition of Batch 2)
+- Status: accepted (owner decisions recorded 2026-10-22). Milestone 1, local use on one Mac (Batches 0–4), is
+  executable now; Milestone 2 waits for agent-kit K1 and K2; Milestone 3 needs the owner's Cloudflare account (6.1)
 - Owner: PerfectPan
 - Reviewer: unconfirmed
 - Last updated: 2026-10-22
@@ -47,7 +47,7 @@ caches that grow to gigabytes, or report to a backend the user does not control.
 
 - Every requirement and scenario of Spec 0001 holds (6.2 maps them to tests).
 - An incremental `snorlax refresh` on a machine with a month of history finishes in seconds; the number is set from
-  the Batch 0 measurement (S2 in 6.3) and recorded in section 7.
+  the Batch 0 measurement (S2 in 6.4) and recorded in section 7.
 - Three devices syncing every 5 minutes stay within the Cloudflare Workers Free plan (estimate in 8.2).
 - Removing snorlax leaves agent directories byte-for-byte unchanged (Spec S14).
 
@@ -316,7 +316,8 @@ The same batch ends with `UPDATE devices SET last_push_at = ? WHERE id = ?`. Pul
    `last_scan_completed_at − 2 h` and the saved state; on the first run, `since = 0` and no state. The 2-hour margin
    is larger than the kit's 30-minute quiet window, so late records are inside the scan. Count decode and source
    failures per agent.
-4. For each `UsageRecord`, split it with the kit's per-record pricing (K2 in 3.10) into one portion per model. For
+4. For each `UsageRecord`, split it into one portion per model with the kit's per-record pricing (K2 in 3.10; until
+   Batch 5, the local `splitByModel` described in Batch 2). For
    each portion: bucket key = (floor(timestamp / 3600 s), agent, model or ""); add tokens; add requests
    (1 for a `request` record; for `turn`/`session` records the model's `modelCalls`, else the record's
    `modelCalls`, else 1); add the cost when known, else add the portion's requests to `unpricedRequests`; set
@@ -415,8 +416,8 @@ Additions to agent-kit:
 
 | ID | Addition | Needed by | Notes |
 | --- | --- | --- | --- |
-| K1 | A pricing snapshot shipped by the kit: an entry such as `@rivus/agent-kit/cost/prices` that exports a generated LiteLLM table (with 1-hour cache-write rates and family fallbacks) ready for `createPricing`, plus the weekly update workflow, and a version string | Batch 2 | agent-presence maintains the same snapshot today; with snorlax there are two users, so it moves into the kit and presence switches to it |
-| K2 | Export per-record pricing from `@rivus/agent-kit/cost`: the existing internal `portionsOf(record, pricing)` (or `costOf`), which splits a record by model and prices each part with the same rules as `summarize` | Batch 2 | `summarize` groups only by agent and model over a window; buckets also need the hour |
+| K1 | A pricing snapshot shipped by the kit: an entry such as `@rivus/agent-kit/cost/prices` that exports a generated LiteLLM table (with 1-hour cache-write rates and family fallbacks) ready for `createPricing`, plus the weekly update workflow, and a version string | Batch 5 (M2) | Issue not opened yet. agent-presence maintains the same snapshot today; with snorlax there are two users, so it moves into the kit and presence switches to it |
+| K2 | Export per-record pricing from `@rivus/agent-kit/cost`: the existing internal `portionsOf(record, pricing)` (or `costOf`), which splits a record by model and prices each part with the same rules as `summarize` | Batch 5 (M2) | `summarize` groups only by agent and model over a window; buckets also need the hour. Tracked in [agent-kit#190](https://github.com/PerfectPan/agent-kit/issues/190) |
 | K3 | Session activity for presence: per provider, derive working / idle / ended from the tail of a session log, and list the directories to watch | presence plan (8.3) | not part of this plan |
 
 Not added: Cursor (usage is in its cloud account); agents the kit does not decode can be supplied later through the
@@ -473,10 +474,11 @@ spellings.
 
 ### 4.1 Gates and rollout stages
 
-1. Batch 0 results recorded in section 7 (signing path, scan numbers, domain).
-2. P1 (Batches 1–4): the owner uses the app on one Mac for three days; totals match `agent-presence usage --json`
-   for the same window, or each difference is explained.
-3. P2 (Batches 5–7): the owner deploys the Worker, pairs two Macs and one Linux machine, and runs 5.4.
+1. Batch 0 results recorded in section 7 (signing path, scan numbers).
+2. M1 (Batches 1–4): the owner uses the app on one Mac for three days; token totals match
+   `agent-presence usage --json` for the same windows, or each difference is explained.
+3. M2 (Batch 5): cost totals match `agent-presence usage --json`.
+4. M3 (Batches 6–8): the owner deploys the Worker, pairs two Macs and one Linux machine, and runs 5.4.
 
 ### 4.2 Signals
 
@@ -514,144 +516,199 @@ Two Macs and one Linux machine paired to the deployed Worker: each device's tota
 
 ## 6. Execution plan
 
+The plan ships in three milestones. Finish Milestone 1 before starting Milestone 2 or 3.
+
+| Milestone | Result | Batches |
+| --- | --- | --- |
+| M1 Local | On one Mac, the menu bar app and the desktop widget show this machine's tokens, requests and sessions for today, the last 7 and the last 30 days, refreshed every 5 minutes. Cost shows the amounts agents logged themselves; other requests are marked unpriced. | 0–4 |
+| M2 Pricing | Every request whose model is in the pricing table is priced. | 5 |
+| M3 Cross-device | Several Macs and Linux machines show the same totals through the owner's Worker. | 6–8 |
+
 ### 6.1 Preconditions
 
 - Read `AGENTS.md`, including its Project Rules: never read real agent session files, zod at boundaries, no
   hand-written shape guards, injected clocks in tests, temporary `HOME` cleanup, owner-only steps.
-- Toolchains: Node 24 and pnpm from the repository pins; Xcode with the macOS 14 SDK or later, XcodeGen, for
-  Batches 0 and 4.
-- Batch 2 needs an agent-kit release that contains K1 and K2 (3.10). Batches 0, 1 and 5 do not depend on it; if
-  the release is not out when Batch 1 is merged, do Batch 5 next and return to Batch 2. Batches 3, 4 and 6 build on
-  Batch 2.
-- Owner provides: a Cloudflare account and a domain whose DNS is on Cloudflare (`*.workers.dev` often does not
-  resolve from mainland China); the S2 measurement run; signing choices after S1.
+- Toolchains: Node 24 and pnpm from the repository pins; Xcode with the macOS 14 SDK or later and XcodeGen for
+  Batches 0 and 4. The lockfile must resolve from `https://registry.npmjs.org/` only; on a machine whose default
+  registry is a mirror, pass `--registry https://registry.npmjs.org/` to pnpm commands that resolve versions.
+- M1 needs no Cloudflare account, no second machine and no agent-kit change.
+- M2 needs an agent-kit release that contains K1 and K2 (3.10; K2 is
+  [agent-kit#190](https://github.com/PerfectPan/agent-kit/issues/190)).
+- M3 needs the owner's Cloudflare account, a domain whose DNS is on Cloudflare (`*.workers.dev` often does not
+  resolve from mainland China), and a second Mac.
 
-### 6.2 Completion contract
+### 6.2 Working agreement
 
-| Spec | Proven by |
-| --- | --- |
-| R1, S14 | Batch 3 `install-uninstall.test.ts` tree-hash test (install, refresh, uninstall); Batch 6 adds `pair` to it |
-| R2, S2 | Batch 2 `refresh.test.ts` (decoder read counts) |
-| R3, S3, S4 | Batch 2 `refresh.test.ts` |
-| R4, S5 | Batch 2 `refresh.test.ts` |
-| R5, R8, S10 | Batch 2 `snapshot.test.ts` |
-| R6, S6 | Batch 6 `sync.test.ts` (two collectors, one in-memory Worker) and 5.4 |
-| R7, S7, S8 | Batch 6 `sync.test.ts` |
-| R9, S11, S12 | Batch 2 `buckets.test.ts` |
-| R10, S15 | Batch 1 `protocol.test.ts` (strict schemas) and Batch 6 `sync.test.ts` |
-| R11, S9 | Batch 5 Worker `devices.test.ts` |
-| R12, S13 | Batch 4 `SnorlaxKitTests` (snapshot copy and reload call) and 5.4 |
-| R13 | Batch 1 `status-doctor.test.ts` |
+- One PR per batch; Batch 0 is one PR per spike. Titles, descriptions and checks follow `AGENTS.md`. The owner
+  reviews and merges.
+- Every batch PR updates 6.8 Progress: status, decisions taken within this plan's limits, open problems. 6.8 is the
+  handoff to the next session or agent; there is no separate handoff file.
+- Steps marked "owner" are prepared in the PR (exact commands) and run by the owner.
+- When a batch needs a decision this plan does not make, stop that batch, add the question to section 7, and
+  continue with a batch that does not depend on it.
 
-### 6.3 Execution order
+### 6.3 Completion contract
 
-Each batch is one PR (Batch 0 is three independent PRs) and leaves `pnpm run check` green.
+| Spec | Proven by | Milestone |
+| --- | --- | --- |
+| R1, S14 (install, refresh, uninstall) | Batch 3 `install-uninstall.test.ts` tree-hash test | M1 |
+| R2, S2 | Batch 2 `refresh.test.ts` (decoder read counts) | M1 |
+| R3, S3, S4 | Batch 2 `refresh.test.ts` | M1 |
+| R4, S5 | Batch 2 `refresh.test.ts` | M1 |
+| R5, R8, S10 | Batch 2 `snapshot.test.ts` | M1 |
+| R12, S13 | Batch 4 `SnorlaxKitTests` (snapshot copy and reload call) and the owner's M1 check | M1 |
+| R13 | Batch 1 `status-doctor.test.ts` (backend checks added in Batch 7) | M1 |
+| S12 | Batch 2 `buckets.test.ts` (agent-logged cost) | M1 |
+| R9, S11 | Batch 5 `buckets.test.ts` (table prices, unpriced models) | M2 |
+| R10, S15 | Batch 6 `protocol.test.ts` (strict HTTP schemas) and Batch 7 `sync.test.ts` | M3 |
+| R11, S9 | Batch 6 Worker `devices.test.ts` | M3 |
+| R6, S6 | Batch 7 `sync.test.ts` and 5.4 | M3 |
+| R7, S7, S8 | Batch 7 `sync.test.ts` | M3 |
+| S14 (with `pair`) | Batch 7 extends `install-uninstall.test.ts` | M3 |
 
-#### Batch 0: verification spikes
+### 6.4 Execution order
 
-- **S1 Swift shell and signing.** Minimal `apps/macos` (XcodeGen) with a `MenuBarExtra` showing a value from a JSON
-  file in the App Group container, a widget showing the same value, and an `SMAppService` agent that runs the
-  bundled launcher with Node (`node -e "require('fs').writeFileSync(…)"` as a stand-in collector). Build with a free
-  Personal Team; install on this Mac and a second Mac. Record in section 7: does the App Group work, does
-  `SMAppService` registration work, does the widget appear in the gallery, is a paid Developer ID needed for the
-  owner's own Macs. Exit: the record is merged; the spike code becomes the start of Batch 4 or is deleted.
-- **S2 Scan cost.** `scripts/measure-scan.ts`: runs `scanUsage` over the current user's agent homes, full and then
+Each batch leaves `pnpm run check` green.
+
+#### Batch 0 (M1): verification spikes
+
+- **S1 Swift shell and signing, on this Mac.** Minimal `apps/macos` (XcodeGen) with a `MenuBarExtra` that shows a
+  value from a JSON file in the App Group container, a widget that shows the same value, and an `SMAppService` agent
+  that runs the bundled launcher with Node (a one-line `node -e` script that writes a file stands in for the
+  collector). Build with a free Personal Team. Record in section 7: whether the App Group works, whether
+  `SMAppService` registration works, whether the widget appears in the gallery. Exit: the record is merged; the
+  spike code becomes the start of Batch 4 or is deleted.
+- **S2 Scan cost.** `scripts/measure-scan.ts` runs `scanUsage` over the current user's agent homes, full and then
   incremental, and prints only numbers (records, sources, duration, peak RSS, state JSON size). The implementer
-  tests it against generated fixtures only; the owner runs it on real machines. Exit: numbers recorded in section
-  7, the refresh interval confirmed (default 300 s).
-- **S3 Cloudflare reachability.** `packages/worker` with `GET /v1/health` and the D1 migration, deployed by the
-  owner to `snorlax.<domain>`. Exit: the owner records that it is reachable from the networks the devices use.
+  tests it against generated fixtures only; the owner runs it on real machines (owner). Exit: numbers recorded in
+  section 7; refresh interval confirmed (default 300 s).
 
-#### Batch 1: protocol and collector skeleton
+#### Batch 1 (M1): protocol and collector skeleton
 
 - Files: `packages/protocol/**`, `packages/collector/**` (`src/cli/`, `src/config/`, `src/data-dir/`, `src/log/`),
   `pnpm-workspace.yaml` (catalog: `@rivus/agent-kit`, `@rivus/agent-kit-collab`, `zod`, `date-fns`,
   `@date-fns/tz`, `quicktype`), `.changeset/`.
-- Change: zod definitions for 3.2–3.3, JSON Schema export, protocol fixtures; collector CLI with `parseArgs`,
-  calling convention (3.2.1), data directory, `config.json`, logging with rotation, `status` and `doctor`
-  (without backend checks); build of one bundled ESM file `dist/snorlax.mjs` with the `snorlax` bin;
-  `engines.node >= 22.13`. `@rivus/snorlax` joins the `versioning.fixed` group (already listed).
+- Change: zod definitions of the bucket, ledger-independent snapshot and CLI outputs (3.2.1–3.2.3, 3.3.1); JSON
+  Schema export and protocol fixtures; collector CLI with `parseArgs` and the calling convention (3.2.1); data
+  directory, `config.json`, logging with rotation; `status`, `doctor` (local checks only) and `snapshot`; one bundled
+  ESM file `dist/snorlax.mjs` with the `snorlax` bin; `engines.node >= 22.13`. `@rivus/snorlax` is already in the
+  `versioning.fixed` group.
 - Tests: `protocol.test.ts`, `cli.test.ts` (exit codes, one JSON object on stdout), `status-doctor.test.ts`.
 - Exit: `pnpm run check` passes; `node packages/collector/dist/snorlax.mjs status --json` prints a valid `Status`.
 
-#### Batch 2: ledger, scanning, buckets, snapshot
+#### Batch 2 (M1): ledger, scanning, buckets, snapshot, refresh
 
-- Precondition: agent-kit with K1 and K2 released; the catalog pins it.
 - Files: `packages/collector/src/{ledger,scan,buckets,snapshot,refresh,rebuild}/**`, generated-fixture helpers
   under `packages/collector/test/fixtures/`.
-- Change: 3.3.2 ledger with migrations and backups; 3.4.1 steps 1–5, 7–8; 3.4.3 rebuild; pricing from K1 with
-  `pricing_version`.
-- Tests: `refresh.test.ts` (S1–S5), `buckets.test.ts` (S11, S12), `snapshot.test.ts` (S10, windows, daily and
-  hourly series), `rebuild.test.ts`, `ledger-migration.test.ts`. Time via the injected platform clock.
-- Exit: all pass; refresh on the generated month-of-history fixture completes and its numbers are stated in the PR.
+- Change: the ledger (3.3.2) with migrations and backups; 3.4.1 steps 1–5, 7 and 8; `rebuild` (3.4.3). Until
+  Batch 5, records are split by model with a local `splitByModel` that follows the kit's rule (split by
+  `usageByModel`, except when the agent logged a record amount that the split does not divide among every model);
+  a portion's cost is the agent-logged amount when present, otherwise its requests count as unpriced;
+  `pricing_version` stays null.
+- Tests: `refresh.test.ts` (S1–S5), `buckets.test.ts` (S12, splitting, unpriced counts), `snapshot.test.ts` (S10,
+  windows, daily and hourly series), `rebuild.test.ts`, `ledger-migration.test.ts`. Time comes from the injected
+  platform clock.
+- Exit: all pass; a refresh over the generated month-of-history fixture completes, with its duration in the PR.
 
-#### Batch 3: scheduling and uninstall
+#### Batch 3 (M1): scheduling without the app, uninstall
 
 - Files: `packages/collector/src/schedule/**`.
-- Change: `install`/`uninstall` for systemd user timer (`snorlax-refresh.service` and `.timer`, `OnBootSec=1min`,
-  `OnUnitActiveSec=5min`) and the macOS fallback plist (`StartInterval` 300); `uninstall --data`.
-- Tests: `install-uninstall.test.ts` with stubbed `systemctl`/`launchctl` and a temporary `HOME`, including S14
-  without `pair`.
-- Exit: tests pass; generated unit and plist files shown in the PR.
+- Change: `install`/`uninstall` for macOS: `~/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist`
+  with absolute Node and CLI paths, `StartInterval` 300, loaded with `launchctl bootstrap gui/<uid>`;
+  `uninstall --data` also deletes the data directory. This is the fallback when `SMAppService` is unusable and the
+  way to run the collector without the app.
+- Tests: `install-uninstall.test.ts` with a stubbed `launchctl` and a temporary `HOME`, including S14 for install,
+  refresh and uninstall.
+- Exit: tests pass; the generated plist is shown in the PR.
 
-#### Batch 4: macOS app and widget
+#### Batch 4 (M1): macOS app and widget
 
-- Files: `apps/macos/**`, `packages/protocol` Swift generation script, CI job `macos` on `macos-latest`.
-- Change: 3.11 in full, using the S1 results; Xcode build phase that runs `pnpm --filter @rivus/snorlax run build`
-  and copies `dist/snorlax.mjs`.
-- Tests: `SnorlaxKitTests` (decode fixtures, formatting, day windows, App Group copy and reload call through a
-  protocol seam), CI regeneration check.
-- Exit: `xcodebuild test` passes in CI; the owner runs the app for P1 acceptance (4.1 step 2).
+- Files: `apps/macos/**`, the Swift generation script in `packages/protocol`, CI job `macos` on `macos-latest`.
+- Change: 3.11 without pairing (Settings has device name, launch at login and Diagnostics), using the S1 results;
+  an Xcode build phase that runs `pnpm --filter @rivus/snorlax run build` and copies `dist/snorlax.mjs` into the
+  bundle.
+- Tests: `SnorlaxKitTests` (decode protocol fixtures, formatting, day windows, App Group copy and reload call
+  through a protocol seam); CI regeneration check.
+- Exit: `xcodebuild test` passes in CI. M1 acceptance (owner): the app runs on the owner's Mac for three days;
+  token totals match `agent-presence usage --json` for the same windows, or each difference is explained in 6.8.
 
-#### Batch 5: Worker
+#### Batch 5 (M2): pricing
 
-- Files: `packages/worker/**` (`wrangler.jsonc`, `migrations/0001_init.sql`, `src/**`).
-- Change: 3.2.4, 3.3.3, 3.8 token rules, 3.12.
+- Precondition: agent-kit with K1 and K2 released; the catalog pins it.
+- Change: replace `splitByModel` with the kit's `portionsOf`; load the kit's pricing table (K1) and record
+  `pricing_version`; `status` reports `pricingChanged` and suggests `snorlax rebuild --days 30` (3.7).
+- Tests: `buckets.test.ts` (S11 with a table, S12 unchanged, multiplier and 1-hour cache writes through the kit).
+- Exit: tests pass; M2 acceptance (owner): cost totals match `agent-presence usage --json` for the same windows.
+
+#### Batch 6 (M3): Worker
+
+- Files: `packages/worker/**` (`wrangler.jsonc`, `migrations/0001_init.sql`, `src/**`), HTTP schemas in
+  `packages/protocol`.
+- Change: 3.2.4 including `GET /v1/health`, 3.3.3, the token rules in 3.8, 3.12.
 - Tests: `devices.test.ts` (S9, revoke), `buckets.test.ts` (upsert, seq order, pagination, 200-row limit, strict
-  body, 413).
-- Exit: tests pass; `wrangler dev` smoke steps in the PR; the owner deploys.
+  body, 413), `protocol.test.ts` (S15 schemas).
+- Exit: tests pass; `wrangler dev` smoke steps in the PR. Owner: deploy to `snorlax.<domain>` and record in section
+  7 that `GET /v1/health` answers from every network the devices use.
 
-#### Batch 6: sync in the collector
+#### Batch 7 (M3): sync in the collector
 
 - Files: `packages/collector/src/{sync,keychain,pair}/**`.
-- Change: 3.4.1 step 6, 3.4.2, `unpair`, `doctor` backend checks, `byDevice` in the snapshot.
+- Change: 3.4.1 step 6, 3.4.2, `unpair`, backend checks in `doctor`, `byDevice` in the snapshot.
 - Tests: `sync.test.ts` (S6–S8, S15, failure codes; two collectors against the Worker handler on in-memory
-  `node:sqlite`), `install-uninstall.test.ts` extended with `pair` (S14), `keychain.test.ts` with stubbed `security`/`secret-tool`
-  verifying the token is passed on stdin only, `pair.test.ts`.
+  `node:sqlite`), `install-uninstall.test.ts` extended with `pair` (S14), `keychain.test.ts` with stubbed
+  `security` and `secret-tool` that checks the token is passed on stdin only, `pair.test.ts`.
 - Exit: tests pass; two local collectors against `wrangler dev` converge (steps in the PR).
 
-#### Batch 7: pairing in the app, Linux docs, npm release setup
+#### Batch 8 (M3): pairing in the app, Linux, release setup
 
-- Files: `apps/macos/**` (Settings pairing and diagnostics), `docs/development/` (Linux install, pairing, Worker
-  deployment), `docs/development/release.md` (Trusted Publishing for `@rivus/snorlax`).
-- Exit: the owner completes 5.4.
+- Files: `apps/macos/**` (Settings: backend URL, admin token, Pair, Unpair), `packages/collector/src/schedule/**`
+  (systemd user timer `snorlax-refresh.service` and `.timer`, `OnBootSec=1min`, `OnUnitActiveSec=5min`),
+  `docs/development/` (Linux install, pairing, Worker deployment), `docs/development/release.md` (Trusted
+  Publishing for `@rivus/snorlax`).
+- Tests: the systemd part of `install-uninstall.test.ts` with a stubbed `systemctl`.
+- Exit: owner installs the app on a second Mac (the S1 signing result applies), sets up one Linux machine, and
+  completes 5.4.
 
-### 6.4 Validation ledger
+### 6.5 Validation ledger
 
 | Batch | Command or evidence | Expected result |
 | --- | --- | --- |
 | all TS batches | `pnpm run check` | pass |
 | 1 | `node packages/collector/dist/snorlax.mjs status --json` | valid `Status`, exit 0 |
-| 2 | `pnpm --filter @rivus/snorlax run test` | S1–S5, S10–S12 pass |
-| 4 | `xcodebuild -scheme Snorlax test` (CI `macos`) | pass; regeneration leaves no diff |
-| 5 | `pnpm --filter @rivus/snorlax-worker run test`; `wrangler dev` smoke | pass |
-| 6 | `pnpm --filter @rivus/snorlax run test` | S6–S9, S15 pass |
-| P1 | owner, 3 days on one Mac | totals match `agent-presence usage --json` or differences explained |
-| P2 | owner, 5.4 | converged totals on all devices |
+| 2, 5, 7 | `pnpm --filter @rivus/snorlax run test` | the batch's scenarios pass |
+| 4, 8 | `xcodebuild -scheme Snorlax test` (CI `macos`) | pass; regeneration leaves no diff |
+| 6 | `pnpm --filter @rivus/snorlax-worker run test`; `wrangler dev` smoke | pass |
+| M1 | owner, three days on one Mac | token totals match `agent-presence usage --json` or differences explained |
+| M2 | owner | cost totals match `agent-presence usage --json` |
+| M3 | owner, 5.4 | converged totals on all devices |
 
-### 6.5 Rollback per batch
+### 6.6 Rollback per batch
 
 Every batch reverts with its PR. Batch 2 introduces the ledger: a later revert leaves `ledger.db` in place and a
-re-applied build migrates it again. Batch 5 adds D1 tables that later Workers keep using.
+re-applied build migrates it again. Batch 6 adds D1 tables that later Workers keep using.
 
-### 6.6 Work split
+### 6.7 Work split
 
-| Batch | Owner | Depends on |
-| --- | --- | --- |
-| 0 S1, S3, 1, 3, 4, 5, 6, 7 | implementing agent; owner reviews and merges | — |
-| 0 S2 | implementing agent writes the script; owner runs it | Batch 1 not needed |
-| 2 | implementing agent | agent-kit K1, K2 |
-| Deploys, signing, publishing, branch protection | owner | — |
+| Work | Who |
+| --- | --- |
+| Batches 0–8 code, tests, docs, PRs | implementing agent |
+| S2 run on real logs, M1/M2/M3 acceptance, deploys, signing, npm Trusted Publishing, branch protection, merges | owner |
+| K1, K2 in agent-kit | agent-kit maintainer |
+
+### 6.8 Progress
+
+| Batch | Status | PR | Decisions taken | Open problems |
+| --- | --- | --- | --- | --- |
+| 0 S1 | not started | | | |
+| 0 S2 | not started | | | |
+| 1 | not started | | | |
+| 2 | not started | | | |
+| 3 | not started | | | |
+| 4 | not started | | | |
+| 5 | waiting for agent-kit K1, K2 | | | |
+| 6 | not started | | | |
+| 7 | not started | | | |
+| 8 | not started | | | |
 
 ## 7. Risks, open questions, and follow-up
 
@@ -663,10 +720,10 @@ re-applied build migrates it again. Batch 5 adds D1 tables that later Workers ke
 | Node path changes (version managers) | risk | collection stops | maintainer | app rediscovers Node; `doctor`; Node SEA later |
 | Logs older than 30 days are gone | constraint | `rebuild` beyond 30 days would lose usage | — | `rebuild` capped at 30 |
 | Snorlax is a trademark | risk | rename request | owner | original artwork, disclaimer in README |
-| S1 results | open | signing path | owner | record here after Batch 0 |
+| S1 results | open | signing path | owner | record here after Batch 0; the second-Mac install is checked in Batch 8 |
 | S2 results | open | refresh interval and performance target | owner | record here after Batch 0 |
-| S3 results | open | domain | owner | record here after Batch 0 |
-| K1, K2 in agent-kit | follow-up | Batch 2 blocked | agent-kit maintainer | open agent-kit issues |
+| Worker reachability | open | domain | owner | record here after Batch 6 |
+| K1, K2 in agent-kit | follow-up | M2 blocked | agent-kit maintainer | K2: agent-kit#190; K1: issue not opened yet |
 | Presence on this collector | follow-up | — | owner | separate Spec and Plan (8.3) |
 
 ## 8. Appendix
