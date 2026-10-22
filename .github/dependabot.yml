@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # Dependabot officially supports pnpm 7-10; on pnpm 12 its support is limited (dependabot-core#16397), so a PR
+  # may edit package.json or the catalog in pnpm-workspace.yaml without regenerating pnpm-lock.yaml - run
+  # `pnpm install` and commit the lockfile on the branch before merging. One weekly PR collects every minor and
+  # patch npm update, and a second one every major so a failing major does not hold back the rest (see
+  # docs/development/release.md). The cooldown must not be shorter than minimumReleaseAge in pnpm-workspace.yaml.
+  # A vite-plus bump must also bump the `vite` alias (npm:@voidzero-dev/vite-plus-core) in the same pnpm-workspace.yaml;
+  # Dependabot proposes them in separate PRs, so add the matching alias bump to the branch before merging.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
+      npm-major:
+        patterns:
+          - "*"
+        update-types: ["major"]
+    ignore:
+      # lint-config is a git dependency whose upgrades land with their code fixes; Dependabot misreads its tags
+      # and proposes downgrades (v0.5.0 -> v0.3.2).
+      - dependency-name: "@perfectpan/lint-config"
+      # Runtime types follow the Node LTS major pinned in .node-version.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"

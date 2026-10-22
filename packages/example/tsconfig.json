@@ -1,0 +1,10 @@
+{
+  "extends": "@perfectpan/lint-config/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "declaration": true,
+    "isolatedDeclarations": true
+  },
+  "include": ["src/**/*.ts"]
+}

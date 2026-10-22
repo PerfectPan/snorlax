@@ -1,0 +1,44 @@
+name: Publish npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish release set
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # npm Trusted Publishing exchanges the workflow's OIDC token for a short-lived publish credential.
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .node-version
+          require-lockfile: true
+      - name: Verify tag, versions and main ancestry
+        run: pnpm run release:check -- "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --verify-git
+      - name: Run release gates
+        run: pnpm run check
+      - name: Publish packages
+        # pnpm publishes natively: it sends the OIDC token from `id-token: write` and attaches provenance itself
+        # when the repository and the package are public. Skips packages whose version already exists on npm.
+        # `--no-git-checks` only skips pnpm's own branch/clean checks; the release:check step verified the tag,
+        # the clean worktree and main ancestry with the stricter rules above.
+        run: pnpm publish -r --access public --no-git-checks

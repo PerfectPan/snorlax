@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/main" ]]; then
+    printf '%s\n' 'pre-push: main is updated through pull requests; push a feature branch instead' >&2
+    exit 1
+  fi
+done

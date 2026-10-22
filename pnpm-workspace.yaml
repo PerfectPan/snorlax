@@ -1,0 +1,48 @@
+packages:
+  - packages/*
+  - scripts
+
+# Versions shared by workspace packages are declared once here and referenced with "catalog:".
+# catalogMode: strict only polices `pnpm add`: adding a package that is already cataloged at a version outside
+# the catalog fails the install. It does not police hand-edited package.json files or dependencies the catalog
+# does not declare — those install fine, so keep shared versions in the catalog deliberately.
+catalogMode: strict
+catalog:
+  # The bundled vitest peers on a real `vite` range, while vite-plus provides `vite` as this core alias;
+  # pnpm can only satisfy that peer through the override below. Keep the version in lockstep with the
+  # `vite-plus` entry (same release train; Dependabot does not see the mapping).
+  vite: npm:@voidzero-dev/vite-plus-core@1.1.0
+  '@perfectpan/lint-config': github:PerfectPan/lint-config#v0.6.0
+  '@types/node': 24.19.2
+  typescript: 7.0.2
+  vite-plus: 1.1.0
+
+# Redirect whatever declares a `vite` range to the vite-plus core alias.
+overrides:
+  vite@*: 'catalog:'
+
+peerDependencyRules:
+  allowAny:
+    - vite
+
+# Reject versions published less than a day ago, in minutes.
+minimumReleaseAge: 1440
+
+strictPeerDependencies: true
+autoInstallPeers: true
+
+allowBuilds:
+  # Its postinstall verifies the platform binary that the bundled vite runs.
+  esbuild: true
+
+versioning:
+  # `pnpm version -r` must delete consumed changesets and write each package's CHANGELOG.md immediately.
+  # The default ("registry") keeps changesets until the registry confirms publication, which would keep the
+  # Version Packages pull request open forever because the changesets action decides from the remaining files.
+  changelog:
+    storage: repository
+  # All published packages release in lockstep at one shared version: `pnpm version -r` bumps the whole group
+  # together and one release tag covers it, which is what scripts/check-release.ts and the publish workflow
+  # verify. Add every new published package to the group.
+  fixed:
+    - ['@scope/example']

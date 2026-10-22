@@ -1,0 +1,20 @@
+{
+  "name": "repo-scripts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repository automation for this monorepo: release identity checks.",
+  "type": "module",
+  "scripts": {
+    "lint": "vp lint 2>&1",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vp test 2>&1",
+    "format": "vp fmt .",
+    "format:check": "vp fmt --check ."
+  },
+  "devDependencies": {
+    "@perfectpan/lint-config": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

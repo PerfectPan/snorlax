@@ -1,0 +1,24 @@
+.DS_Store
+.env
+.env.*
+*.log
+.omx/
+.codex/
+.claude/settings.local.json
+
+# Dependency and tool caches
+node_modules/
+.cache/
+.turbo/
+.next/
+.vite/
+.pytest_cache/
+__pycache__/
+
+# Generated output
+dist/
+build/
+coverage/
+tmp/
+temp/
+*.tsbuildinfo
