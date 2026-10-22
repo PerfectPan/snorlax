@@ -11,6 +11,25 @@ This repository is intended to become a maintainable, publishable project. Treat
 - Use `rg` for searches when available.
 - Update tests and documentation when behavior changes.
 
+## Project Rules
+
+snorlax reads coding-agent logs, so these rules apply to every change and to every agent working on it:
+
+- Never read, load, or scan real agent session files on any machine (`~/.claude`, `~/.codex`, `~/.gemini`,
+  `~/.grok`, `~/.local/share/opencode`, `~/.pi`, or the same paths under a configured home). Tests use repository
+  fixtures and logs generated under a temporary `HOME`. Measurements on real logs are run by the owner only.
+- Parse unknown data (agent records, files, HTTP bodies, CLI output) with `zod/mini` schemas at the boundary. Do
+  not write shape guards by hand: no `asRecord`/`isRecord`-style helpers and no inline
+  `typeof value === "object" && value !== null` checks on unknown values.
+- Tests advance time through an injected clock (the agent-kit `Platform` clock, or fake timers when the code uses
+  global timers). Never assert on real elapsed time.
+- A test or command that sets a temporary `HOME` removes it afterwards:
+  `H=$(mktemp -d); HOME=$H <command>; s=$?; rm -rf "$H"; exit $s`.
+- Uploads carry only the bucket fields defined in `docs/specs/0001-snorlax.md` (numbers, device id, UTC hour,
+  agent id, model name). Never add prompts, paths, project names, or session ids to anything that leaves the machine.
+- Cloudflare credentials, Apple signing, npm Trusted Publishing, branch protection, and merging are owner steps.
+  Prepare the change and the exact command; do not run deploys or publish.
+
 ## Project-Specific Commands
 
 This is a pnpm workspace TypeScript monorepo. The pnpm version is pinned in the root `package.json`
@@ -38,10 +57,10 @@ pnpm run typecheck
 pnpm run test
 
 # Work on one package (add ... after the name to include its workspace dependencies):
-pnpm --filter @scope/example run test
+pnpm --filter @rivus/snorlax run test
 
 # Record a release note for changed packages. Non-interactive form (works without a terminal):
-pnpm change @scope/example --bump patch --summary "Update runtime dependencies."
+pnpm change @rivus/snorlax --bump patch --summary "Update runtime dependencies."
 # Interactive prompt (needs a terminal); preview with `pnpm change status`:
 pnpm change
 
