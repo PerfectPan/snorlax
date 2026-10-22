@@ -25,10 +25,12 @@ pnpm install
 pnpm run check
 
 # work on one package (add ... after the name to include its workspace dependencies)
-pnpm --filter @scope/example run test
+pnpm --filter @rivus/snorlax run test
 ```
 
-To add a package, copy `packages/example`, rename it, and run `pnpm install` so the lockfile picks it up.
+To add a package, copy an existing package under `packages/` (or `packages/example` from
+[PerfectPan/project-template-pnpm](https://github.com/PerfectPan/project-template-pnpm)), rename it, and run
+`pnpm install` so the lockfile picks it up.
 Dependencies shared with other workspace packages come from the `pnpm-workspace.yaml` catalog
 (`"dependency": "catalog:"`); `catalogMode: strict` makes `pnpm add` of an already-cataloged package at an
 off-catalog version fail, but it does not police hand-edited manifests, so keep shared versions in the catalog
@@ -88,14 +90,14 @@ pnpm change
 Without a terminal, pass them explicitly:
 
 ```bash
-pnpm change @scope/example --bump patch --summary "Update runtime dependencies."
+pnpm change @rivus/snorlax --bump patch --summary "Update runtime dependencies."
 ```
 
 Or write the file directly (this is what the command produces):
 
 ```markdown
 ---
-"@scope/example": patch
+"@rivus/snorlax": patch
 ---
 
 Update runtime dependencies.

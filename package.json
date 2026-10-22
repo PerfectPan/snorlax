@@ -1,10 +1,11 @@
 {
-  "name": "project-template-pnpm",
+  "name": "snorlax",
   "private": true,
-  "description": "Private workspace root: pnpm counts it as a workspace project; it publishes nothing and holds the pnpm -r shortcuts for the repository.",
+  "description": "Private workspace root for snorlax: pnpm counts it as a workspace project; it publishes nothing and holds the pnpm -r shortcuts for the repository.",
+  "license": "GPL-3.0-only",
   "packageManager": "pnpm@12.8.1",
   "scripts": {
-    "build": "pnpm -r run build",
+    "build": "pnpm -r --if-present run build",
     "lint": "pnpm -r run lint",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",

@@ -45,4 +45,4 @@ versioning:
   # together and one release tag covers it, which is what scripts/check-release.ts and the publish workflow
   # verify. Add every new published package to the group.
   fixed:
-    - ['@scope/example']
+    - ['@rivus/snorlax']

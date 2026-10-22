@@ -64,9 +64,9 @@ exists. For each package:
 
    ```bash
    dir="$(mktemp -d)" && cd "$dir"
-   printf '{"name":"@scope/example","version":"0.0.0","description":"Placeholder; releases are published by CI."}\n' > package.json
+   printf '{"name":"@rivus/snorlax","version":"0.0.0","description":"Placeholder; releases are published by CI."}\n' > package.json
    npm publish --access public
-   npm deprecate @scope/example@0.0.0 "Placeholder; install a later version."
+   npm deprecate @rivus/snorlax@0.0.0 "Placeholder; install a later version."
    ```
 
    Scoped packages need an npm organization or user scope that the maintainer owns. Skip this step if the name
@@ -117,7 +117,7 @@ authentication error for that package only.
    `main` (`release:check --verify-git`), runs `pnpm run check`, then runs
    `pnpm publish -r --access public --no-git-checks`. pnpm publishes natively, sends the workflow's OIDC token and
    attaches provenance itself, and skips packages whose version already exists on npm. Prereleases do not publish.
-7. Verify every package at the new version, for example `npm view @scope/example@X.Y.Z` and a clean
+7. Verify every package at the new version, for example `npm view @rivus/snorlax@X.Y.Z` and a clean
    `npm install` in a scratch project. Registry reads can lag the publish by a minute; retry the read, not the
    publish. The npm package page shows a provenance badge linking to the workflow run.
 
@@ -157,11 +157,11 @@ Run it after `pnpm run check` so `dist` exists.
 - **Bad published contents**: npm versions are immutable. Deprecate the version and release a fix:
 
   ```bash
-  npm deprecate @scope/example@X.Y.Z "Broken build; use X.Y.Z+1"
+  npm deprecate @rivus/snorlax@X.Y.Z "Broken build; use X.Y.Z+1"
   ```
 
   Move a dist-tag back when `latest` must point at the previous version:
-  `npm dist-tag add @scope/example@<previous> latest`. `npm unpublish` is limited to 72 hours after publishing
+  `npm dist-tag add @rivus/snorlax@<previous> latest`. `npm unpublish` is limited to 72 hours after publishing
   and blocks the version number permanently; prefer deprecation.
 - Once any package of a version is on npm, do not move or reuse its tag. Fix forward with a new version.
 
