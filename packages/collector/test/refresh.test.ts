@@ -394,6 +394,22 @@ describe("S5: deleted logs keep their usage", () => {
 });
 
 describe("failures", () => {
+  it("exits data-dir when the snapshot cannot be written, naming the file", async () => {
+    const platform: typeof setup.platform = {
+      ...setup.platform,
+      fs: {
+        ...setup.platform.fs,
+        writeAtomic: (path, data, options) =>
+          path.endsWith("snapshot.json")
+            ? Promise.reject(new Error("ENOSPC: no space left on device"))
+            : setup.platform.fs.writeAtomic(path, data, options)
+      }
+    };
+    await expect(
+      runRefresh({ platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE })
+    ).rejects.toMatchObject({ code: "data-dir", message: /snapshot\.json/ });
+  });
+
   it("counts a source that cannot be decoded per agent", async () => {
     const path = join(setup.home, CC_PROJECT, "cc-broken.jsonl");
     // A record of an unknown format generation fails the decode; a non-JSON line the kit skips silently.
