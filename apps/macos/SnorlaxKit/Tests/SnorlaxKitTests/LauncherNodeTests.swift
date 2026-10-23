@@ -74,7 +74,7 @@ final class LauncherNodeTests: XCTestCase {
         let environment = ["SNORLAX_HOME": "/tmp/snorlax-data"]
         let directory = DataDirectory.resolve(
             environment: environment,
-            home: URL(fileURLWithPath: "/Users/example", isDirectory: true)
+            home: URL(fileURLWithPath: "/tmp/snorlax-home", isDirectory: true)
         )
         let fileSystem = LauncherNode.FileSystem(fake: FakeFiles(
             files: [directory.appendingPathComponent(LauncherNode.fileName).path],
