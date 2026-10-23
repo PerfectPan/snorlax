@@ -699,7 +699,7 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 
 | Batch | Status | PR | Decisions taken | Open problems |
 | --- | --- | --- | --- | --- |
-| 0 S1 | not started | | | |
+| 0 S1 | in review | | Automatic signing with an empty team in `project.yml`; the local `xcodebuild` disables signing. `register()` is only the menu action and was not called. The launcher `node -e` writes `spike-run.json` and does not search `PATH`. SnorlaxKit reads `spike-value.json` from the expanded App Group id. | App Group, `SMAppService`, and the widget gallery need the owner's Personal Team. See section 7. |
 | 0 S2 | not started | | | |
 | 1 | in review | | `invalid-arguments` added as the failure code for exit 2 (the plan lists codes only for runtime failures); later-batch commands (`refresh`, `rebuild`, `pair`, `unpair`, `install`, `uninstall`) are registered as `internal` stubs instead of omitted; `doctor` checks `config.json` in addition to node-version and data-dir (all local, keychain/backend/scheduling wait); status device id and scan/sync fields come from `snapshot.json` until the ledger exists (Batch 2 replaces the source, not the output); protocol `PairResult`/`Doctor` field sets are provisional pending Batches 4/7 review; `minimumReleaseAgeExclude` in pnpm-workspace.yaml for the owner's agent-kit 0.20.0 (published the same day the catalog pinned it) | Bucket and output schemas drop unknown keys on parse (forward compatibility, plan 3.7); the strict unknown-key rejection required for HTTP bodies (3.2.3) lands with Batch 6's schemas; agent-kit 0.20.0 pinned via catalog — remember to drop the exclude entry after it ages past `minimumReleaseAge` |
 | 2 | not started | | | |
@@ -720,7 +720,7 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | Node path changes (version managers) | risk | collection stops | maintainer | app rediscovers Node; `doctor`; Node SEA later |
 | Logs older than 30 days are gone | constraint | `rebuild` beyond 30 days would lose usage | — | `rebuild` capped at 30 |
 | Snorlax is a trademark | risk | rename request | owner | original artwork, disclaimer in README |
-| S1 results | open | signing path | owner | record here after Batch 0; the second-Mac install is checked in Batch 8 |
+| S1 results | pending owner run | signing path | owner | Local `xcodegen generate` and signing-disabled `xcodebuild` succeed on Xcode 27. The bundle contains the helper, the LaunchAgents plist, and the widget. The helper writes `spike-run.json` under a temporary HOME when `node-path` names an executable. The binary is linker-signed only (no team, no entitlements); the App Group id expanded with an empty prefix. Not run: App Group container, `SMAppService` registration, widget gallery. Owner steps are in `apps/macos/README.md`. The second-Mac install is checked in Batch 8. |
 | S2 results | open | refresh interval and performance target | owner | record here after Batch 0 |
 | Worker reachability | open | domain | owner | record here after Batch 6 |
 | K1, K2 in agent-kit | follow-up | M2 blocked | agent-kit maintainer | K2: agent-kit#190; K1: issue not opened yet |

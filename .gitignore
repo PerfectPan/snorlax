@@ -22,3 +22,9 @@ coverage/
 tmp/
 temp/
 *.tsbuildinfo
+
+# apps/macos: generated project and local build output (Batch 0 S1)
+apps/macos/*.xcodeproj/
+apps/macos/DerivedData/
+apps/macos/SnorlaxKit/.build/
+apps/macos/SnorlaxKit/.swiftpm/
