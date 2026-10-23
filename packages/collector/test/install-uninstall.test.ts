@@ -63,6 +63,8 @@ interface InstallEnv {
   readonly record: string;
   /** The stub's loaded-service marker; its content is the plist path `print` reports. */
   readonly loaded: string;
+  /** When this file exists, the stub's `bootstrap` fails like launchd refusing a service. */
+  readonly failBootstrap: string;
 }
 
 const run = (
@@ -93,6 +95,7 @@ const writeStub = async (dir: string): Promise<string> => {
     `// The marker holds the plist path of the loaded service, like launchd's own state. An empty`,
     `// marker is a loaded service whose plist "print" cannot name.`,
     `const marker = join(dir, "loaded");`,
+    `const failBootstrap = join(dir, "fail-bootstrap");`,
     `const [command, target, plistPath] = process.argv.slice(2);`,
     `if (command === "print") {`,
     `  if (!existsSync(marker)) process.exit(1);`,
@@ -102,7 +105,11 @@ const writeStub = async (dir: string): Promise<string> => {
     `  console.log("}");`,
     `  process.exit(0);`,
     `}`,
-    `if (command === "bootstrap") { writeFileSync(marker, plistPath); process.exit(0); }`,
+    `if (command === "bootstrap") {`,
+    `  if (existsSync(failBootstrap)) process.exit(9);`,
+    `  writeFileSync(marker, plistPath);`,
+    `  process.exit(0);`,
+    `}`,
     `if (command === "bootout") {`,
     `  if (!existsSync(marker)) process.exit(1);`,
     `  unlinkSync(marker);`,
@@ -124,7 +131,14 @@ const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) =
   const stubDir = await mkdtemp(join(tmpdir(), "snorlax-launchctl-"));
   try {
     const launchctl = await writeStub(stubDir);
-    await body({ home, launchctl, os, record: join(stubDir, "argv.jsonl"), loaded: join(stubDir, "loaded") });
+    await body({
+      home,
+      launchctl,
+      os,
+      record: join(stubDir, "argv.jsonl"),
+      loaded: join(stubDir, "loaded"),
+      failBootstrap: join(stubDir, "fail-bootstrap")
+    });
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(stubDir, { recursive: true, force: true });
@@ -289,6 +303,26 @@ describe("install and uninstall", () => {
       expect(z.parse(failureSchema, json(result.stdout)).error.code).toBe("invalid-arguments");
       expect(existsSync(plistPathOf(env.home))).toBe(false);
       expect(await readInvocations(env.record)).toEqual([]);
+    });
+  });
+
+  it("removes the plist it just wrote when bootstrap fails", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const domain = `gui/${uid()}`;
+      const plistPath = plistPathOf(env.home);
+      await writeFile(env.failBootstrap, "1", "utf8");
+
+      const installed = run(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      const failure = z.parse(failureSchema, json(installed.stdout));
+      expect(failure.error.code).toBe("internal");
+      expect(failure.error.message).toContain("launchctl bootstrap failed");
+      // A failed command leaves no installed-looking state for the next login.
+      expect(existsSync(plistPath)).toBe(false);
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", `${domain}/${LABEL}`],
+        ["bootstrap", domain, plistPath]
+      ]);
     });
   });
 

@@ -321,7 +321,17 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
   if (loaded.state === "loaded") {
     await bootout(platform, target);
   }
-  await bootstrap(platform, domain, plistPath);
+  try {
+    await bootstrap(platform, domain, plistPath);
+  } catch (error) {
+    // The command failed, so it must not leave an installed-looking plist for the next login.
+    try {
+      await platform.fs.remove(plistPath);
+    } catch {
+      // Report the bootstrap failure, not the cleanup.
+    }
+    throw error;
+  }
   return plistPath;
 }
 
