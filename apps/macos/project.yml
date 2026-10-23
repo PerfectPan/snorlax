@@ -33,12 +33,6 @@ targets:
     platform: macOS
     sources:
       - path: Snorlax
-      - path: Helpers/snorlax
-        type: file
-        buildPhase:
-          copyFiles:
-            destination: wrapper
-            subpath: Contents/Helpers
       - path: LaunchAgents/io.github.perfectpan.snorlax.refresh.plist
         type: file
         buildPhase:
@@ -49,6 +43,13 @@ targets:
       - package: SnorlaxKit
       - target: SnorlaxWidget
         embed: true
+      # The compiled launcher is a Mach-O, so Code Sign On Copy signs it before the
+      # app bundle is signed; an unsigned subcomponent fails the app's CodeSign.
+      - target: SnorlaxLauncher
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
+        codeSign: true
       - sdk: ServiceManagement.framework
       - sdk: WidgetKit.framework
       - sdk: Charts.framework
@@ -94,6 +95,19 @@ targets:
         INFOPLIST_EXPAND_BUILD_SETTINGS: "YES"
         CODE_SIGN_ENTITLEMENTS: SnorlaxWidget/SnorlaxWidget.entitlements
         SKIP_INSTALL: "YES"
+  SnorlaxLauncher:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Launcher
+    dependencies:
+      - package: SnorlaxKit
+    settings:
+      base:
+        # Embedded as Contents/Helpers/snorlax, the path the LaunchAgent plist's
+        # BundleProgram and CollectorClient both use.
+        PRODUCT_NAME: snorlax
+        GENERATE_INFOPLIST_FILE: "YES"
   SnorlaxKitTests:
     type: bundle.unit-test
     platform: macOS
