@@ -29,4 +29,11 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(UsageFormat.costLabel(costText: "$0.00", requests: 5, unpricedRequests: 5), "unpriced")
         XCTAssertEqual(UsageFormat.costLabel(costText: "$0.00", requests: 0, unpricedRequests: 0), "$0.00")
     }
+
+    func testDayCalendarFollowsTheSnapshotZone() {
+        let calendar = UsageFormat.dayCalendar(TimeZone(identifier: "Asia/Shanghai")!)
+
+        XCTAssertEqual(calendar.identifier, .gregorian)
+        XCTAssertEqual(calendar.timeZone.identifier, "Asia/Shanghai")
+    }
 }

@@ -75,14 +75,17 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
         } else {
             let bars = summary.daily.compactMap { bar in bar.day.map { (day: $0, tokens: bar.tokens) } }
+            // Bars and ticks bin by the calendar given to them, not the
+            // environment time zone, so the snapshot's own days show (R8).
+            let calendar = UsageFormat.dayCalendar(summary.timeZone)
             Chart(bars, id: \.day) { bar in
                 BarMark(
-                    x: .value("Day", bar.day, unit: .day),
+                    x: .value("Day", bar.day, unit: .day, calendar: calendar),
                     y: .value("Tokens", bar.tokens)
                 )
             }
             .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                AxisMarks(values: .stride(by: .day, count: 7, calendar: calendar)) { value in
                     AxisGridLine()
                     AxisValueLabel {
                         if let date = value.as(Date.self) {
@@ -102,8 +105,6 @@ struct PopoverView: View {
                 }
             }
             .frame(height: 140)
-            // Bars and ticks land on the snapshot's own days, not the Mac's zone (R8).
-            .environment(\.timeZone, summary.timeZone)
             .accessibilityLabel("Tokens for the last 30 days")
         }
         Text(summary.statusLine)

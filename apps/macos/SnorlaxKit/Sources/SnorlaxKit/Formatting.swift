@@ -87,6 +87,15 @@ public enum UsageFormat {
         return formatter.string(from: date)
     }
 
+    /// The calendar Swift Charts must bin and stride the daily marks with:
+    /// `unit: .day` follows the calendar passed to the mark and the axis, not
+    /// the environment time zone (R8).
+    public static func dayCalendar(_ timeZone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
     /// An ISO 8601 instant as a relative text: `just now`, `3 min ago`,
     /// `2 hr ago`, `1 day ago`; a week or older (or in the future) shows the
     /// local date-time. nil when unparseable. Handles timestamps with and
