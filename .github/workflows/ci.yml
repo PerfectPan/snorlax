@@ -27,3 +27,60 @@ jobs:
           # The store cache is keyed on the lockfile content hash; the action restores before installing.
           cache: true
       - run: pnpm run check
+
+  macos:
+    name: macos
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .node-version
+          require-lockfile: true
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      # The whole protocol build regenerates the JSON Schemas, the fixtures and
+      # the Swift types, so a zod change without regenerated outputs fails here.
+      - name: Regenerate protocol outputs
+        run: pnpm --filter @rivus/snorlax-protocol run build
+      - name: Fail when regeneration changes anything
+        run: |
+          paths="packages/protocol/schema packages/protocol/fixtures apps/macos/SnorlaxKit/Sources/SnorlaxKit/Generated"
+          if [ -n "$(git status --porcelain -- $paths)" ]; then
+            echo "::error::Regenerated protocol outputs differ from the committed files:"
+            git status --porcelain -- $paths
+            exit 1
+          fi
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: apps/macos
+        run: xcodegen generate
+      - name: Test
+        working-directory: apps/macos
+        run: |
+          xcodebuild -project Snorlax.xcodeproj -scheme Snorlax -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM= \
+            test
+      # Ad-hoc signing needs no Apple account. It catches an unsigned embedded
+      # helper, which only fails the app's CodeSign when signing is on.
+      - name: Ad-hoc signed build
+        working-directory: apps/macos
+        run: |
+          xcodebuild -project Snorlax.xcodeproj -scheme Snorlax -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM= \
+            build
+          codesign --verify --deep --strict DerivedData/Build/Products/Debug/Snorlax.app

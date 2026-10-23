@@ -21,6 +21,8 @@ settings:
     CODE_SIGNING_REQUIRED: "YES"
     CODE_SIGNING_ALLOWED: "YES"
     ENABLE_HARDENED_RUNTIME: "NO"
+    # The collector build phase runs pnpm, which lives outside the source tree.
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
     APP_GROUP_IDENTIFIER: "$(TeamIdentifierPrefix)io.github.perfectpan.snorlax"
 packages:
   SnorlaxKit:
@@ -31,12 +33,6 @@ targets:
     platform: macOS
     sources:
       - path: Snorlax
-      - path: Helpers/snorlax
-        type: file
-        buildPhase:
-          copyFiles:
-            destination: wrapper
-            subpath: Contents/Helpers
       - path: LaunchAgents/io.github.perfectpan.snorlax.refresh.plist
         type: file
         buildPhase:
@@ -47,7 +43,31 @@ targets:
       - package: SnorlaxKit
       - target: SnorlaxWidget
         embed: true
+      # The compiled launcher is a Mach-O, so Code Sign On Copy signs it before the
+      # app bundle is signed; an unsigned subcomponent fails the app's CodeSign.
+      - target: SnorlaxLauncher
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
+        codeSign: true
       - sdk: ServiceManagement.framework
+      - sdk: WidgetKit.framework
+      - sdk: Charts.framework
+    preBuildScripts:
+      - name: Bundle collector
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
+          cd "$SRCROOT/../.."
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "error: pnpm is not on PATH; the Snorlax build needs it to bundle the collector" >&2
+            exit 1
+          fi
+          pnpm --filter @rivus/snorlax run build
+          dest="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/collector"
+          mkdir -p "$dest"
+          cp "packages/collector/dist/snorlax.mjs" "$dest/snorlax.mjs"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax
@@ -75,12 +95,53 @@ targets:
         INFOPLIST_EXPAND_BUILD_SETTINGS: "YES"
         CODE_SIGN_ENTITLEMENTS: SnorlaxWidget/SnorlaxWidget.entitlements
         SKIP_INSTALL: "YES"
+  SnorlaxLauncher:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Launcher
+    dependencies:
+      - package: SnorlaxKit
+    settings:
+      base:
+        # Embedded as Contents/Helpers/snorlax, the path the LaunchAgent plist's
+        # BundleProgram and CollectorClient both use. The tool ships only inside
+        # the app; installing it separately would add Products/usr/local/bin to
+        # every archive and turn it into a Generic Xcode Archive.
+        PRODUCT_NAME: snorlax
+        GENERATE_INFOPLIST_FILE: "YES"
+        SKIP_INSTALL: "YES"
+  SnorlaxKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SnorlaxKit/Tests/SnorlaxKitTests
+    dependencies:
+      - package: SnorlaxKit
+        product: SnorlaxKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax.kit-tests
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+        # Logic tests. An app host would launch Snorlax and must not.
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
 schemes:
   Snorlax:
     build:
       targets:
         Snorlax: all
         SnorlaxWidget: all
+        SnorlaxKitTests: [test]
+    test:
+      config: Debug
+      targets:
+        - SnorlaxKitTests
     run:
       config: Debug
     archive:

@@ -1,0 +1,220 @@
+import Foundation
+
+public struct NodeVersion: Equatable, Sendable {
+    public var major: Int
+    public var minor: Int
+    public var patch: Int
+
+    public init(major: Int, minor: Int, patch: Int) {
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+    }
+
+    public func isAtLeast(_ minimum: NodeVersion) -> Bool {
+        if major != minimum.major { return major > minimum.major }
+        if minor != minimum.minor { return minor > minimum.minor }
+        return patch >= minimum.patch
+    }
+}
+
+public enum NodeResolution: Equatable, Sendable {
+    case ready(String)
+    case missing
+}
+
+public protocol NodeProbing: Sendable {
+    /// Stdout of `executable --version`, or nil when it cannot be run.
+    func versionOutput(executable: String) -> String?
+    /// Stdout of `/bin/zsh -lc 'command -v node'`, trimmed by the caller, or nil.
+    func loginShellNodePath() -> String?
+}
+
+/// Finds a Node >= 22.13 and writes `<data>/node-path` (plan 3.11).
+/// The launcher reads that file. This type does not search `PATH` itself.
+public enum NodeDiscovery {
+    public static let minimum = NodeVersion(major: 22, minor: 13, patch: 0)
+    public static let installHint = "Install Node.js 22.13 or later"
+    public static let fileName = "node-path"
+
+    /// First line, optional leading `v`, then `major.minor.patch`. Extra trailing text is ignored.
+    /// Written without a regex literal so it compiles in the Swift 5 language mode the package uses.
+    public static func parseVersion(_ text: String) -> NodeVersion? {
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        var characters = line.trimmingCharacters(in: .whitespaces)[...]
+        if characters.first == "v" || characters.first == "V" {
+            characters.removeFirst()
+        }
+        guard let major = takeInteger(&characters),
+              takeDot(&characters),
+              let minor = takeInteger(&characters),
+              takeDot(&characters),
+              let patch = takeInteger(&characters)
+        else {
+            return nil
+        }
+        return NodeVersion(major: major, minor: minor, patch: patch)
+    }
+
+    private static func takeInteger(_ characters: inout Substring) -> Int? {
+        var digits = ""
+        while let next = characters.first, next.isNumber {
+            digits.append(next)
+            characters.removeFirst()
+        }
+        return digits.isEmpty ? nil : Int(digits)
+    }
+
+    private static func takeDot(_ characters: inout Substring) -> Bool {
+        guard characters.first == "." else { return false }
+        characters.removeFirst()
+        return true
+    }
+
+    /// The path in `command -v node` output: the last non-empty line that
+    /// starts with `/`, so banners a login shell prints first cannot break it.
+    public static func nodePath(fromOutput text: String) -> String? {
+        text.split(whereSeparator: \.isNewline)
+            .reversed()
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.hasPrefix("/") }
+    }
+
+    /// How a probe that ran out of budget reads the shell's output once the
+    /// exit event has settled. The decision is pure; tests inject the state.
+    public enum ShellReadPlan: Equatable, Sendable {
+        /// The shell self-exited and the pipes closed: everything arrived.
+        case readFully
+        /// The shell self-exited but a pipe is still open, for example a
+        /// background child from its config: read what arrived, never wait.
+        case readWhatArrived
+        /// The shell had to be killed: nothing usable.
+        case none
+    }
+
+    public static func readPlan(terminatedBySignal: Bool, eofReceived: Bool) -> ShellReadPlan {
+        if terminatedBySignal {
+            return .none
+        }
+        return eofReceived ? .readFully : .readWhatArrived
+    }
+
+    /// Keeps a saved Node that still satisfies the minimum. Otherwise asks the login
+    /// shell, writes `node-path` when that Node is new enough, and removes a saved
+    /// path that is not.
+    public static func resolve(dataDirectory: URL, probe: any NodeProbing) throws -> NodeResolution {
+        let file = dataDirectory.appendingPathComponent(fileName)
+        if let existing = readPath(file), accepts(existing, probe: probe) {
+            return .ready(existing)
+        }
+        if let discovered = probe.loginShellNodePath().flatMap(nodePath(fromOutput:)),
+           accepts(discovered, probe: probe) {
+            try writePath(discovered, directory: dataDirectory)
+            return .ready(discovered)
+        }
+        if FileManager.default.fileExists(atPath: file.path) {
+            try FileManager.default.removeItem(at: file)
+        }
+        return .missing
+    }
+
+    private static func accepts(_ path: String, probe: any NodeProbing) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: path) else { return false }
+        guard let output = probe.versionOutput(executable: path), let version = parseVersion(output) else {
+            return false
+        }
+        return version.isAtLeast(minimum)
+    }
+
+    private static func readPath(_ url: URL) -> String? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        return line.isEmpty ? nil : line
+    }
+
+    private static func writePath(_ path: String, directory: URL) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try Data((path + "\n").utf8).write(to: directory.appendingPathComponent(fileName), options: .atomic)
+    }
+}
+
+/// The real probe. `loginShellNodePath` is `/bin/zsh -lc 'command -v node'` with a 5 s timeout.
+public struct ProcessNodeProbe: NodeProbing {
+    public var timeout: TimeInterval
+
+    public init(timeout: TimeInterval = 5) {
+        self.timeout = timeout
+    }
+
+    public func versionOutput(executable: String) -> String? {
+        guard let result = run(executable: executable, arguments: ["--version"]), result.status == 0 else {
+            return nil
+        }
+        return result.stdout
+    }
+
+    public func loginShellNodePath() -> String? {
+        guard let result = run(executable: "/bin/zsh", arguments: ["-lc", "command -v node"]), result.status == 0 else {
+            return nil
+        }
+        return result.stdout
+    }
+
+    private func run(executable: String, arguments: [String]) -> (status: Int32, stdout: String)? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        process.standardInput = FileHandle.nullDevice
+        // Output is collected while the process runs: reading it only after
+        // exit could wait forever on a grandchild that inherited the pipe.
+        let stdout = PipeOutput(stdoutPipe)
+        let finished = DispatchGroup()
+        finished.enter() // process termination
+        stdout.start(onWait: finished.enter, onEOF: finished.leave)
+        let terminated = DispatchGroup()
+        terminated.enter()
+        process.terminationHandler = { _ in
+            finished.leave()
+            terminated.leave()
+        }
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        // The whole budget goes to the exit event, never to pipes: a
+        // grandchild holding the write end must not consume it.
+        var endedBySignal = false
+        if terminated.wait(timeout: .now() + timeout) == .timedOut {
+            if process.isRunning { process.terminate() }
+            if terminated.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                if terminated.wait(timeout: .now() + 1) == .timedOut {
+                    return nil
+                }
+            }
+            endedBySignal = process.terminationReason != .exit
+        }
+        // A process a signal ended has no usable output and no pipe grace; a
+        // self-exited one gets a short grace, then what arrived is read.
+        let eofMissing = endedBySignal || finished.wait(timeout: .now() + PipeOutput.eofGrace) == .timedOut
+        switch NodeDiscovery.readPlan(terminatedBySignal: endedBySignal, eofReceived: !eofMissing) {
+        case .none:
+            return nil
+        case .readFully:
+            let data = stdout.drain()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        case .readWhatArrived:
+            let data = stdout.collected()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+}
