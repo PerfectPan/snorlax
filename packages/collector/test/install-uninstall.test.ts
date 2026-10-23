@@ -20,7 +20,9 @@ import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/ag
 /**
  * `install` / `uninstall` against the built bundle under a temporary HOME. `SNORLAX_LAUNCHCTL`
  * points at a stub that records argv, so the real launchctl never runs. `SNORLAX_OS=darwin` runs
- * the LaunchAgent path on the Linux CI job as well as on a Mac.
+ * the LaunchAgent path on the Linux CI job as well as on a Mac. The stub mirrors launchctl's own
+ * behavior where the tests depend on it: `bootstrap` fails (exit 5) while a service is loaded, so
+ * a repeat install has to boot out first, and `print` reports the loaded service's plist path.
  */
 const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 const LABEL = "io.github.perfectpan.snorlax.refresh";
@@ -107,6 +109,7 @@ const writeStub = async (dir: string): Promise<string> => {
     `}`,
     `if (command === "bootstrap") {`,
     `  if (existsSync(failBootstrap)) process.exit(9);`,
+    `  if (existsSync(marker)) process.exit(5);`,
     `  writeFileSync(marker, plistPath);`,
     `  process.exit(0);`,
     `}`,
@@ -233,9 +236,18 @@ const hashTree = async (root: string): Promise<string> => {
   return hash.digest("hex");
 };
 
+/** Every agent home the collector knows (plan 3.5); the S14 hash covers them all. */
+const AGENT_DIRS = [".claude", ".codex", ".gemini", ".grok", ".local/share/opencode", ".pi"] as const;
+
+const ensureAgentDirs = async (home: string): Promise<void> => {
+  for (const name of AGENT_DIRS) {
+    await mkdir(join(home, name), { recursive: true });
+  }
+};
+
 const hashAgentDirs = async (home: string): Promise<string> => {
   const hash = createHash("sha256");
-  for (const name of [".claude", ".codex"]) {
+  for (const name of AGENT_DIRS) {
     hash.update(`${name}\n`);
     hash.update(await hashTree(join(home, name)));
   }
@@ -410,6 +422,7 @@ describe("install and uninstall", () => {
 
   it("uninstall --data deletes the data directory and leaves the fixture agent files", async () => {
     await withInstallHome("darwin", async (env) => {
+      await ensureAgentDirs(env.home);
       await writeFixtures(env.home);
       const before = await hashAgentDirs(env.home);
       expect(run(env, ["install", "--json"]).status).toBe(0);
@@ -485,8 +498,10 @@ describe("install and uninstall", () => {
 
   it("keeps fixture agent directories unchanged across install, refresh, and uninstall", async () => {
     await withInstallHome("darwin", async (env) => {
+      await ensureAgentDirs(env.home);
       await writeUsageFixtures(env.home);
       const before = await hashAgentDirs(env.home);
+      const topBefore = (await readdir(env.home)).sort();
       expect(run(env, ["install", "--json"]).status).toBe(0);
 
       const refreshed = run(env, ["refresh", "--json"]);
@@ -497,6 +512,9 @@ describe("install and uninstall", () => {
 
       expect(run(env, ["uninstall", "--json"]).status).toBe(0);
       expect(await hashAgentDirs(env.home)).toBe(before);
+      // R1/S14: install, refresh and uninstall add only the agent's own LaunchAgents entry and the
+      // data directory to HOME's top level — no agent directory is created, filled, or touched.
+      expect((await readdir(env.home)).sort()).toEqual([...topBefore, "Library", "data"].sort());
     });
   });
 
