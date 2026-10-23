@@ -29,6 +29,12 @@ public struct RankedUsage: Equatable, Identifiable, Sendable {
     public var costLabel: String {
         UsageFormat.costLabel(costText: costText, requests: requests, unpricedRequests: unpricedRequests)
     }
+
+    /// The device list marks which row is this Mac — but not when the name
+    /// already says it.
+    public var listLabel: String {
+        isThisDevice && name != "This Mac" ? "\(name) · this Mac" : name
+    }
 }
 
 /// One bar of the 30-day chart. `day` is the bar's date as the start of that
@@ -125,9 +131,7 @@ public enum UsageSummaryBuilder {
     }
 
     private static func deviceRows(_ entries: [ByDevice]) -> [RankedUsage] {
-        // A lone local device is the totals above; a Devices list would repeat them.
-        guard !(entries.count == 1 && entries[0].isThisDevice) else { return [] }
-        return entries.compactMap { entry in
+        let rows = entries.compactMap { entry -> RankedUsage? in
             guard entry.today.tokens > 0 else { return nil }
             let rawName = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let name: String
@@ -140,6 +144,12 @@ public enum UsageSummaryBuilder {
             }
             return rankedRow(id: entry.deviceId, name: name, total: entry.today, isThisDevice: entry.isThisDevice)
         }
+        // Checked after the zero filter: a remote device with no usage today
+        // must not leave a one-line Devices section repeating the totals above.
+        if rows.count == 1, rows[0].isThisDevice {
+            return []
+        }
+        return rows
     }
 
     private static func rankedRow(id: String, name: String, total: WindowTotal, isThisDevice: Bool) -> RankedUsage {

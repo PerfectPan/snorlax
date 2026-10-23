@@ -119,7 +119,7 @@ struct PopoverView: View {
                 .font(.headline)
             ForEach(rows) { row in
                 HStack {
-                    Text(markThisDevice && row.isThisDevice ? "\(row.name) · this Mac" : row.name)
+                    Text(markThisDevice ? row.listLabel : row.name)
                     Spacer()
                     Text(row.tokensText)
                     Text(row.costLabel)

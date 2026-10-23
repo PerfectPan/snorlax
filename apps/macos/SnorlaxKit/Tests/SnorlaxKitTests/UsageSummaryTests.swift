@@ -75,14 +75,15 @@ final class UsageSummaryTests: XCTestCase {
             models: [("claude-opus-5-5", 100), ("idle-model", 0)],
             devices: [
                 ("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", "MacBook Pro", true, 100),
-                ("0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3", nil, false, 0)
+                ("0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3", "Mac mini", false, 50),
+                ("c3b2a1d0-8e9f-4a1b-b3c5-d7e9f0a1b2c3", nil, false, 0)
             ]
         )
         let summary = try UsageSummaryBuilder.make(SnapshotLoader.load(snapshot))
 
         XCTAssertEqual(summary.topAgents.map(\.name), ["claude-code"])
         XCTAssertEqual(summary.topModels.map(\.name), ["claude-opus-5-5"])
-        XCTAssertEqual(summary.devices.map(\.name), ["MacBook Pro"])
+        XCTAssertEqual(summary.devices.map(\.name), ["MacBook Pro", "Mac mini"])
     }
 
     func testUnnamedDevicesAreDescribed() throws {
@@ -108,6 +109,42 @@ final class UsageSummaryTests: XCTestCase {
         let summary = try UsageSummaryBuilder.make(SnapshotLoader.load(snapshot))
 
         XCTAssertTrue(summary.devices.isEmpty)
+    }
+
+    func testADeviceWithNoUsageTodayDoesNotLeaveALoneLocalList() throws {
+        let snapshot = self.snapshot(
+            agents: [("claude-code", 100)],
+            models: [("claude-opus-5-5", 100)],
+            devices: [
+                ("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", "MacBook Pro", true, 100),
+                ("0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3", "Mac mini", false, 0)
+            ]
+        )
+        let summary = try UsageSummaryBuilder.make(SnapshotLoader.load(snapshot))
+
+        XCTAssertTrue(summary.devices.isEmpty, "only the zero-usage remote was filtered; the lone local row must hide too")
+    }
+
+    func testDeviceListLabelMarksThisMacOnlyWhenTheNameDoesNot() throws {
+        let unnamed = try UsageSummaryBuilder.make(SnapshotLoader.load(self.snapshot(
+            agents: [("claude-code", 100)],
+            models: [("claude-opus-5-5", 100)],
+            devices: [
+                ("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", nil, true, 100),
+                ("0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3", "Mac mini", false, 50)
+            ]
+        )))
+        XCTAssertEqual(unnamed.devices.map(\.listLabel), ["This Mac", "Mac mini"])
+
+        let named = try UsageSummaryBuilder.make(SnapshotLoader.load(self.snapshot(
+            agents: [("claude-code", 100)],
+            models: [("claude-opus-5-5", 100)],
+            devices: [
+                ("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", "MacBook Pro", true, 100),
+                ("0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3", "Mac mini", false, 50)
+            ]
+        )))
+        XCTAssertEqual(named.devices.map(\.listLabel), ["MacBook Pro · this Mac", "Mac mini"])
     }
 
     func testRelativeTimes() throws {
