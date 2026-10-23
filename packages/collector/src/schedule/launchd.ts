@@ -408,9 +408,6 @@ export async function uninstallLaunchAgent(
     if (error instanceof CliError) {
       throw error;
     }
-    throw new CliError(
-      "data-dir",
-      `cannot delete the data directory ${dataDirToDelete}: ${errorMessage(error)}`
-    );
+    throw new CliError("data-dir", `cannot delete the data directory ${dataDirToDelete}: ${errorMessage(error)}`);
   }
 }
