@@ -105,9 +105,12 @@ targets:
     settings:
       base:
         # Embedded as Contents/Helpers/snorlax, the path the LaunchAgent plist's
-        # BundleProgram and CollectorClient both use.
+        # BundleProgram and CollectorClient both use. The tool ships only inside
+        # the app; installing it separately would add Products/usr/local/bin to
+        # every archive and turn it into a Generic Xcode Archive.
         PRODUCT_NAME: snorlax
         GENERATE_INFOPLIST_FILE: "YES"
+        SKIP_INSTALL: "YES"
   SnorlaxKitTests:
     type: bundle.unit-test
     platform: macOS
