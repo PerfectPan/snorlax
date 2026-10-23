@@ -22,6 +22,22 @@ final class NodeDiscoveryTests: XCTestCase {
         XCTAssertNil(NodeDiscovery.nodePath(fromOutput: ""))
     }
 
+    func testOutputIsKeptWhenTheProcessExitedButThePipeStaysOpen() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        // Prints the version, exits, and leaves a background `sleep` holding
+        // stdout: EOF never arrives, so only the wait timeout can end the run.
+        let stub = try temp.writeExecutable(named: "node", contents: """
+        #!/bin/sh
+        echo "v22.13.0"
+        (sleep 5 &)
+        exit 0
+        """)
+        let probe = ProcessNodeProbe(timeout: 0.5)
+
+        XCTAssertEqual(probe.versionOutput(executable: stub.path), "v22.13.0\n")
+    }
+
     func testKeepsASavedNodeThatMeetsTheMinimum() throws {
         let temp = try TempDirectory()
         defer { temp.remove() }

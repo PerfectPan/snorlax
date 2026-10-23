@@ -160,18 +160,28 @@ public struct ProcessNodeProbe: NodeProbing {
         let finished = DispatchGroup()
         finished.enter() // process termination
         stdout.start(onWait: finished.enter, onEOF: finished.leave)
-        process.terminationHandler = { _ in finished.leave() }
+        let terminated = DispatchGroup()
+        terminated.enter()
+        process.terminationHandler = { _ in
+            finished.leave()
+            terminated.leave()
+        }
         do {
             try process.run()
         } catch {
             return nil
         }
         if finished.wait(timeout: .now() + timeout) == .timedOut {
-            if process.isRunning {
-                process.terminate()
-                _ = finished.wait(timeout: .now() + 1)
+            // Wait for the exit event itself instead of trusting `isRunning`:
+            // a shell that exited already — with a background child still
+            // holding the write end, so EOF never comes — has usable output.
+            if terminated.wait(timeout: .now() + 1) == .timedOut {
+                if process.isRunning { process.terminate() }
+                _ = terminated.wait(timeout: .now() + 1)
+                return nil
             }
-            return nil
+            let data = stdout.collected()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
         }
         let data = stdout.drain()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
