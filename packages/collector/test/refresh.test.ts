@@ -309,6 +309,34 @@ describe("S3: a killed run does not double count", () => {
     expect(claude?.today.requests).toBe(8);
     expect(claude?.today.tokens).toBe(9300 + 2570 + 1010);
   });
+
+  it("counts a session start once across runs; only a session the ledger has not seen adds one", async () => {
+    const before = (await snapshot()).totals.today;
+
+    // A new request inside the already-counted cc-1 session: the ledger's `sessions_seen` must keep the
+    // session's start counted once, so no bucket gains a session.
+    await appendClaudeRequests(
+      join(setup.home, CC_PROJECT, "cc-1.jsonl"),
+      [claudeRequest("req_seen", "claude-opus-5-5", 100, 300, 30)],
+      "cc-1",
+      MTIME
+    );
+    await refresh();
+    const afterSeen = (await snapshot()).totals.today;
+    expect(afterSeen.requests).toBe(before.requests + 1);
+    expect(afterSeen.sessions).toBe(before.sessions);
+
+    // A session the ledger has never seen adds exactly one start.
+    await writeClaudeSession(setup.home, {
+      sessionId: "cc-fresh",
+      mtimeMs: MTIME,
+      requests: [claudeRequest("req_fresh", "claude-haiku-4-5", 105, 200, 20)]
+    });
+    await refresh();
+    const afterFresh = (await snapshot()).totals.today;
+    expect(afterFresh.requests).toBe(before.requests + 2);
+    expect(afterFresh.sessions).toBe(before.sessions + 1);
+  });
 });
 
 describe("S4: repeated records count once", () => {
