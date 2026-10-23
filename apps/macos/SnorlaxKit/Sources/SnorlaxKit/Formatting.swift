@@ -52,11 +52,27 @@ public enum UsageFormat {
     }
 
     /// A daily date like `2026-10-22` as the start of that day in `timeZone`
-    /// (R8: the snapshot cut its days there). nil when unparseable; the parsed
-    /// date must format back to the input, so separators cannot drift.
+    /// (R8: the snapshot cut its days there). Days whose midnight does not
+    /// exist in a DST-switching zone resolve to that zone's first moment of
+    /// the day. nil when unparseable; the date must format back to the input,
+    /// so separators and out-of-range days cannot drift.
     public static func dayDate(_ text: String, timeZone: TimeZone) -> Date? {
-        let formatter = dayFormatter(timeZone)
-        guard let date = formatter.date(from: text), formatter.string(from: date) == text else {
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3,
+              let year = parts[0].count == 4 ? Int(parts[0]) : nil,
+              let month = parts[1].count == 2 ? Int(parts[1]) : nil,
+              let day = parts[2].count == 2 ? Int(parts[2]) : nil
+        else {
+            return nil
+        }
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        guard let date = calendar.date(from: components),
+              dayFormatter(timeZone).string(from: date) == text else {
             return nil
         }
         return date
