@@ -51,7 +51,9 @@ xcodebuild -project Snorlax.xcodeproj -scheme Snorlax -configuration Debug \
   test
 ```
 
-`test` builds the app (and bundles the collector) and runs `SnorlaxKitTests` without launching Snorlax. `swift test` in `SnorlaxKit` runs the same tests. An ad-hoc signed build needs no Apple ID and fails when an embedded helper is left unsigned:
+`test` builds the app (and bundles the collector) and runs `SnorlaxKitTests` without launching Snorlax. `swift test` in `SnorlaxKit` runs the same tests. Do not run the app from this unsigned build if the goal is to avoid writing `~/Library/Application Support/snorlax`: launch discovers Node and creates that directory when `SNORLAX_HOME` is unset.
+
+An ad-hoc signed build needs no Apple ID and fails when an embedded helper is left unsigned:
 
 ```bash
 cd apps/macos
@@ -66,8 +68,6 @@ xcodebuild -project Snorlax.xcodeproj -scheme Snorlax -configuration Debug \
   build
 codesign --verify --deep --strict DerivedData/Build/Products/Debug/Snorlax.app
 ```
-
-Do not run the app from this unsigned build if the goal is to avoid writing `~/Library/Application Support/snorlax`: launch discovers Node and creates that directory when `SNORLAX_HOME` is unset.
 
 To run the bundled launcher without registering a login item, point `SNORLAX_HOME` at a temporary directory and remove it afterwards:
 
