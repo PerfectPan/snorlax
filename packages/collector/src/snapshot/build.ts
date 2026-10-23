@@ -165,7 +165,11 @@ const groupEntries = <K extends string>(
     if (at >= windows.last7dStart && at < windows.dayEnd) {
       addBucket(entry.last7d, bucket);
     }
-    addBucket(entry.last30d, bucket);
+    // The same window test `sumWindows` uses, so a bucket after today (a clock running ahead) cannot land
+    // in a group's last30d while missing from the totals.
+    if (at >= windows.last30dStart && at < windows.dayEnd) {
+      addBucket(entry.last30d, bucket);
+    }
   }
   return [...groups.entries()].map(([key, entry]) => ({ key, ...entry }));
 };

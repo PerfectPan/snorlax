@@ -122,6 +122,20 @@ describe("windows", () => {
     expect(snapshot.totals.last7d).toMatchObject({ requests: 14, sessions: 3, unpricedRequests: 13 });
     expect(snapshot.totals.last30d.requests).toBe(14);
   });
+
+  it("keeps a bucket after today out of the totals and the per-agent and per-model groups alike", () => {
+    const snapshot = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      // 2026-10-23T02:00Z is tomorrow's local day: no window covers it, so the groups must not count what
+      // the totals skip.
+      buckets: [bucket("2026-10-22T02:00:00Z"), bucket("2026-10-23T02:00:00Z")]
+    });
+    expect(snapshot.totals.last30d.requests).toBe(1);
+    expect(snapshot.byAgent.map((entry) => [entry.agent, entry.last30d.requests])).toEqual([["claude-code", 1]]);
+    expect(snapshot.byModel.map((entry) => [entry.model, entry.last30d.requests])).toEqual([["claude-opus-5-5", 1]]);
+    expect(snapshot.totals.today.requests).toBe(1);
+  });
 });
 
 describe("daily and hourlyToday", () => {
