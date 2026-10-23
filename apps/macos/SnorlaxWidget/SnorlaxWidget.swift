@@ -4,12 +4,12 @@ import WidgetKit
 
 struct UsageEntry: TimelineEntry {
     let date: Date
-    let summary: UsageSummary?
+    let state: WidgetSnapshotState
 }
 
 struct UsageProvider: TimelineProvider {
     func placeholder(in context: Context) -> UsageEntry {
-        UsageEntry(date: Date(), summary: nil)
+        UsageEntry(date: Date(), state: .noSnapshot)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (UsageEntry) -> Void) {
@@ -25,15 +25,13 @@ struct UsageProvider: TimelineProvider {
 
     private func load() -> UsageEntry {
         let now = Date()
-        guard let container = AppGroup.containerURL() else {
-            return UsageEntry(date: now, summary: nil)
-        }
-        do {
-            let snapshot = try SnapshotLoader.load(contentsOf: SnapshotFile.url(in: container))
-            return UsageEntry(date: now, summary: UsageSummaryBuilder.make(snapshot))
-        } catch {
-            return UsageEntry(date: now, summary: nil)
-        }
+        let state = WidgetSnapshot.state(
+            containerURL: AppGroup.containerURL(),
+            now: now,
+            timeZone: .current,
+            load: { try SnapshotLoader.load(contentsOf: $0) }
+        )
+        return UsageEntry(date: now, state: state)
     }
 }
 
@@ -43,46 +41,59 @@ struct UsageWidgetView: View {
 
     var body: some View {
         Group {
-            if let summary = entry.summary {
+            switch entry.state {
+            case .containerUnavailable:
+                message("App Group container is unavailable")
+            case .noSnapshot:
+                message("No snapshot yet")
+            case .newerSnapshot:
+                message("The collector is newer than the app; update the app.")
+            case let .usable(usage):
                 switch family {
                 case .systemSmall:
-                    small(summary)
+                    small(usage)
                 default:
-                    medium(summary)
+                    medium(usage)
                 }
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("—")
-                        .font(.title)
-                    Text("No snapshot")
-                        .font(.caption)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
         }
         .containerBackground(.background, for: .widget)
     }
 
-    private func small(_ summary: UsageSummary) -> some View {
-        let today = summary.windows.first { $0.id == "today" }
-        return VStack(alignment: .leading, spacing: 4) {
-            Text("Today")
-                .font(.caption)
-            Text(today?.tokensText ?? "—")
-                .font(.title2)
-            Text(today?.costLabel ?? "—")
+    private func message(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("—")
+                .font(.title)
+            Text(text)
                 .font(.caption)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    private func medium(_ summary: UsageSummary) -> some View {
-        let today = summary.windows.first { $0.id == "today" }
-        let week = summary.windows.first { $0.id == "last7d" }
-        let agents = Array(summary.topAgents.prefix(UsageSummaryBuilder.widgetAgentLimit))
+    /// Today's numbers, or "—" when the snapshot's today is a past day (R8).
+    private func small(_ usage: WidgetUsage) -> some View {
+        let today = usage.summary.windows.first { $0.id == "today" }
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Today")
+                .font(.caption)
+            Text(usage.isToday ? today?.tokensText ?? "—" : "—")
+                .font(.title2)
+            Text(usage.isToday ? today?.costLabel ?? "—" : "—")
+                .font(.caption)
+            Text(usage.asOfCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private func medium(_ usage: WidgetUsage) -> some View {
+        let today = usage.summary.windows.first { $0.id == "today" }
+        let week = usage.summary.windows.first { $0.id == "last7d" }
+        let agents = Array(usage.summary.topAgents.prefix(UsageSummaryBuilder.widgetAgentLimit))
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                figure("Today", today)
+                figure("Today", usage.isToday ? today : nil)
                 figure("7 days", week)
             }
             ForEach(agents) { agent in
@@ -93,6 +104,9 @@ struct UsageWidgetView: View {
                 }
                 .font(.caption)
             }
+            Text(usage.asOfCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
