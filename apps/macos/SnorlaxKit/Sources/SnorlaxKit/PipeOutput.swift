@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Collects one pipe's output as it arrives so a writing child never blocks on
@@ -34,6 +35,29 @@ final class PipeOutput: @unchecked Sendable {
         handle.readabilityHandler = nil
         lock.lock()
         defer { lock.unlock() }
+        return data
+    }
+
+    /// `collected()` plus one non-blocking read, so bytes that landed between
+    /// the last handler call and the handler removal are not lost. Never
+    /// waits: a writer that is still open simply yields nothing more.
+    func collectRemaining() -> Data {
+        handle.readabilityHandler = nil
+        lock.lock()
+        defer { lock.unlock() }
+        let descriptor = handle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags != -1 {
+            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+        }
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        let received = read(descriptor, &buffer, buffer.count)
+        if flags != -1 {
+            _ = fcntl(descriptor, F_SETFL, flags)
+        }
+        if received > 0 {
+            data.append(contentsOf: buffer[0..<received])
+        }
         return data
     }
 

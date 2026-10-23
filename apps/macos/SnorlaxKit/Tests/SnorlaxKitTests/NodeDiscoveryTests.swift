@@ -22,18 +22,37 @@ final class NodeDiscoveryTests: XCTestCase {
         XCTAssertNil(NodeDiscovery.nodePath(fromOutput: ""))
     }
 
+    func testReadPlanDecidesFromInjectedState() {
+        XCTAssertEqual(NodeDiscovery.readPlan(terminatedBySignal: true, eofReceived: true), .none)
+        XCTAssertEqual(NodeDiscovery.readPlan(terminatedBySignal: true, eofReceived: false), .none)
+        XCTAssertEqual(NodeDiscovery.readPlan(terminatedBySignal: false, eofReceived: true), .readFully)
+        XCTAssertEqual(NodeDiscovery.readPlan(terminatedBySignal: false, eofReceived: false), .readWhatArrived)
+    }
+
     func testOutputIsKeptWhenTheProcessExitedButThePipeStaysOpen() throws {
         let temp = try TempDirectory()
         defer { temp.remove() }
         // Prints the version, exits, and leaves a background `sleep` holding
-        // stdout: EOF never arrives, so only the wait timeout can end the run.
+        // stdout: EOF never arrives, so only the probe budget can end the run.
+        // The stub records the background PID so the test kills it and leaves
+        // no orphan behind.
         let stub = try temp.writeExecutable(named: "node", contents: """
         #!/bin/sh
+        dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
         echo "v22.13.0"
-        (sleep 5 &)
+        sleep 30 &
+        printf '%s\\n' "$!" > "$dir/background-pid"
         exit 0
         """)
-        let probe = ProcessNodeProbe(timeout: 0.5)
+        defer {
+            if let text = try? String(contentsOf: temp.url.appendingPathComponent("background-pid"), encoding: .utf8),
+               let processIdentifier = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                kill(processIdentifier, SIGTERM)
+            }
+        }
+        // A 30 s budget keeps the run independent of machine load; the stub
+        // itself finishes at once. The test asserts no real-time threshold.
+        let probe = ProcessNodeProbe(timeout: 30)
 
         XCTAssertEqual(probe.versionOutput(executable: stub.path), "v22.13.0\n")
     }
