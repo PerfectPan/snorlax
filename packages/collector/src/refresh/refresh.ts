@@ -72,16 +72,18 @@ export interface RefreshOutcome {
 
 /**
  * One `snorlax refresh` (plan 3.4.1 steps 2–8, minus the sync of step 6 that arrives with Batch 7): take
- * the ledger lock, scan incrementally, commit buckets and scan state in one transaction, then build and
- * atomically write the snapshot. The scan result stays committed even when the snapshot write fails; the
- * next refresh rewrites the snapshot.
+ * the ledger lock, open the ledger under it, scan incrementally, commit buckets and scan state in one
+ * transaction, then build and atomically write the snapshot. Opening under the lock puts the migration,
+ * the meta write and the read of meta and scan state after the previous run's commit, so two overlapping
+ * runs queue instead of the second reading the first's pre-commit state. The scan result stays committed
+ * even when the snapshot write fails; the next refresh rewrites the snapshot.
  */
 export async function runRefresh(deps: RefreshDeps, hooks?: ScanHooks): Promise<RefreshOutcome> {
   const startedAt = deps.platform.clock.monotonic();
-  const now = deps.platform.clock.now();
-  const ledger = await openLedger(deps.platform, deps.dataDir);
-  try {
-    return await withLedgerLock(deps.platform, deps.dataDir, async () => {
+  return withLedgerLock(deps.platform, deps.dataDir, async () => {
+    const now = deps.platform.clock.now();
+    const ledger = await openLedger(deps.platform, deps.dataDir);
+    try {
       const lastScan = ledger.meta.lastScanCompletedAt;
       const outcome = await commitScan({
         platform: deps.platform,
@@ -123,8 +125,8 @@ export async function runRefresh(deps: RefreshDeps, hooks?: ScanHooks): Promise<
         },
         failuresByAgent: outcome.failuresByAgent
       };
-    });
-  } finally {
-    ledger.close();
-  }
+    } finally {
+      ledger.close();
+    }
+  });
 }

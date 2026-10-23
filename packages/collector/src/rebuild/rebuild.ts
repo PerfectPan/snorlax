@@ -26,18 +26,20 @@ export function rebuildStartHour(now: number, days: number): number {
 }
 
 /**
- * One `snorlax rebuild --days n` (plan 3.4.3): under the lock and in one transaction — zeroing every
- * bucket from the window start, dropping the `sessions_seen` rows inside it, rescanning that window with
- * no saved state — then the same commit and snapshot a refresh writes. Zeroed buckets that receive no
- * usage stay as zero rows marked dirty, so a later upload replaces the backend's rows with zeros.
+ * One `snorlax rebuild --days n` (plan 3.4.3): under the lock, with the ledger opened under it, in one
+ * transaction — zeroing every bucket from the window start, dropping the `sessions_seen` rows inside it,
+ * rescanning that window with no saved state — then the same commit and snapshot a refresh writes. Opening
+ * under the lock keeps a rebuild that overlaps a refresh from reading the refresh's pre-commit state.
+ * Zeroed buckets that receive no usage stay as zero rows marked dirty, so a later upload replaces the
+ * backend's rows with zeros.
  */
 export async function runRebuild(deps: RefreshDeps, days: number, hooks?: ScanHooks): Promise<RefreshOutcome> {
   const startedAt = deps.platform.clock.monotonic();
-  const now = deps.platform.clock.now();
-  const startHour = rebuildStartHour(now, days);
-  const ledger = await openLedger(deps.platform, deps.dataDir);
-  try {
-    return await withLedgerLock(deps.platform, deps.dataDir, async () => {
+  return withLedgerLock(deps.platform, deps.dataDir, async () => {
+    const now = deps.platform.clock.now();
+    const startHour = rebuildStartHour(now, days);
+    const ledger = await openLedger(deps.platform, deps.dataDir);
+    try {
       const outcome = await commitScan({
         platform: deps.platform,
         ledger,
@@ -79,8 +81,8 @@ export async function runRebuild(deps: RefreshDeps, days: number, hooks?: ScanHo
         },
         failuresByAgent: outcome.failuresByAgent
       };
-    });
-  } finally {
-    ledger.close();
-  }
+    } finally {
+      ledger.close();
+    }
+  });
 }
