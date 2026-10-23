@@ -90,7 +90,7 @@ struct UsageWidgetView: View {
     private func medium(_ usage: WidgetUsage) -> some View {
         let today = usage.summary.windows.first { $0.id == "today" }
         let week = usage.summary.windows.first { $0.id == "last7d" }
-        let agents = Array(usage.summary.topAgents.prefix(UsageSummaryBuilder.widgetAgentLimit))
+        let agents = Array(usage.agentRows.prefix(UsageSummaryBuilder.widgetAgentLimit))
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 figure("Today", usage.isToday ? today : nil)

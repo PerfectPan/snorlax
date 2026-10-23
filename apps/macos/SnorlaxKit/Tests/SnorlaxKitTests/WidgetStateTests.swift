@@ -43,6 +43,7 @@ final class WidgetStateTests: XCTestCase {
         XCTAssertTrue(usage.isToday)
         XCTAssertEqual(usage.asOfCaption, "as of 10:35")
         XCTAssertEqual(usage.summary.menuTitle, "81.2M")
+        XCTAssertEqual(usage.agentRows.map(\.name), ["claude-code", "codex"])
     }
 
     func testASnapshotFromAnotherDayIsMarkedStale() throws {
@@ -57,6 +58,7 @@ final class WidgetStateTests: XCTestCase {
         }
         XCTAssertFalse(usage.isToday)
         XCTAssertEqual(usage.asOfCaption, "as of 10/23 10:35")
+        XCTAssertTrue(usage.agentRows.isEmpty, "the ranked lists order by today's tokens; a past day must not list them")
     }
 
     func testTheDayIsComparedInTheSnapshotZone() throws {

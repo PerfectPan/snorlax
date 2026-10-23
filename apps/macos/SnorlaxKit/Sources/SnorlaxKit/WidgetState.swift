@@ -16,6 +16,12 @@ public struct WidgetUsage: Equatable, Sendable {
     public let summary: UsageSummary
     public let asOfCaption: String
     public let isToday: Bool
+
+    /// Agent rows for the medium widget: the ranked lists are ordered by
+    /// today's tokens, so a past-day snapshot would mislabel old numbers.
+    public var agentRows: [RankedUsage] {
+        isToday ? summary.topAgents : []
+    }
 }
 
 public enum WidgetSnapshot {
