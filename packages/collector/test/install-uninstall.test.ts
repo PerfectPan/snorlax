@@ -581,13 +581,12 @@ describe("install and uninstall", () => {
         .join("");
 
       // The platform realpath canonicalizes letter case on the default APFS, so on a Mac the guard
-      // refuses; elsewhere the variant is a distinct directory and only known entries would go.
+      // refuses. On a case-sensitive file system the variant is a different path, often one that
+      // cannot even be created (the CI home is under /home), so only the kept files are asserted.
       const result = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: variant });
       if (process.platform === "darwin") {
         expect(result.status).toBe(1);
         expect(z.parse(failureSchema, json(result.stdout)).error.code).toBe("data-dir");
-      } else {
-        expect(result.status).toBe(0);
       }
       expect(existsSync(join(env.home, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(env.home, "keep.txt"))).toBe(true);
