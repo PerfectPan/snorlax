@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { accumulateRecord, createAccumulator, portionRequests } from "../src/buckets/accumulate.ts";
+import { accumulateRecord, createAccumulator, portionRequestCounts } from "../src/buckets/accumulate.ts";
 import { splitByModel } from "../src/buckets/split.ts";
 import { openLedger, type BucketRow } from "../src/ledger/ledger.ts";
 import { runRefresh } from "../src/refresh/refresh.ts";
@@ -126,14 +126,88 @@ describe("splitByModel (the kit's rule until agent-kit K2)", () => {
   });
 });
 
-describe("portionRequests (plan 3.4.1 step 4)", () => {
-  it("counts 1 for a request record and the modelCalls of a turn or session record", () => {
-    const usage = { inputTokens: 1, outputTokens: 1 };
-    const request = record({ granularity: "request", timestamp: 0, usage });
-    expect(portionRequests(request, 7)).toBe(1);
-    const turn = record({ granularity: "turn", timestamp: 0, usage });
-    expect(portionRequests(turn, 3)).toBe(3);
-    expect(portionRequests(turn, undefined)).toBe(1);
+describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
+  const usage = { inputTokens: 1, outputTokens: 1 };
+  const splitTurn = (overrides: { modelCalls?: number; usageByModel: UsageRecord["usageByModel"] }): UsageRecord =>
+    record({
+      granularity: "turn",
+      timestamp: 0,
+      usage,
+      ...(overrides.modelCalls === undefined ? {} : { modelCalls: overrides.modelCalls }),
+      usageByModel: overrides.usageByModel
+    });
+
+  it("counts 1 for every portion of a request record", () => {
+    const request = record({
+      granularity: "request",
+      timestamp: 0,
+      model: "grok-4",
+      modelCalls: 7,
+      usage,
+      usageByModel: { "grok-4": { usage } }
+    });
+    expect(portionRequestCounts(request, splitByModel(request))).toEqual([1]);
+  });
+
+  it("counts an unsplit turn's modelCalls, else 1", () => {
+    const counted = record({ granularity: "turn", timestamp: 0, modelCalls: 3, usage });
+    expect(portionRequestCounts(counted, splitByModel(counted))).toEqual([3]);
+    const uncounted = record({ granularity: "turn", timestamp: 0, usage });
+    expect(portionRequestCounts(uncounted, splitByModel(uncounted))).toEqual([1]);
+  });
+
+  it("gives a counted record's calls to its token-largest portion when no share names its own (all missing)", () => {
+    const turn = splitTurn({
+      modelCalls: 3,
+      usageByModel: {
+        "grok-4": { usage: { inputTokens: 100, outputTokens: 20 } },
+        "grok-4-fast": { usage: { inputTokens: 200, outputTokens: 40 } }
+      }
+    });
+    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([0, 3]);
+  });
+
+  it("gives the leftover calls to the token-largest share without its own count (some missing)", () => {
+    const turn = splitTurn({
+      modelCalls: 3,
+      usageByModel: {
+        "grok-4": { usage: { inputTokens: 200, outputTokens: 40 } },
+        "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 }, modelCalls: 1 }
+      }
+    });
+    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 1]);
+  });
+
+  it("uses every share's own count when each names one (all present)", () => {
+    const turn = splitTurn({
+      modelCalls: 3,
+      usageByModel: {
+        "grok-4": { usage: { inputTokens: 200, outputTokens: 40 }, modelCalls: 2 },
+        "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 }, modelCalls: 1 }
+      }
+    });
+    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 1]);
+  });
+
+  it("keeps known counts that exceed the record's and leaves the missing shares at 0 (over)", () => {
+    const turn = splitTurn({
+      modelCalls: 2,
+      usageByModel: {
+        "grok-4": { usage: { inputTokens: 200, outputTokens: 40 }, modelCalls: 2 },
+        "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 } }
+      }
+    });
+    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 0]);
+  });
+
+  it("uses each share's own count, else 1, when the record reports no modelCalls", () => {
+    const turn = splitTurn({
+      usageByModel: {
+        "grok-4": { usage: { inputTokens: 200, outputTokens: 40 }, modelCalls: 2 },
+        "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 } }
+      }
+    });
+    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 1]);
   });
 });
 
@@ -394,6 +468,47 @@ describe("a turn record with a per-model split (Grok fixtures)", () => {
       // The record stays whole under its own model: no per-model rows, the turn's amount, its two calls.
       expect(rows.map((row) => [row.model, row.requests, row.costUsd])).toEqual([["grok-4", 2, 0.025]]);
       expect(rows[0]?.unpricedRequests).toBe(0);
+    } finally {
+      await setup.remove();
+    }
+  });
+
+  it("adds a turn's leftover calls to its token-largest model when the log names no per-model calls", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    try {
+      await writeGrokSession(setup.home, {
+        sessionId: "gr-3",
+        model: "grok-4",
+        mtimeMs: MTIME,
+        turns: [
+          {
+            promptId: "p1",
+            timestampMs: (HOUR_9 + 50 * 60) * 1000,
+            usage: { inputTokens: 300, outputTokens: 60 },
+            modelCalls: 3,
+            // No modelUsage share carries `modelCalls`: the decoder fills per-model counts only when the
+            // log has them, so the record's three calls have to be distributed, not repeated per model.
+            modelUsage: {
+              "grok-4": { usage: { inputTokens: 200, outputTokens: 40 } },
+              "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 }, modelCalls: 1 }
+            }
+          }
+        ]
+      });
+      await runRefresh({ platform: setup.platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE });
+
+      const ledger = await openLedger(setup.platform, setup.dataDir);
+      let rows: BucketRow[];
+      try {
+        rows = ledger.readBuckets();
+      } finally {
+        ledger.close();
+      }
+      // The three calls land once each: the leftover two on the token-largest share, one on its own count.
+      const grok4 = rows.find((row) => row.agent === "grok" && row.model === "grok-4");
+      expect(grok4).toMatchObject({ requests: 2, unpricedRequests: 2 });
+      const fast = rows.find((row) => row.agent === "grok" && row.model === "grok-4-fast");
+      expect(fast).toMatchObject({ requests: 1, unpricedRequests: 1 });
     } finally {
       await setup.remove();
     }

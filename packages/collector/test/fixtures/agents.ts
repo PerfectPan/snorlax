@@ -206,7 +206,8 @@ export interface GrokTurnFixture {
       string,
       {
         usage: UsageCounts;
-        modelCalls: number;
+        /** Grok logs a model's calls only sometimes; absent here means the log omits the field. */
+        modelCalls?: number;
         costUsdTicks?: number;
       }
     >
@@ -254,7 +255,7 @@ export async function writeGrokSession(home: string, fixture: GrokSessionFixture
                       cachedReadTokens: share.usage.cacheReadTokens ?? 0,
                       cacheCreationTokens: share.usage.cacheWriteTokens ?? 0,
                       reasoningTokens: share.usage.reasoningTokens ?? 0,
-                      modelCalls: share.modelCalls,
+                      ...(share.modelCalls === undefined ? {} : { modelCalls: share.modelCalls }),
                       ...(share.costUsdTicks === undefined ? {} : { costUsdTicks: share.costUsdTicks })
                     }
                   ])

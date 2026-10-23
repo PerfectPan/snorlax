@@ -1,7 +1,7 @@
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 
 import type { BucketDelta } from "../ledger/ledger.ts";
-import { splitByModel } from "./split.ts";
+import { splitByModel, type UsagePortion } from "./split.ts";
 
 /** Sessions already counted in `sessions_seen`, by agent id then session id. */
 export type SeenSessions = Map<string, Set<string>>;
@@ -18,12 +18,44 @@ export interface Accumulator {
 
 export const createAccumulator = (): Accumulator => ({ buckets: new Map(), newSessions: [] });
 
+/** A portion's usage in the kit's `tokens` convention: input plus output. */
+const portionTokens = (portion: UsagePortion): number =>
+  (portion.usage.inputTokens ?? 0) + (portion.usage.outputTokens ?? 0);
+
 /**
- * How many model requests one portion of a record stands for (plan 3.4.1 step 4): 1 for a `request`
- * record; for a `turn`/`session` aggregate the model's `modelCalls`, else the record's, else 1.
+ * How many model requests each portion of a record stands for (plan 3.4.1 step 4): every portion of a
+ * `request` record counts 1; without a split, a `turn`/`session` record counts its `modelCalls`, else 1.
+ * A split record that reports the record's `modelCalls`: a portion naming its own `modelCalls` keeps it,
+ * and the calls left over — never below zero — go to the token-largest portion without a count of its own,
+ * so the portions add back up to the record's calls; the other missing portions count 0 (a Grok turn logs
+ * per-model calls only when the log carries them). Known counts that already exceed the record's leave the
+ * missing portions at 0. Without the record's `modelCalls`, every portion counts its own, else 1.
  */
-export function portionRequests(record: UsageRecord, modelCalls: number | undefined): number {
-  return record.granularity === "request" ? 1 : (modelCalls ?? record.modelCalls ?? 1);
+export function portionRequestCounts(record: UsageRecord, portions: readonly UsagePortion[]): number[] {
+  if (record.granularity === "request") {
+    return portions.map(() => 1);
+  }
+  if (record.modelCalls === undefined) {
+    return portions.map((portion) => portion.modelCalls ?? 1);
+  }
+  let remainder = record.modelCalls;
+  let largest = -1;
+  const known: (number | undefined)[] = portions.map((portion, index) => {
+    if (portion.modelCalls !== undefined) {
+      remainder -= portion.modelCalls;
+      return portion.modelCalls;
+    }
+    const largestSoFar = portions[largest];
+    if (largest < 0 || (largestSoFar !== undefined && portionTokens(portion) > portionTokens(largestSoFar))) {
+      largest = index;
+    }
+    return undefined;
+  });
+  if (largest < 0) {
+    return known.map((count) => count ?? 0);
+  }
+  const leftover = Math.max(remainder, 0);
+  return known.map((count, index) => count ?? (index === largest ? leftover : 0));
 }
 
 const hourOf = (timestampMs: number): number => Math.floor(timestampMs / 3_600_000) * 3600;
@@ -36,6 +68,7 @@ const hourOf = (timestampMs: number): number => Math.floor(timestampMs / 3_600_0
  */
 export function accumulateRecord(record: UsageRecord, into: Accumulator, seen: SeenSessions): void {
   const portions = splitByModel(record);
+  const requests = portionRequestCounts(record, portions);
   const hour = hourOf(record.timestamp);
   const bucketOf = (model: string | undefined): MutableBucket => {
     const key = `${hour}|${record.agent}|${model ?? ""}`;
@@ -71,19 +104,19 @@ export function accumulateRecord(record: UsageRecord, into: Accumulator, seen: S
     bucketOf(portions[0]?.model).sessionsStarted += 1;
   }
 
-  for (const part of portions) {
+  for (const [index, part] of portions.entries()) {
     const bucket = bucketOf(part.model);
     bucket.inputTokens += part.usage.inputTokens ?? 0;
     bucket.cacheReadTokens += part.usage.cacheReadTokens ?? 0;
     bucket.cacheWriteTokens += part.usage.cacheWriteTokens ?? 0;
     bucket.outputTokens += part.usage.outputTokens ?? 0;
     bucket.reasoningTokens += part.usage.reasoningTokens ?? 0;
-    const requests = portionRequests(record, part.modelCalls);
-    bucket.requests += requests;
+    const counted = requests[index] ?? 0;
+    bucket.requests += counted;
     if (part.costUsd !== undefined) {
       bucket.costUsd += part.costUsd;
     } else {
-      bucket.unpricedRequests += requests;
+      bucket.unpricedRequests += counted;
     }
   }
 }
