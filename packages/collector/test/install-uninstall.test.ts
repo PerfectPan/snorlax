@@ -60,6 +60,8 @@ interface InstallEnv {
   readonly launchctl: string;
   readonly os: "darwin" | "linux";
   readonly record: string;
+  /** The stub's loaded-service marker; its content is the plist path `print` reports. */
+  readonly loaded: string;
 }
 
 const run = (env: InstallEnv, args: readonly string[]) =>
@@ -78,15 +80,24 @@ const writeStub = async (dir: string): Promise<string> => {
   const script = join(dir, "launchctl.mjs");
   const source = [
     `#!${process.execPath}`,
-    `import { appendFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";`,
+    `import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";`,
     `import { dirname, join } from "node:path";`,
     `import { fileURLToPath } from "node:url";`,
     `const dir = dirname(fileURLToPath(import.meta.url));`,
     `appendFileSync(join(dir, "argv.jsonl"), JSON.stringify(process.argv.slice(2)) + "\\n");`,
+    `// The marker holds the plist path of the loaded service, like launchd's own state. An empty`,
+    `// marker is a loaded service whose plist "print" cannot name.`,
     `const marker = join(dir, "loaded");`,
-    `const [command] = process.argv.slice(2);`,
-    `if (command === "print") process.exit(existsSync(marker) ? 0 : 1);`,
-    `if (command === "bootstrap") { writeFileSync(marker, "loaded\\n"); process.exit(0); }`,
+    `const [command, target, plistPath] = process.argv.slice(2);`,
+    `if (command === "print") {`,
+    `  if (!existsSync(marker)) process.exit(1);`,
+    `  console.log(target + " = {");`,
+    `  const path = readFileSync(marker, "utf8").trim();`,
+    `  if (path !== "") console.log("\\tpath = " + path);`,
+    `  console.log("}");`,
+    `  process.exit(0);`,
+    `}`,
+    `if (command === "bootstrap") { writeFileSync(marker, plistPath); process.exit(0); }`,
     `if (command === "bootout") {`,
     `  if (!existsSync(marker)) process.exit(1);`,
     `  unlinkSync(marker);`,
@@ -108,7 +119,7 @@ const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) =
   const stubDir = await mkdtemp(join(tmpdir(), "snorlax-launchctl-"));
   try {
     const launchctl = await writeStub(stubDir);
-    await body({ home, launchctl, os, record: join(stubDir, "argv.jsonl") });
+    await body({ home, launchctl, os, record: join(stubDir, "argv.jsonl"), loaded: join(stubDir, "loaded") });
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(stubDir, { recursive: true, force: true });
@@ -260,7 +271,7 @@ describe("install and uninstall", () => {
         ["print", `${domain}/${LABEL}`],
         ["bootstrap", domain, plistPath],
         ["print", `${domain}/${LABEL}`],
-        ["bootout", domain, plistPath],
+        ["bootout", `${domain}/${LABEL}`],
         ["bootstrap", domain, plistPath]
       ]);
     });
@@ -297,8 +308,63 @@ describe("install and uninstall", () => {
         ["print", `${domain}/${LABEL}`],
         ["bootstrap", domain, plistPath],
         ["print", `${domain}/${LABEL}`],
-        ["bootout", domain, plistPath],
+        ["bootout", `${domain}/${LABEL}`],
         ["print", `${domain}/${LABEL}`]
+      ]);
+    });
+  });
+
+  it("refuses to install or uninstall while Snorlax.app's Launch at login owns the loaded service", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const appPlist =
+        "/Applications/Snorlax.app/Contents/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+      await writeFile(env.loaded, appPlist, "utf8");
+
+      const installed = run(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      const installFailure = z.parse(failureSchema, json(installed.stdout));
+      expect(installFailure.error.code).toBe("internal");
+      expect(installFailure.error.message).toContain("Launch at login");
+      expect(existsSync(plistPathOf(env.home))).toBe(false);
+
+      const removed = run(env, ["uninstall", "--data", "--json"]);
+      expect(removed.status).toBe(1);
+      expect(z.parse(failureSchema, json(removed.stdout)).error.code).toBe("internal");
+      // Nothing was touched: no plist, no data deletion, no launchctl call beyond the two prints.
+      expect(existsSync(dataDirOf(env.home))).toBe(true);
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", `gui/${uid()}/${LABEL}`],
+        ["print", `gui/${uid()}/${LABEL}`]
+      ]);
+    });
+  });
+
+  it("refuses when launchctl print does not name the loaded service's plist", async () => {
+    await withInstallHome("darwin", async (env) => {
+      await writeFile(env.loaded, "", "utf8");
+
+      const installed = run(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("cannot be confirmed");
+      expect(existsSync(plistPathOf(env.home))).toBe(false);
+
+      expect(run(env, ["uninstall", "--json"]).status).toBe(1);
+      expect(existsSync(plistPathOf(env.home))).toBe(false);
+    });
+  });
+
+  it("boots out by service target when the CLI's own service is loaded but its plist was deleted", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const target = `gui/${uid()}/${LABEL}`;
+      // launchd still has the service; the plist on disk is gone.
+      await writeFile(env.loaded, plistPathOf(env.home), "utf8");
+
+      const removed = run(env, ["uninstall", "--json"]);
+      expect(removed.status).toBe(0);
+      expect(removed.stdout).toBe('{"schemaVersion":1,"ok":true}\n');
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", target],
+        ["bootout", target]
       ]);
     });
   });

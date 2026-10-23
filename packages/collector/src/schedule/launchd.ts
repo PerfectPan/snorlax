@@ -11,6 +11,10 @@ import { LAUNCH_AGENT_LABEL, launchAgentPlistPath, renderLaunchAgentPlist, type 
 /**
  * macOS LaunchAgent install and uninstall.
  *
+ * The app's Launch at login (`SMAppService`, 3.11) and this LaunchAgent share one launchd label and are
+ * mutually exclusive. Before any change, `launchctl print` must name the loaded service's `path`, and the
+ * CLI refuses — touching no file — unless that path is its own `~/Library/LaunchAgents` plist.
+ *
  * `SNORLAX_LAUNCHCTL`, when set, is the `launchctl` binary. Tests point it at a stub so they never
  * start the real one and never bootstrap into the caller's gui domain.
  * `SNORLAX_OS` (`darwin`, `linux`, or `win32`), when set, selects the scheduler instead of
@@ -144,14 +148,53 @@ const launchctlFailure = (result: LaunchctlResult, action: string): CliError => 
   return new CliError("internal", `launchctl ${action} failed (exit ${result.code ?? "unknown"})${suffix}`);
 };
 
+/**
+ * One `launchctl print` outcome for this label: `loaded` carries the plist the loaded service was started
+ * from, `unknown` means launchd names no `path` line, so the owner cannot be confirmed.
+ */
+type LoadedService =
+  | { readonly state: "not-loaded" }
+  | { readonly state: "loaded"; readonly path: string }
+  | { readonly state: "unknown" };
+
+/** The `path = …` line `launchctl print` prints inside a service's dictionary. */
+const SERVICE_PATH_LINE = /^[\t ]*path[\t ]*=[\t ]*(\S.*?)\s*$/;
+
 /** `launchctl print` exits non-zero when the service is not loaded. A spawn failure throws instead. */
-const serviceIsLoaded = async (platform: SchedulerPlatform, domain: string): Promise<boolean> => {
-  const result = await runLaunchctl(platform, ["print", `${domain}/${LAUNCH_AGENT_LABEL}`]);
-  return result.code === 0;
+const loadedService = async (platform: SchedulerPlatform, target: string): Promise<LoadedService> => {
+  const result = await runLaunchctl(platform, ["print", target]);
+  if (result.code !== 0) {
+    return { state: "not-loaded" };
+  }
+  for (const line of result.stdout.split("\n")) {
+    const match = SERVICE_PATH_LINE.exec(line);
+    if (match?.[1] !== undefined) {
+      return { state: "loaded", path: match[1] };
+    }
+  }
+  return { state: "unknown" };
 };
 
-const bootout = async (platform: SchedulerPlatform, domain: string, plistPath: string): Promise<void> => {
-  const result = await runLaunchctl(platform, ["bootout", domain, plistPath]);
+/**
+ * Plan 3.11 keeps the app's `SMAppService` agent and the CLI's LaunchAgent mutually exclusive: launchd
+ * holds one label, and two same-label plists would fight over the load at every login. The CLI therefore
+ * changes nothing — not its own plist, not the data directory — unless the loaded service provably comes
+ * from its own `~/Library/LaunchAgents` plist.
+ */
+const refuseForeignService = (loaded: LoadedService, plistPath: string): void => {
+  if (loaded.state === "not-loaded" || (loaded.state === "loaded" && loaded.path === plistPath)) {
+    return;
+  }
+  const detail =
+    loaded.state === "loaded"
+      ? `${LAUNCH_AGENT_LABEL} is already registered by Snorlax.app's Launch at login (${loaded.path}); ` +
+        "turn Launch at login off in Snorlax's Settings first"
+      : `launchctl print names no plist for the loaded ${LAUNCH_AGENT_LABEL} agent, so its owner cannot be confirmed`;
+  throw new CliError("internal", `refusing to change the LaunchAgent: ${detail}`);
+};
+
+const bootout = async (platform: SchedulerPlatform, target: string): Promise<void> => {
+  const result = await runLaunchctl(platform, ["bootout", target]);
   if (result.code !== 0) {
     throw launchctlFailure(result, "bootout");
   }
@@ -176,6 +219,11 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
   requireLaunchd(platform, "install");
   requireAbsolute(dataDir);
   const plistPath = launchAgentPlistPath(platform.home);
+  const domain = guiDomain(currentUid());
+  const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
+  // Ownership comes before any write: a foreign or unattributable service is never replaced.
+  const loaded = await loadedService(platform, target);
+  refuseForeignService(loaded, plistPath);
   const plist = renderLaunchAgentPlist({
     ...runningCollectorPaths(),
     dataDir,
@@ -190,10 +238,10 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
     }
     throw new CliError("internal", `cannot write ${plistPath}: ${errorMessage(error)}`);
   }
-  // bootstrap rejects a service that is already loaded, so a repeat install boots out first.
-  const domain = guiDomain(currentUid());
-  if (await serviceIsLoaded(platform, domain)) {
-    await bootout(platform, domain, plistPath);
+  // bootstrap rejects a service that is already loaded, so a repeat install boots out first — by service
+  // target, so a hand-deleted plist cannot block the bootout.
+  if (loaded.state === "loaded") {
+    await bootout(platform, target);
   }
   await bootstrap(platform, domain, plistPath);
   return plistPath;
@@ -208,8 +256,11 @@ export async function uninstallLaunchAgent(
   requireAbsolute(dataDir);
   const plistPath = launchAgentPlistPath(platform.home);
   const domain = guiDomain(currentUid());
-  if (await serviceIsLoaded(platform, domain)) {
-    await bootout(platform, domain, plistPath);
+  const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
+  const loaded = await loadedService(platform, target);
+  refuseForeignService(loaded, plistPath);
+  if (loaded.state === "loaded") {
+    await bootout(platform, target);
   }
   try {
     await platform.fs.remove(plistPath);
