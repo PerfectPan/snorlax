@@ -31,9 +31,14 @@ final class FormattingTests: XCTestCase {
     }
 
     func testDayCalendarFollowsTheSnapshotZone() {
-        let calendar = UsageFormat.dayCalendar(TimeZone(identifier: "Asia/Shanghai")!)
+        // A zone that differs from the process zone, so an implementation that
+        // ignores the argument cannot pass on any machine.
+        let zone = TimeZone.current.identifier == "Asia/Shanghai"
+            ? TimeZone(identifier: "America/Santiago")!
+            : TimeZone(identifier: "Asia/Shanghai")!
+        let calendar = UsageFormat.dayCalendar(zone)
 
         XCTAssertEqual(calendar.identifier, .gregorian)
-        XCTAssertEqual(calendar.timeZone.identifier, "Asia/Shanghai")
+        XCTAssertEqual(calendar.timeZone.identifier, zone.identifier)
     }
 }
