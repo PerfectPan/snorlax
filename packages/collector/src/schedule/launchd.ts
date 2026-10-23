@@ -383,6 +383,11 @@ export async function uninstallLaunchAgent(
   const plistPath = launchAgentPlistPath(platform.home);
   const domain = guiDomain(currentUid());
   const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
+  // The data-directory guard runs before anything changes: a refused `--data` must not have already
+  // booted out the agent and removed its plist.
+  const dataDirToDelete = options.deleteData
+    ? await resolvedDeletableDataDir(platform.fs, dataDir, platform.home)
+    : undefined;
   const loaded = await loadedService(platform, target);
   refuseForeignService(loaded, plistPath, target);
   if (loaded.state === "loaded") {
@@ -393,17 +398,19 @@ export async function uninstallLaunchAgent(
   } catch (error) {
     throw new CliError("internal", `cannot remove ${plistPath}: ${errorMessage(error)}`);
   }
-  if (!options.deleteData) {
+  if (dataDirToDelete === undefined) {
     return { dataLeftovers: [] };
   }
   await removeKeychainItem();
-  const resolved = await resolvedDeletableDataDir(platform.fs, dataDir, platform.home);
   try {
-    return { dataLeftovers: await deleteKnownDataEntries(platform.fs, resolved) };
+    return { dataLeftovers: await deleteKnownDataEntries(platform.fs, dataDirToDelete) };
   } catch (error) {
     if (error instanceof CliError) {
       throw error;
     }
-    throw new CliError("data-dir", `cannot delete the data directory ${resolved}: ${errorMessage(error)}`);
+    throw new CliError(
+      "data-dir",
+      `cannot delete the data directory ${dataDirToDelete}: ${errorMessage(error)}`
+    );
   }
 }

@@ -479,6 +479,24 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("refuses --data before touching the LaunchAgent when the data directory is not deletable", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const domain = `gui/${uid()}`;
+      const plistPath = plistPathOf(env.home);
+      expect(run(env, ["install", "--json"]).status).toBe(0);
+
+      const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: env.home });
+      expect(removed.status).toBe(1);
+      expect(z.parse(failureSchema, json(removed.stdout)).error.code).toBe("data-dir");
+      // Nothing changed before the refusal: the service is still loaded and the plist still in place.
+      expect(existsSync(plistPath)).toBe(true);
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", `${domain}/${LABEL}`],
+        ["bootstrap", domain, plistPath]
+      ]);
+    });
+  });
+
   it("reports a data-dir failure when an emptied data directory cannot be removed", async () => {
     await withInstallHome("darwin", async (env) => {
       // install creates the data directory; the read-only HOME then keeps its rmdir from succeeding.
