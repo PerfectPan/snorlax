@@ -124,23 +124,6 @@ const currentUid = (): number => {
 
 const guiDomain = (uid: number): string => `gui/${uid}`;
 
-/**
- * `platform.fs.remove` rejects a non-empty directory. Children are removed first. `stat` does not
- * follow symlinks, so a symlink is unlinked and its target is left alone.
- */
-const removeTree = async (fs: Platform["fs"], path: string): Promise<void> => {
-  const stat = await fs.stat(path);
-  if (stat === undefined) {
-    return;
-  }
-  if (stat.kind === "dir") {
-    for (const entry of await fs.list(path)) {
-      await removeTree(fs, join(path, entry.name));
-    }
-  }
-  await fs.remove(path);
-};
-
 type DirEntry = Awaited<ReturnType<Platform["fs"]["list"]>>[number];
 
 /** `fs.list` rejects a missing directory; deletion treats that as nothing left to remove. */
@@ -176,15 +159,54 @@ const LEDGER_BACKUP_PATTERN = /^ledger\.db\.bak-v(\d+)$/;
 /** `platform.fs.writeAtomic` leaves `.<16 hex>.tmp` beside the target when a write crashes. */
 const ATOMIC_TEMP_PATTERN = /^\.[0-9a-f]{16}\.tmp$/;
 
+/** Files the collector writes inside `logs/` (3.9); the last two are what older installs redirected launchd to. */
+const KNOWN_LOG_FILES = [
+  "snorlax.log",
+  "snorlax.log.1",
+  "snorlax.log.2",
+  "refresh.stdout.log",
+  "refresh.stderr.log"
+] as const;
+
+/**
+ * Removes `dir` only when it is empty, and returns the entries that kept it alive (mapped through
+ * `name` so a nested directory can be reported as `logs/<entry>`). Any other failure — an empty
+ * directory that cannot be removed, a listing that comes back unreadable — is a `data-dir` error:
+ * a kept directory must never read as deleted.
+ */
+const removeDirKeepingLeftovers = async (
+  fs: Platform["fs"],
+  dir: string,
+  name: (entry: string) => string = (entry) => entry
+): Promise<readonly string[]> => {
+  try {
+    await fs.remove(dir);
+    return [];
+  } catch (error) {
+    const entries = await listOrNothing(fs, dir);
+    if (entries.length === 0) {
+      throw new CliError("data-dir", `cannot delete ${dir}: ${errorMessage(error)}`);
+    }
+    return entries.map((entry) => name(entry.name));
+  }
+};
+
 /**
  * Deletes only entries snorlax wrote, then removes the directory itself only when nothing else
- * remains; the names still in it are returned for the command output. This is the sole deletion path
- * for `uninstall --data`, so an unexpected `SNORLAX_HOME` can never cost user files.
+ * remains; the surviving names are returned for the command output. Nothing here deletes
+ * recursively: `logs/` is emptied file by file too, so a data directory that happens to be
+ * `~/Library` (same name as `logs`, case-insensitive APFS) cannot lose the user's `Logs` tree.
+ * This is the sole deletion path for `uninstall --data`.
  */
 const deleteKnownDataEntries = async (fs: Platform["fs"], dir: string): Promise<readonly string[]> => {
+  const leftovers: string[] = [];
   for (const name of KNOWN_DATA_ENTRIES) {
     if (name === "logs") {
-      await removeTree(fs, join(dir, name));
+      const logsDir = join(dir, name);
+      for (const logName of KNOWN_LOG_FILES) {
+        await fs.remove(join(logsDir, logName));
+      }
+      leftovers.push(...(await removeDirKeepingLeftovers(fs, logsDir, (entry) => `${name}/${entry}`)));
     } else {
       await fs.remove(join(dir, name));
     }
@@ -194,13 +216,8 @@ const deleteKnownDataEntries = async (fs: Platform["fs"], dir: string): Promise<
       await fs.remove(join(dir, entry.name));
     }
   }
-  try {
-    await fs.remove(dir);
-  } catch {
-    // Not empty — the surviving entries are listed below and the directory is kept.
-  }
-  const remaining = await listOrNothing(fs, dir);
-  return remaining.map((entry) => entry.name).sort();
+  leftovers.push(...(await removeDirKeepingLeftovers(fs, dir)));
+  return leftovers.sort();
 };
 
 const runLaunchctl = async (platform: SchedulerPlatform, args: readonly string[]) => {

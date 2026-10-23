@@ -416,6 +416,51 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("keeps a user file inside the data directory's logs/ and lists it", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const dataDir = dataDirOf(env.home);
+      await mkdir(join(dataDir, "logs"), { recursive: true });
+      await writeFile(join(dataDir, "logs", "keep.txt"), "unrelated\n");
+
+      const removed = run(env, ["uninstall", "--data"]);
+      expect(removed.status).toBe(0);
+      expect(existsSync(join(dataDir, "logs", "keep.txt"))).toBe(true);
+      expect(removed.stdout).toContain("logs/keep.txt");
+    });
+  });
+
+  it("keeps ~/Library/Logs intact when SNORLAX_HOME points at ~/Library", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const reports = join(env.home, "Library", "Logs", "DiagnosticReports");
+      await mkdir(reports, { recursive: true });
+      await writeFile(join(reports, "x.ips"), "crash report\n");
+
+      // `logs` matches the user's `Logs` on a case-insensitive volume; only known log files may go.
+      const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: join(env.home, "Library") });
+      expect(removed.status).toBe(0);
+      expect(existsSync(join(reports, "x.ips"))).toBe(true);
+      expect(existsSync(join(env.home, "Library"))).toBe(true);
+    });
+  });
+
+  it("reports a data-dir failure when an emptied data directory cannot be removed", async () => {
+    await withInstallHome("darwin", async (env) => {
+      // install creates the data directory; the read-only HOME then keeps its rmdir from succeeding.
+      expect(run(env, ["install", "--json"]).status).toBe(0);
+      await chmod(env.home, 0o555);
+      try {
+        const removed = run(env, ["uninstall", "--data", "--json"]);
+        expect(removed.status).toBe(1);
+        const failure = z.parse(failureSchema, json(removed.stdout));
+        expect(failure.error.code).toBe("data-dir");
+        expect(failure.error.message).toContain("cannot delete");
+      } finally {
+        await chmod(env.home, 0o755);
+      }
+      expect(existsSync(dataDirOf(env.home))).toBe(true);
+    });
+  });
+
   it("uninstall --data deletes the data directory and leaves the fixture agent files", async () => {
     await withInstallHome("darwin", async (env) => {
       await ensureAgentDirs(env.home);
