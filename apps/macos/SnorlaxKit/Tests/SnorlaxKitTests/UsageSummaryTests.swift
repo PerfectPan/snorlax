@@ -136,6 +136,20 @@ final class UsageSummaryTests: XCTestCase {
         XCTAssertNotNil(day)
         XCTAssertEqual(UsageFormat.dayLabel(day!, timeZone: zone), "10/22")
         XCTAssertNil(UsageFormat.dayDate("2026/10/22", timeZone: zone))
+        XCTAssertNil(UsageFormat.dayDate("2026-02-30", timeZone: zone))
+    }
+
+    func testChartDayParsingAcrossDSTGapMidnights() throws {
+        // Both midnights do not exist: the zones jump from 00:00 straight to
+        // 01:00, and a non-lenient date formatter rejects the input entirely.
+        let santiago = TimeZone(identifier: "America/Santiago")!
+        let santiagoDay = UsageFormat.dayDate("2026-09-06", timeZone: santiago)
+        XCTAssertNotNil(santiagoDay)
+        XCTAssertEqual(UsageFormat.dayLabel(santiagoDay!, timeZone: santiago), "9/6")
+        let havana = TimeZone(identifier: "America/Havana")!
+        let havanaDay = UsageFormat.dayDate("2026-03-08", timeZone: havana)
+        XCTAssertNotNil(havanaDay)
+        XCTAssertEqual(UsageFormat.dayLabel(havanaDay!, timeZone: havana), "3/8")
     }
 
     // MARK: - Custom snapshots

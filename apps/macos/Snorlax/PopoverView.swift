@@ -102,6 +102,8 @@ struct PopoverView: View {
                 }
             }
             .frame(height: 140)
+            // Bars and ticks land on the snapshot's own days, not the Mac's zone (R8).
+            .environment(\.timeZone, summary.timeZone)
             .accessibilityLabel("Tokens for the last 30 days")
         }
         Text(summary.statusLine)
