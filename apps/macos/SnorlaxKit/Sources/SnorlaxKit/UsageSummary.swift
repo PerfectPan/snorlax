@@ -33,7 +33,7 @@ public struct RankedUsage: Equatable, Identifiable, Sendable {
     /// The device list marks which row is this Mac — but not when the name
     /// already says it.
     public var listLabel: String {
-        isThisDevice && name != "This Mac" ? "\(name) · this Mac" : name
+        isThisDevice && name != UsageSummaryBuilder.thisMacName ? "\(name) · this Mac" : name
     }
 }
 
@@ -63,6 +63,8 @@ public enum UsageSummaryBuilder {
     /// How many agent and model rows the popover shows. The widget takes the first three agents.
     public static let popoverLimit = 5
     public static let widgetAgentLimit = 3
+    /// The display name for an unnamed local device (R5's local view).
+    public static let thisMacName = "This Mac"
 
     /// - Parameters:
     ///   - now: relative scan and sync times are measured against it.
@@ -138,7 +140,7 @@ public enum UsageSummaryBuilder {
             if !rawName.isEmpty {
                 name = rawName
             } else if entry.isThisDevice {
-                name = "This Mac"
+                name = UsageSummaryBuilder.thisMacName
             } else {
                 name = String(entry.deviceId.prefix(8))
             }
