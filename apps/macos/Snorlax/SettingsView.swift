@@ -101,6 +101,15 @@ struct SettingsView: View {
                 Button("Run diagnostics") {
                     model.runDiagnostics()
                 }
+                // S1 debug info: the App Group id and where the widget copy lives.
+                Text(model.appGroupIdentifier)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text(model.appGroupDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
                 if let doctor = model.diagnostics {
                     Text(doctor.healthy ? "Healthy" : "Problems found")
                     ForEach(Array(doctor.checks.enumerated()), id: \.offset) { _, check in

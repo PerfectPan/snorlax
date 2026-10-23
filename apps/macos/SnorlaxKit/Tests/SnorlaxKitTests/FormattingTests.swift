@@ -21,7 +21,12 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(UsageFormat.cost(312.4), "$312.40")
         XCTAssertEqual(UsageFormat.cost(1583.2), "$1,583.20")
         XCTAssertEqual(UsageFormat.cost(6190.7), "$6,190.70")
-        XCTAssertEqual(UsageFormat.costLabel(usd: 312.4, unpricedRequests: 0), "$312.40")
-        XCTAssertEqual(UsageFormat.costLabel(usd: 312.4, unpricedRequests: 4), "$312.40 unpriced")
+    }
+
+    func testCostLabelMarksUnpricedRequests() {
+        XCTAssertEqual(UsageFormat.costLabel(costText: "$312.40", requests: 2210, unpricedRequests: 0), "$312.40")
+        XCTAssertEqual(UsageFormat.costLabel(costText: "$312.40", requests: 2210, unpricedRequests: 3), "≥ $312.40")
+        XCTAssertEqual(UsageFormat.costLabel(costText: "$0.00", requests: 5, unpricedRequests: 5), "unpriced")
+        XCTAssertEqual(UsageFormat.costLabel(costText: "$0.00", requests: 0, unpricedRequests: 0), "$0.00")
     }
 }

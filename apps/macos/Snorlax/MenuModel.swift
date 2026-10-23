@@ -146,7 +146,7 @@ final class MenuModel: ObservableObject {
         }
         do {
             if try publisher?.publish(data) == true {
-                appGroupDetail = publisher?.fileURL.path
+                appGroupDetail = publisher.map(\.fileURL.path) ?? appGroupDetail
             }
         } catch {
             appGroupDetail = Presenter.message(for: error)

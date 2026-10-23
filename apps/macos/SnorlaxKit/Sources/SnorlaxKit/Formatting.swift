@@ -40,11 +40,83 @@ public enum UsageFormat {
         return negative ? "-\(text)" : text
     }
 
-    /// Cost plus the unpriced marker when the window counted requests with no price (Spec R9).
-    public static func costLabel(usd: Double, unpricedRequests: Int) -> String {
-        let text = cost(usd)
-        return unpricedRequests > 0 ? "\(text) unpriced" : text
+    /// Cost plus the unpriced marker (Spec R9). When every request in the window
+    /// is unpriced the amount says nothing, so the label is just `unpriced`;
+    /// when some are, the shown total is a lower bound: `≥ $x.xx`.
+    public static func costLabel(costText: String, requests: Int, unpricedRequests: Int) -> String {
+        guard unpricedRequests > 0 else { return costText }
+        if requests > 0, unpricedRequests >= requests {
+            return "unpriced"
+        }
+        return "≥ \(costText)"
     }
+
+    /// A daily date like `2026-10-22` as the start of that day in `timeZone`
+    /// (R8: the snapshot cut its days there). nil when unparseable; the parsed
+    /// date must format back to the input, so separators cannot drift.
+    public static func dayDate(_ text: String, timeZone: TimeZone) -> Date? {
+        let formatter = dayFormatter(timeZone)
+        guard let date = formatter.date(from: text), formatter.string(from: date) == text else {
+            return nil
+        }
+        return date
+    }
+
+    /// Chart axis label `M/d`, formatted in the zone the days were parsed in.
+    public static func dayLabel(_ date: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: date)
+    }
+
+    /// An ISO 8601 instant as a relative text: `just now`, `3 min ago`,
+    /// `2 hr ago`, `1 day ago`; a week or older (or in the future) shows the
+    /// local date-time. nil when unparseable. Handles timestamps with and
+    /// without fractional seconds.
+    public static func instantText(_ iso: String, now: Date, timeZone: TimeZone) -> String? {
+        guard let date = instant(iso) else { return nil }
+        let delta = now.timeIntervalSince(date)
+        if delta < 0 || delta >= 7 * 86_400 {
+            return localText(date, timeZone: timeZone)
+        }
+        if delta < 60 { return "just now" }
+        if delta < 3_600 { return "\(Int(delta / 60)) min ago" }
+        if delta < 86_400 { return "\(Int(delta / 3_600)) hr ago" }
+        let days = Int(delta / 86_400)
+        return days == 1 ? "1 day ago" : "\(days) days ago"
+    }
+
+    /// ISO 8601 with or without fractional seconds.
+    public static func instant(_ iso: String) -> Date? {
+        if let date = fractionalSecondsFormatter.date(from: iso) { return date }
+        return wholeSecondsFormatter.date(from: iso)
+    }
+
+    private static func localText(_ date: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private static func dayFormatter(_ timeZone: TimeZone) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }
+
+    private static let fractionalSecondsFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let wholeSecondsFormatter = ISO8601DateFormatter()
 
     private static func fractionPlaces(_ value: Double) -> Int {
         if value >= 100 { return 0 }

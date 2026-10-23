@@ -6,11 +6,12 @@ public struct DayWindowModel: Equatable, Identifiable, Sendable {
     public var title: String
     public var tokensText: String
     public var costText: String
-    public var unpriced: Bool
+    public var requests: Int
+    public var unpricedRequests: Int
     public var tokens: Int
 
     public var costLabel: String {
-        unpriced ? "\(costText) unpriced" : costText
+        UsageFormat.costLabel(costText: costText, requests: requests, unpricedRequests: unpricedRequests)
     }
 }
 
@@ -20,19 +21,22 @@ public struct RankedUsage: Equatable, Identifiable, Sendable {
     public var name: String
     public var tokensText: String
     public var costText: String
-    public var unpriced: Bool
+    public var requests: Int
+    public var unpricedRequests: Int
     public var tokens: Int
     public var isThisDevice: Bool
 
     public var costLabel: String {
-        unpriced ? "\(costText) unpriced" : costText
+        UsageFormat.costLabel(costText: costText, requests: requests, unpricedRequests: unpricedRequests)
     }
 }
 
-/// One bar of the 30-day chart. `tokens` is the snapshot's daily total, not the short form.
+/// One bar of the 30-day chart. `day` is the bar's date as the start of that
+/// local day in the snapshot's time zone (R8); nil when the date is unparseable.
 public struct DailyBar: Equatable, Identifiable, Sendable {
     public var id: String
     public var date: String
+    public var day: Date?
     public var tokens: Int
 }
 
@@ -44,6 +48,8 @@ public struct UsageSummary: Equatable, Sendable {
     public var topModels: [RankedUsage]
     public var devices: [RankedUsage]
     public var daily: [DailyBar]
+    /// Zone the snapshot cut its days in; the chart axis labels use it too.
+    public var timeZone: TimeZone
     public var statusLine: String
 }
 
@@ -52,7 +58,11 @@ public enum UsageSummaryBuilder {
     public static let popoverLimit = 5
     public static let widgetAgentLimit = 3
 
-    public static func make(_ snapshot: Snapshot) -> UsageSummary {
+    /// - Parameters:
+    ///   - now: relative scan and sync times are measured against it.
+    ///   - timeZone: zone of the device showing the summary, for old timestamps.
+    public static func make(_ snapshot: Snapshot, now: Date = Date(), timeZone: TimeZone = .current) -> UsageSummary {
+        let zone = TimeZone(identifier: snapshot.timeZone) ?? timeZone
         let windows = [
             window(snapshot.totals.today, id: "today", title: "Today"),
             window(snapshot.totals.last7D, id: "last7d", title: "7 days"),
@@ -61,30 +71,27 @@ public enum UsageSummaryBuilder {
         return UsageSummary(
             menuTitle: windows[0].tokensText,
             windows: windows,
-            topAgents: ranked(snapshot.byAgent.map { entry in
-                rankedRow(id: entry.agent, name: entry.agent, total: entry.today, isThisDevice: false)
-            }),
-            topModels: ranked(snapshot.byModel.map { entry in
-                rankedRow(id: entry.model, name: entry.model, total: entry.today, isThisDevice: false)
-            }),
-            devices: ranked(snapshot.byDevice.map { entry in
-                let rawName = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return rankedRow(
-                    id: entry.deviceId,
-                    name: rawName.isEmpty ? entry.deviceId : rawName,
-                    total: entry.today,
-                    isThisDevice: entry.isThisDevice
-                )
-            }),
-            daily: snapshot.daily.map { DailyBar(id: $0.date, date: $0.date, tokens: $0.tokens) },
-            statusLine: statusLine(snapshot.status)
+            topAgents: ranked(agentRows(snapshot.byAgent)),
+            topModels: ranked(modelRows(snapshot.byModel)),
+            devices: ranked(deviceRows(snapshot.byDevice)),
+            daily: snapshot.daily.map { entry in
+                DailyBar(id: entry.date, date: entry.date, day: UsageFormat.dayDate(entry.date, timeZone: zone), tokens: entry.tokens)
+            },
+            timeZone: zone,
+            statusLine: statusLine(snapshot.status, now: now, timeZone: timeZone)
         )
     }
 
-    /// Last scan, last sync, and decode failures per agent (plan 4.2). Timestamps stay as written.
-    public static func statusLine(_ status: SnapshotStatus) -> String {
-        let scan = status.lastScanAt ?? "—"
-        let syncAt = status.sync.at.map { " at \($0)" } ?? ""
+    /// Last scan, last sync, and decode failures per agent, as relative times
+    /// (plan 4.2). Older than a week shows the local date-time instead.
+    public static func statusLine(
+        _ status: SnapshotStatus,
+        now: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        let scan = status.lastScanAt.flatMap { UsageFormat.instantText($0, now: now, timeZone: timeZone) } ?? "—"
+        let syncAt = status.sync.at.flatMap { UsageFormat.instantText($0, now: now, timeZone: timeZone) }
+            .map { " at \($0)" } ?? ""
         let failures = status.failuresByAgent.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }
         let failureText = failures.isEmpty ? "no failures" : failures.joined(separator: ", ")
         return "Last scan \(scan) · sync \(status.sync.state.rawValue)\(syncAt) · \(failureText)"
@@ -96,9 +103,43 @@ public enum UsageSummaryBuilder {
             title: title,
             tokensText: UsageFormat.shortTokens(total.tokens),
             costText: UsageFormat.cost(total.costUsd),
-            unpriced: total.unpricedRequests > 0,
+            requests: total.requests,
+            unpricedRequests: total.unpricedRequests,
             tokens: total.tokens
         )
+    }
+
+    /// The windows show today (R5), so a row with no usage today is noise.
+    private static func agentRows(_ entries: [ByAgent]) -> [RankedUsage] {
+        entries.compactMap { entry in
+            guard entry.today.tokens > 0 else { return nil }
+            return rankedRow(id: entry.agent, name: entry.agent, total: entry.today, isThisDevice: false)
+        }
+    }
+
+    private static func modelRows(_ entries: [ByModel]) -> [RankedUsage] {
+        entries.compactMap { entry in
+            guard entry.today.tokens > 0 else { return nil }
+            return rankedRow(id: entry.model, name: entry.model, total: entry.today, isThisDevice: false)
+        }
+    }
+
+    private static func deviceRows(_ entries: [ByDevice]) -> [RankedUsage] {
+        // A lone local device is the totals above; a Devices list would repeat them.
+        guard !(entries.count == 1 && entries[0].isThisDevice) else { return [] }
+        return entries.compactMap { entry in
+            guard entry.today.tokens > 0 else { return nil }
+            let rawName = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let name: String
+            if !rawName.isEmpty {
+                name = rawName
+            } else if entry.isThisDevice {
+                name = "This Mac"
+            } else {
+                name = String(entry.deviceId.prefix(8))
+            }
+            return rankedRow(id: entry.deviceId, name: name, total: entry.today, isThisDevice: entry.isThisDevice)
+        }
     }
 
     private static func rankedRow(id: String, name: String, total: WindowTotal, isThisDevice: Bool) -> RankedUsage {
@@ -107,7 +148,8 @@ public enum UsageSummaryBuilder {
             name: name,
             tokensText: UsageFormat.shortTokens(total.tokens),
             costText: UsageFormat.cost(total.costUsd),
-            unpriced: total.unpricedRequests > 0,
+            requests: total.requests,
+            unpricedRequests: total.unpricedRequests,
             tokens: total.tokens,
             isThisDevice: isThisDevice
         )

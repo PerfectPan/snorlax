@@ -43,14 +43,6 @@ struct PopoverView: View {
                     NSApplication.shared.terminate(nil)
                 }
             }
-            Text(model.appGroupIdentifier)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            Text(model.appGroupDetail)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
         }
         .padding(16)
         .frame(width: 440)
@@ -82,14 +74,32 @@ struct PopoverView: View {
             Text("No daily totals yet.")
                 .foregroundStyle(.secondary)
         } else {
-            Chart(summary.daily) { bar in
+            let bars = summary.daily.compactMap { bar in bar.day.map { (day: $0, tokens: bar.tokens) } }
+            Chart(bars, id: \.day) { bar in
                 BarMark(
-                    x: .value("Day", bar.date),
+                    x: .value("Day", bar.day, unit: .day),
                     y: .value("Tokens", bar.tokens)
                 )
             }
             .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 4))
+                AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(UsageFormat.dayLabel(date, timeZone: summary.timeZone))
+                        }
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let tokens = value.as(Int.self) {
+                            Text(UsageFormat.shortTokens(tokens))
+                        }
+                    }
+                }
             }
             .frame(height: 140)
             .accessibilityLabel("Tokens for the last 30 days")
