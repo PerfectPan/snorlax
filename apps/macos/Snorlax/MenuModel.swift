@@ -26,6 +26,7 @@ final class MenuModel: ObservableObject {
     private let client: CollectorClient
     private let watcher: SnapshotWatcher
     private let reloader: WidgetCenterReloader
+    private var publisher: AppGroupSnapshotPublisher?
 
     init() {
         let directory = DataDirectory.resolve()
@@ -140,10 +141,13 @@ final class MenuModel: ObservableObject {
             appGroupDetail = "App Group container is unavailable for this signature."
             return
         }
+        if publisher?.container != container {
+            publisher = AppGroupSnapshotPublisher(container: container, reloader: reloader)
+        }
         do {
-            let copy = AppGroupSnapshotCopy(container: container, reloader: reloader)
-            try copy.publish(data)
-            appGroupDetail = copy.fileURL.path
+            if try publisher?.publish(data) == true {
+                appGroupDetail = publisher?.fileURL.path
+            }
         } catch {
             appGroupDetail = Presenter.message(for: error)
         }

@@ -46,3 +46,30 @@ public struct AppGroupSnapshotCopy {
         reloader.reloadAllTimelines()
     }
 }
+
+/// Publishes an accepted snapshot to the App Group container once per distinct
+/// snapshot. Widget refreshes draw on a daily budget (Spec R12), so re-reads of
+/// an unchanged snapshot — the 60 s fallback, opening the menu, Refresh now —
+/// must not copy the file or reload timelines again.
+public struct AppGroupSnapshotPublisher {
+    public let copy: AppGroupSnapshotCopy
+    private var lastGeneratedAt: String?
+
+    public init(container: URL, reloader: any TimelineReloading) {
+        self.copy = AppGroupSnapshotCopy(container: container, reloader: reloader)
+    }
+
+    public var container: URL { copy.container }
+    public var fileURL: URL { copy.fileURL }
+
+    /// Returns whether the snapshot changed since the last accepted publish and
+    /// was copied; false leaves the file and the widget timelines untouched.
+    @discardableResult
+    public mutating func publish(_ data: Data) throws -> Bool {
+        let snapshot = try SnapshotLoader.load(data)
+        guard snapshot.generatedAt != lastGeneratedAt else { return false }
+        try copy.publish(data)
+        lastGeneratedAt = snapshot.generatedAt
+        return true
+    }
+}
