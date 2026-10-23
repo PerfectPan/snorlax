@@ -5,10 +5,15 @@ import { join } from "node:path";
  * Program paths are absolute because launchd does not search `PATH`. `SNORLAX_HOME` is copied
  * into `EnvironmentVariables` only when install itself was given that override; otherwise the
  * agent uses the default data directory, and launchd's gui domain already sets `HOME`.
+ * StandardOutPath/StandardErrorPath are /dev/null: refresh's summary already goes to the rotating
+ * `logs/snorlax.log` (plan 3.9), and an unrotated launchd redirect file would only grow.
  */
 export const LAUNCH_AGENT_LABEL = "io.github.perfectpan.snorlax.refresh";
 export const LAUNCH_AGENT_PLIST_NAME = `${LAUNCH_AGENT_LABEL}.plist`;
 export const REFRESH_INTERVAL_SECONDS = 300;
+
+/** launchd redirects both standard streams here; the collector's own log file does the recording. */
+export const LAUNCHD_NULL_OUTPUT = "/dev/null";
 
 export interface LaunchAgentSpec {
   readonly nodePath: string;
@@ -42,10 +47,6 @@ const stringArray = (name: string, values: readonly string[], level: number): st
 export const launchAgentPlistPath = (home: string): string =>
   join(home, "Library", "LaunchAgents", LAUNCH_AGENT_PLIST_NAME);
 
-export const refreshStdoutLog = (dataDir: string): string => join(dataDir, "logs", "refresh.stdout.log");
-
-export const refreshStderrLog = (dataDir: string): string => join(dataDir, "logs", "refresh.stderr.log");
-
 /** XML property list. Callers parse it back; do not match the text loosely. */
 export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   const lines = [
@@ -59,8 +60,8 @@ export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
     `${pad(1)}<integer>${REFRESH_INTERVAL_SECONDS}</integer>`,
     key("RunAtLoad", 1),
     `${pad(1)}<true/>`,
-    stringEntry("StandardOutPath", refreshStdoutLog(spec.dataDir), 1),
-    stringEntry("StandardErrorPath", refreshStderrLog(spec.dataDir), 1)
+    stringEntry("StandardOutPath", LAUNCHD_NULL_OUTPUT, 1),
+    stringEntry("StandardErrorPath", LAUNCHD_NULL_OUTPUT, 1)
   ];
   if (spec.snorlaxHome !== undefined) {
     lines.push(

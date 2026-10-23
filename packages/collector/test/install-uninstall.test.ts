@@ -30,8 +30,9 @@ const plistFields = {
   ProgramArguments: z.tuple([z.string(), z.string(), z.literal("refresh")]),
   StartInterval: z.literal(300),
   RunAtLoad: z.literal(true),
-  StandardOutPath: z.string(),
-  StandardErrorPath: z.string()
+  // launchd's redirect files are never written: the collector logs to the rotating snorlax.log.
+  StandardOutPath: z.literal("/dev/null"),
+  StandardErrorPath: z.literal("/dev/null")
 };
 
 const installedPlistSchema = z.strictObject({
@@ -261,8 +262,8 @@ describe("install and uninstall", () => {
       expect(plist.ProgramArguments).toEqual([process.execPath, resolve(bundle), "refresh"]);
       expect(isAbsolute(plist.ProgramArguments[0])).toBe(true);
       expect(isAbsolute(plist.ProgramArguments[1])).toBe(true);
-      expect(plist.StandardOutPath).toBe(join(dataDir, "logs", "refresh.stdout.log"));
-      expect(plist.StandardErrorPath).toBe(join(dataDir, "logs", "refresh.stderr.log"));
+      expect(plist.StandardOutPath).toBe("/dev/null");
+      expect(plist.StandardErrorPath).toBe("/dev/null");
       expect(plist.EnvironmentVariables.SNORLAX_HOME).toBe(dataDir);
 
       const again = run(env, ["install"]);
@@ -498,8 +499,8 @@ describe("LaunchAgent plist", () => {
       return;
     }
     expect(parsed.data.ProgramArguments[1]).toBe("/opt/snorlax & co/snorlax.mjs");
-    expect(parsed.data.StandardOutPath).toBe("/tmp/data<dir>/logs/refresh.stdout.log");
-    expect(parsed.data.StandardErrorPath).toBe("/tmp/data<dir>/logs/refresh.stderr.log");
+    expect(parsed.data.StandardOutPath).toBe("/dev/null");
+    expect(parsed.data.StandardErrorPath).toBe("/dev/null");
     expect(parsed.data.EnvironmentVariables.SNORLAX_HOME).toBe("/tmp/a&b<c>");
   });
 
