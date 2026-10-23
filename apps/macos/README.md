@@ -25,7 +25,7 @@ The widget reads that copy. Small: today's tokens and cost. Medium: today, 7 day
 
 On launch, when `<data>/node-path` is missing or its Node is older than 22.13, the app runs `/bin/zsh -lc 'command -v node'` (5 s timeout), checks the version, and writes `node-path`. When none is found, the menu shows "Install Node.js 22.13 or later". Discovery runs in the background; the snapshot loads first. `zsh -lc` loads `.zshenv` and `.zprofile` but not `.zshrc`, so a Node that only `.zshrc` initializes — nvm without an `.zprofile` line, for example — is not found; write `<data>/node-path` by hand in that case. `<data>` is `SNORLAX_HOME`, or `~/Library/Application Support/snorlax`.
 
-The compiled launcher resolves `node-path`, otherwise the first `node` in `/opt/homebrew/bin:/usr/local/bin:/usr/bin`; it never searches `PATH` and prints `snorlax: node not found (checked node-path, then /opt/homebrew/bin:/usr/local/bin:/usr/bin)` when none works. It then execs `Contents/Resources/collector/snorlax.mjs` with `execv`. An Xcode build phase runs `pnpm --filter @rivus/snorlax run build` and copies `packages/collector/dist/snorlax.mjs` to that path. `pnpm` must be on `PATH` or in `/opt/homebrew/bin` or `/usr/local/bin`. An Xcode build phase runs `pnpm --filter @rivus/snorlax run build` and copies `packages/collector/dist/snorlax.mjs` to that path. `pnpm` must be on `PATH` or in `/opt/homebrew/bin` or `/usr/local/bin`.
+The compiled launcher resolves `node-path`, otherwise the first `node` in `/opt/homebrew/bin:/usr/local/bin:/usr/bin`; it never searches `PATH` and prints `snorlax: node not found (checked node-path, then /opt/homebrew/bin:/usr/local/bin:/usr/bin)` when none works. It then execs `Contents/Resources/collector/snorlax.mjs` with `execv`. An Xcode build phase runs `pnpm --filter @rivus/snorlax run build` and copies `packages/collector/dist/snorlax.mjs` to that path. `pnpm` must be on `PATH` or in `/opt/homebrew/bin` or `/usr/local/bin`.
 
 Swift types are generated from `packages/protocol/schema` by `pnpm --filter @rivus/snorlax-protocol run generate:swift`. Do not edit `SnorlaxKit/Sources/SnorlaxKit/Generated/Protocol.swift`.
 
@@ -65,7 +65,9 @@ xcodebuild -project Snorlax.xcodeproj -scheme Snorlax -configuration Debug \
   DEVELOPMENT_TEAM= \
   build
 codesign --verify --deep --strict DerivedData/Build/Products/Debug/Snorlax.app
-``` Do not run the app from this unsigned build if the goal is to avoid writing `~/Library/Application Support/snorlax`: launch discovers Node and creates that directory when `SNORLAX_HOME` is unset.
+```
+
+Do not run the app from this unsigned build if the goal is to avoid writing `~/Library/Application Support/snorlax`: launch discovers Node and creates that directory when `SNORLAX_HOME` is unset.
 
 To run the bundled launcher without registering a login item, point `SNORLAX_HOME` at a temporary directory and remove it afterwards:
 
@@ -88,7 +90,7 @@ Turn signing on before answering whether the App Group works, whether `SMAppServ
 4. Snorlax target → Signing & Capabilities. Automatically manage signing, Team: Personal Team. The App Group is `$(TeamIdentifierPrefix)io.github.perfectpan.snorlax`. App Sandbox stays off.
 5. SnorlaxWidget target: the same team, App Sandbox on, the same App Group.
 6. Scheme: Snorlax. Product → Run. There is no Dock icon. The menu title stays `Snorlax` until a snapshot loads.
-7. Open the menu. The App Group id should be `<TeamID>.io.github.perfectpan.snorlax`. A path means the container exists. Record that. "App Group container is unavailable for this signature" means the Personal Team could not use the group.
+7. Open Settings → Diagnostics. The App Group id should be `<TeamID>.io.github.perfectpan.snorlax`. A path means the container exists. Record that. "App Group container is unavailable for this signature" means the Personal Team could not use the group.
 8. To see numbers before a real refresh, copy `packages/protocol/fixtures/snapshot.json` to `<data>/snapshot.json` (the file the menu reads — the App Group copy is the app's output, not its input). The menu reads it on the next open (or within about a minute) and publishes the copy the widget shows. The title becomes `81.2M`.
 9. Widget gallery: Edit Widgets, search for Snorlax, add the small or medium size. It shows the copied snapshot. If Snorlax is absent, record that.
 10. Settings → Launch at login. That is the only `register()` call. Allow the item in System Settings if it asks. The agent runs `snorlax refresh` immediately and every 300 seconds; on this branch `refresh` scans this Mac's real agent logs under the account that runs it, so turn the toggle on only when that is intended. Record whether the status becomes `enabled`.
