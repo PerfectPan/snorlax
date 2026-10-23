@@ -13,6 +13,15 @@ final class NodeDiscoveryTests: XCTestCase {
         XCTAssertFalse(NodeVersion(major: 21, minor: 99, patch: 0).isAtLeast(NodeDiscovery.minimum))
     }
 
+    func testTakesTheLastPathLineFromLoginShellOutput() {
+        // A login shell may print banners before `command -v node` answers.
+        XCTAssertEqual(NodeDiscovery.nodePath(fromOutput: "loading nvm...\n/opt/homebrew/bin/node\n"), "/opt/homebrew/bin/node")
+        XCTAssertEqual(NodeDiscovery.nodePath(fromOutput: "banner\n/usr/bin/node\nmore banner\n/usr/local/bin/node\n"), "/usr/local/bin/node")
+        XCTAssertEqual(NodeDiscovery.nodePath(fromOutput: "  /usr/bin/node  \n"), "/usr/bin/node")
+        XCTAssertNil(NodeDiscovery.nodePath(fromOutput: "banner without a path\n"))
+        XCTAssertNil(NodeDiscovery.nodePath(fromOutput: ""))
+    }
+
     func testKeepsASavedNodeThatMeetsTheMinimum() throws {
         let temp = try TempDirectory()
         defer { temp.remove() }

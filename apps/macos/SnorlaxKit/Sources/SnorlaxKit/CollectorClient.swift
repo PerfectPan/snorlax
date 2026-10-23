@@ -119,19 +119,21 @@ public struct FoundationProcessRunner: ProcessRunning {
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
-            let stdout = Pipe()
-            let stderr = Pipe()
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
             let standardInput = Pipe()
-            process.standardOutput = stdout
-            process.standardError = stderr
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
             process.standardInput = standardInput
             let once = ResumeOnce(continuation)
-            let collector = PipeCollector(stdout: stdout, stderr: stderr)
+            let out = PipeOutput(stdoutPipe)
+            let err = PipeOutput(stderrPipe)
             // The run completes when the process ended and both pipes reached
             // EOF, so every output byte was already collected when it resumes.
             let finished = DispatchGroup()
             finished.enter() // process termination
-            collector.start(onWait: finished.enter, onEOF: finished.leave)
+            out.start(onWait: finished.enter, onEOF: finished.leave)
+            err.start(onWait: finished.enter, onEOF: finished.leave)
             process.terminationHandler = { _ in finished.leave() }
             do {
                 try process.run()
@@ -150,13 +152,11 @@ public struct FoundationProcessRunner: ProcessRunning {
                         // The process ended but a pipe never reached EOF, for
                         // example a grandchild holding the write end open.
                         // Finish with what arrived instead of blocking forever.
-                        let output = collector.collectedOutput()
-                        once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: output.stdout, stderr: output.stderr))
+                        once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: out.collected(), stderr: err.collected()))
                     }
                     return
                 }
-                let output = collector.drain()
-                once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: output.stdout, stderr: output.stderr))
+                once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: out.drain(), stderr: err.drain()))
             }
             let writer = standardInput.fileHandleForWriting
             if let stdin {
@@ -187,82 +187,6 @@ public struct FoundationProcessRunner: ProcessRunning {
                 offset += written
             }
         }
-    }
-}
-
-/// Collects pipe output as it arrives so the child never blocks on a full pipe
-/// buffer, and drains what is left once both pipes are at EOF.
-private final class PipeCollector: @unchecked Sendable {
-    private let stdout: Pipe
-    private let stderr: Pipe
-    private let lock = NSLock()
-    private var collected: [Channel: Data] = [:]
-    private var eofSeen: Set<Channel> = []
-
-    private enum Channel: Int {
-        case stdout
-        case stderr
-    }
-
-    init(stdout: Pipe, stderr: Pipe) {
-        self.stdout = stdout
-        self.stderr = stderr
-    }
-
-    func start(onWait: @escaping () -> Void, onEOF: @escaping () -> Void) {
-        collect(stdout, channel: .stdout, onWait: onWait, onEOF: onEOF)
-        collect(stderr, channel: .stderr, onWait: onWait, onEOF: onEOF)
-    }
-
-    /// Called after both pipes are at EOF, so no handler is in flight and the
-    /// remaining reads cannot block.
-    func drain() -> (stdout: Data, stderr: Data) {
-        stdout.fileHandleForReading.readabilityHandler = nil
-        stderr.fileHandleForReading.readabilityHandler = nil
-        lock.lock()
-        collected[.stdout, default: Data()].append(stdout.fileHandleForReading.readDataToEndOfFile())
-        collected[.stderr, default: Data()].append(stderr.fileHandleForReading.readDataToEndOfFile())
-        let output = (collected[.stdout] ?? Data(), collected[.stderr] ?? Data())
-        lock.unlock()
-        return output
-    }
-
-    /// What arrived so far, for a process that ended while a pipe is still open.
-    func collectedOutput() -> (stdout: Data, stderr: Data) {
-        stdout.fileHandleForReading.readabilityHandler = nil
-        stderr.fileHandleForReading.readabilityHandler = nil
-        lock.lock()
-        defer { lock.unlock() }
-        return (collected[.stdout] ?? Data(), collected[.stderr] ?? Data())
-    }
-
-    private func collect(_ pipe: Pipe, channel: Channel, onWait: @escaping () -> Void, onEOF: @escaping () -> Void) {
-        onWait()
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                self?.noteEOF(channel: channel, onEOF: onEOF)
-                return
-            }
-            self?.append(chunk, channel: channel)
-        }
-    }
-
-    /// The monitor can deliver a second empty read before the handler removal
-    /// takes effect; the group must hear about EOF once per channel.
-    private func noteEOF(channel: Channel, onEOF: @escaping () -> Void) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !eofSeen.contains(channel) else { return }
-        eofSeen.insert(channel)
-        onEOF()
-    }
-
-    private func append(_ chunk: Data, channel: Channel) {
-        lock.lock()
-        defer { lock.unlock() }
-        collected[channel, default: Data()].append(chunk)
     }
 }
 

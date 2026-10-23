@@ -71,6 +71,15 @@ public enum NodeDiscovery {
         return true
     }
 
+    /// The path in `command -v node` output: the last non-empty line that
+    /// starts with `/`, so banners a login shell prints first cannot break it.
+    public static func nodePath(fromOutput text: String) -> String? {
+        text.split(whereSeparator: \.isNewline)
+            .reversed()
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.hasPrefix("/") }
+    }
+
     /// Keeps a saved Node that still satisfies the minimum. Otherwise asks the login
     /// shell, writes `node-path` when that Node is new enough, and removes a saved
     /// path that is not.
@@ -79,8 +88,7 @@ public enum NodeDiscovery {
         if let existing = readPath(file), accepts(existing, probe: probe) {
             return .ready(existing)
         }
-        if let discovered = probe.loginShellNodePath()?.trimmingCharacters(in: .whitespacesAndNewlines),
-           discovered.hasPrefix("/"),
+        if let discovered = probe.loginShellNodePath().flatMap(nodePath(fromOutput:)),
            accepts(discovered, probe: probe) {
             try writePath(discovered, directory: dataDirectory)
             return .ready(discovered)
@@ -141,26 +149,31 @@ public struct ProcessNodeProbe: NodeProbing {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
         process.standardInput = FileHandle.nullDevice
-        let group = DispatchGroup()
-        group.enter()
-        process.terminationHandler = { _ in group.leave() }
+        // Output is collected while the process runs: reading it only after
+        // exit could wait forever on a grandchild that inherited the pipe.
+        let stdout = PipeOutput(stdoutPipe)
+        let finished = DispatchGroup()
+        finished.enter() // process termination
+        stdout.start(onWait: finished.enter, onEOF: finished.leave)
+        process.terminationHandler = { _ in finished.leave() }
         do {
             try process.run()
         } catch {
-            group.leave()
             return nil
         }
-        if group.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            _ = group.wait(timeout: .now() + 1)
+        if finished.wait(timeout: .now() + timeout) == .timedOut {
+            if process.isRunning {
+                process.terminate()
+                _ = finished.wait(timeout: .now() + 1)
+            }
             return nil
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let data = stdout.drain()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 }

@@ -40,7 +40,7 @@ final class MenuModel: ObservableObject {
                 self?.reloadSnapshot()
             }
         }
-        Task { await bootstrap() }
+        Task { bootstrap() }
     }
 
     func reloadSnapshot() {
@@ -109,31 +109,25 @@ final class MenuModel: ObservableObject {
         }
     }
 
-    private func bootstrap() async {
-        try? FileManager.default.createDirectory(
-            at: dataDirectory,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
+    private func bootstrap() {
         let directory = dataDirectory
-        let resolution: NodeResolution
-        do {
-            resolution = try await Task.detached {
-                try NodeDiscovery.resolve(dataDirectory: directory, probe: ProcessNodeProbe())
-            }.value
-        } catch {
-            nodeHint = Presenter.message(for: error)
-            watcher.start(directory: directory)
-            reloadSnapshot()
-            return
-        }
-        if case .missing = resolution {
-            nodeHint = NodeDiscovery.installHint
-        } else {
-            nodeHint = nil
-        }
-        watcher.start(directory: directory)
-        reloadSnapshot()
+        LaunchSequence.run(
+            dataDirectory: directory,
+            watcher: watcher,
+            reloadSnapshot: { [weak self] in self?.reloadSnapshot() },
+            discover: { try NodeDiscovery.resolve(dataDirectory: directory, probe: ProcessNodeProbe()) },
+            onDiscovery: { [weak self] resolution, error in
+                Task { @MainActor in
+                    if let error {
+                        self?.nodeHint = Presenter.message(for: error)
+                    } else if case .missing = resolution {
+                        self?.nodeHint = NodeDiscovery.installHint
+                    } else {
+                        self?.nodeHint = nil
+                    }
+                }
+            }
+        )
     }
 
     private func publish(_ data: Data) {
