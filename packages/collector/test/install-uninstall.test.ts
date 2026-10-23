@@ -64,12 +64,16 @@ interface InstallEnv {
   readonly loaded: string;
 }
 
-const run = (env: InstallEnv, args: readonly string[]) =>
+const run = (
+  env: InstallEnv,
+  args: readonly string[],
+  overrides?: { readonly snorlaxHome?: string }
+) =>
   spawnSync(process.execPath, [bundle, ...args], {
     encoding: "utf8",
     env: {
       HOME: env.home,
-      SNORLAX_HOME: dataDirOf(env.home),
+      SNORLAX_HOME: overrides?.snorlaxHome ?? dataDirOf(env.home),
       SNORLAX_LAUNCHCTL: env.launchctl,
       SNORLAX_OS: env.os,
       PATH: "/usr/bin:/bin"
@@ -395,6 +399,55 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("uninstall --data deletes only the entries snorlax wrote and keeps everything else", async () => {
+    await withInstallHome("darwin", async (env) => {
+      await writeUsageFixtures(env.home);
+      const dataDir = dataDirOf(env.home);
+      await mkdir(join(dataDir, "Documents"), { recursive: true });
+      await writeFile(join(dataDir, "Documents", "thesis.txt"), "unrelated\n");
+      await writeFile(join(dataDir, "photo.jpg"), "unrelated\n");
+
+      expect(run(env, ["install", "--json"]).status).toBe(0);
+      const refreshed = run(env, ["refresh", "--json"]);
+      expect(refreshed.status).toBe(0);
+      expect(existsSync(join(dataDir, "ledger.db"))).toBe(true);
+      expect(existsSync(join(dataDir, "snapshot.json"))).toBe(true);
+
+      const removed = run(env, ["uninstall", "--data"]);
+      expect(removed.status).toBe(0);
+      expect(removed.stdout).toBe(
+        "LaunchAgent removed\n" +
+          `the data directory ${dataDir} is kept; entries snorlax did not write remain: Documents, photo.jpg\n`
+      );
+      expect(existsSync(join(dataDir, "Documents", "thesis.txt"))).toBe(true);
+      expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
+      expect(existsSync(join(dataDir, "ledger.db"))).toBe(false);
+      expect(existsSync(join(dataDir, "snapshot.json"))).toBe(false);
+      expect(existsSync(join(dataDir, "logs"))).toBe(false);
+    });
+  });
+
+  it("never deletes unknown files when SNORLAX_HOME spells HOME in another letter case", async () => {
+    await withInstallHome("darwin", async (env) => {
+      await mkdir(join(env.home, "Documents"), { recursive: true });
+      await writeFile(join(env.home, "Documents", "thesis.txt"), "unrelated\n");
+      await writeFile(join(env.home, "keep.txt"), "unrelated\n");
+      const variant = env.home
+        .split("")
+        .map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()))
+        .join("");
+
+      // Both outcomes are safe here and either may occur, depending on how the platform resolves
+      // letter case: the guard refuses the directory, or the known-entries deletion runs and removes
+      // nothing snorlax did not write. Either way the unrelated files must survive.
+      const result = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: variant });
+      expect([0, 1]).toContain(result.status ?? -1);
+      expect(existsSync(join(env.home, "Documents", "thesis.txt"))).toBe(true);
+      expect(existsSync(join(env.home, "keep.txt"))).toBe(true);
+      expect(existsSync(env.home)).toBe(true);
+    });
+  });
+
   it("keeps fixture agent directories unchanged across install, refresh, and uninstall", async () => {
     await withInstallHome("darwin", async (env) => {
       await writeUsageFixtures(env.home);
@@ -462,11 +515,30 @@ describe("LaunchAgent plist", () => {
 });
 
 describe("uninstall --data path guard", () => {
-  it("refuses to delete /, the home directory, or a relative path", () => {
-    expect(() => resolvedDeletableDataDir("/", "/tmp/home")).toThrow(/refusing to delete/);
-    expect(() => resolvedDeletableDataDir("/tmp/home", "/tmp/home")).toThrow(/refusing to delete/);
-    expect(() => resolvedDeletableDataDir("relative/data", "/tmp/home")).toThrow(/must be absolute/);
-    expect(resolvedDeletableDataDir("/tmp/home/snorlax", "/tmp/home")).toBe("/tmp/home/snorlax");
-    expect(() => resolvedDeletableDataDir("/", "/tmp/home")).toThrow(CliError);
+  /** Stands in for `Platform["fs"]["realpath"]`; resolve checks only need that member. */
+  const fakeFs = { realpath: async (path: string): Promise<string | undefined> => path };
+  /** `/var` is a symlink to `/private/var` on macOS. */
+  const symlinkFs = { realpath: async (path: string): Promise<string | undefined> => path.replace(/^\/var/, "/private/var") };
+
+  it("refuses to delete /, the home directory, its ancestors, or a relative path", async () => {
+    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(/refusing to delete/);
+    await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home", "/tmp/home")).rejects.toThrow(/refusing to delete/);
+    await expect(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")).rejects.toThrow(/refusing to delete/);
+    await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(
+      /must be absolute/
+    );
+    await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe(
+      "/tmp/home/snorlax"
+    );
+    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CliError);
+  });
+
+  it("compares through realpath, so a symlinked spelling of the home directory is refused too", async () => {
+    await expect(resolvedDeletableDataDir(symlinkFs, "/var/home", "/private/var/home")).rejects.toThrow(
+      /refusing to delete/
+    );
+    await expect(resolvedDeletableDataDir(symlinkFs, "/var/home/data", "/private/var/home")).resolves.toBe(
+      "/var/home/data"
+    );
   });
 });

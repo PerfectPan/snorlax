@@ -74,13 +74,29 @@ const requireAbsolute = (dataDir: string): void => {
 
 /**
  * `uninstall --data` deletes this directory. Relative paths are refused so a bad `SNORLAX_HOME`
- * cannot be resolved against the process working directory. `/` and the home directory are refused
- * because both contain far more than snorlax's files.
+ * cannot be resolved against the process working directory. `/`, the home directory, and its ancestors
+ * are refused — compared through `realpath`, so a symlinked spelling is caught too. The directory is
+ * only ever emptied entry by entry (`deleteKnownDataEntries`), so nothing outside snorlax's own files
+ * is deleted even when a path slips past this guard.
  */
-export function resolvedDeletableDataDir(dataDir: string, home: string): string {
+export async function resolvedDeletableDataDir(
+  fs: Pick<Platform["fs"], "realpath">,
+  dataDir: string,
+  home: string
+): Promise<string> {
   requireAbsolute(dataDir);
   const resolved = resolve(dataDir);
-  if (resolved === resolve(home) || resolved === resolve("/")) {
+  if (resolved === resolve(home) || resolved === "/") {
+    throw new CliError("data-dir", `refusing to delete the data directory ${dataDir}`);
+  }
+  const dataReal = await fs.realpath(resolved);
+  const homeReal = await fs.realpath(home);
+  if (
+    dataReal !== undefined &&
+    (dataReal === "/" ||
+      dataReal === homeReal ||
+      (homeReal !== undefined && homeReal.startsWith(`${dataReal}/`)))
+  ) {
     throw new CliError("data-dir", `refusing to delete the data directory ${dataDir}`);
   }
   return resolved;
@@ -125,6 +141,68 @@ const removeTree = async (fs: Platform["fs"], path: string): Promise<void> => {
     }
   }
   await fs.remove(path);
+};
+
+type DirEntry = Awaited<ReturnType<Platform["fs"]["list"]>>[number];
+
+/** `fs.list` rejects a missing directory; deletion treats that as nothing left to remove. */
+const listOrNothing = async (fs: Platform["fs"], dir: string): Promise<readonly DirEntry[]> => {
+  try {
+    return await fs.list(dir);
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Every entry snorlax writes directly in the data directory (3.3.2, 3.4.2, 3.9, 3.11): the ledger
+ * database with its SQLite sidecars and lock files, the config, the snapshot, the app's `node-path`,
+ * and the logs directory. Migration backups and crashed atomic-write temps are matched by pattern
+ * below. launchd output files no longer exist (StandardOutPath/StandardErrorPath are /dev/null); the
+ * `logs` directory still removes the ones older installs wrote.
+ */
+const KNOWN_DATA_ENTRIES = [
+  "ledger.db",
+  "ledger.db-wal",
+  "ledger.db-shm",
+  "ledger.db-journal",
+  "ledger.lock",
+  "ledger.lock.holder",
+  "config.json",
+  "snapshot.json",
+  "node-path",
+  "logs"
+] as const;
+
+const LEDGER_BACKUP_PATTERN = /^ledger\.db\.bak-v(\d+)$/;
+/** `platform.fs.writeAtomic` leaves `.<16 hex>.tmp` beside the target when a write crashes. */
+const ATOMIC_TEMP_PATTERN = /^\.[0-9a-f]{16}\.tmp$/;
+
+/**
+ * Deletes only entries snorlax wrote, then removes the directory itself only when nothing else
+ * remains; the names still in it are returned for the command output. This is the sole deletion path
+ * for `uninstall --data`, so an unexpected `SNORLAX_HOME` can never cost user files.
+ */
+const deleteKnownDataEntries = async (fs: Platform["fs"], dir: string): Promise<readonly string[]> => {
+  for (const name of KNOWN_DATA_ENTRIES) {
+    if (name === "logs") {
+      await removeTree(fs, join(dir, name));
+    } else {
+      await fs.remove(join(dir, name));
+    }
+  }
+  for (const entry of await listOrNothing(fs, dir)) {
+    if (LEDGER_BACKUP_PATTERN.test(entry.name) || ATOMIC_TEMP_PATTERN.test(entry.name)) {
+      await fs.remove(join(dir, entry.name));
+    }
+  }
+  try {
+    await fs.remove(dir);
+  } catch {
+    // Not empty — the surviving entries are listed below and the directory is kept.
+  }
+  const remaining = await listOrNothing(fs, dir);
+  return remaining.map((entry) => entry.name).sort();
 };
 
 const runLaunchctl = async (platform: SchedulerPlatform, args: readonly string[]) => {
@@ -247,11 +325,17 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
   return plistPath;
 }
 
+/** What uninstall did beyond the LaunchAgent itself. */
+export interface UninstallResult {
+  /** Entries `--data` left in the data directory because snorlax did not write them. */
+  readonly dataLeftovers: readonly string[];
+}
+
 export async function uninstallLaunchAgent(
   platform: SchedulerPlatform,
   dataDir: string,
   options: { readonly deleteData: boolean }
-): Promise<void> {
+): Promise<UninstallResult> {
   requireLaunchd(platform, "uninstall");
   requireAbsolute(dataDir);
   const plistPath = launchAgentPlistPath(platform.home);
@@ -268,12 +352,12 @@ export async function uninstallLaunchAgent(
     throw new CliError("internal", `cannot remove ${plistPath}: ${errorMessage(error)}`);
   }
   if (!options.deleteData) {
-    return;
+    return { dataLeftovers: [] };
   }
   await removeKeychainItem();
-  const resolved = resolvedDeletableDataDir(dataDir, platform.home);
+  const resolved = await resolvedDeletableDataDir(platform.fs, dataDir, platform.home);
   try {
-    await removeTree(platform.fs, resolved);
+    return { dataLeftovers: await deleteKnownDataEntries(platform.fs, resolved) };
   } catch (error) {
     if (error instanceof CliError) {
       throw error;

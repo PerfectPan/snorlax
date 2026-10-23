@@ -20,8 +20,14 @@ export const uninstallCommand: Command = {
       data: { type: "boolean" }
     });
     const deleteData = values.data === true;
-    await uninstallLaunchAgent(ctx.platform, ctx.dataDir, { deleteData });
-    const human = deleteData ? "LaunchAgent removed and data directory deleted\n" : "LaunchAgent removed\n";
+    const { dataLeftovers } = await uninstallLaunchAgent(ctx.platform, ctx.dataDir, { deleteData });
+    let human = deleteData ? "LaunchAgent removed and data directory deleted\n" : "LaunchAgent removed\n";
+    if (dataLeftovers.length > 0) {
+      human =
+        `LaunchAgent removed\n` +
+        `the data directory ${ctx.dataDir} is kept; entries snorlax did not write remain: ` +
+        `${dataLeftovers.join(", ")}\n`;
+    }
     return { json: values.json === true, payload: ok(), human };
   }
 };
