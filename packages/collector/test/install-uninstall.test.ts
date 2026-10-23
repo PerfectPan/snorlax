@@ -67,6 +67,8 @@ interface InstallEnv {
   readonly loaded: string;
   /** When this file exists, the stub's `bootstrap` fails like launchd refusing a service. */
   readonly failBootstrap: string;
+  /** When this file exists, `print` emits a nested block whose `path =` line names this plist first. */
+  readonly nested: string;
 }
 
 const run = (env: InstallEnv, args: readonly string[], overrides?: { readonly snorlaxHome?: string }) =>
@@ -94,10 +96,16 @@ const writeStub = async (dir: string): Promise<string> => {
     `// marker is a loaded service whose plist "print" cannot name.`,
     `const marker = join(dir, "loaded");`,
     `const failBootstrap = join(dir, "fail-bootstrap");`,
+    `const nested = join(dir, "nested");`,
     `const [command, target, plistPath] = process.argv.slice(2);`,
     `if (command === "print") {`,
     `  if (!existsSync(marker)) process.exit(1);`,
     `  console.log(target + " = {");`,
+    `  if (existsSync(nested)) {`,
+    `    console.log("\\tenvironment = {");`,
+    `    console.log("\\t\\tpath = " + readFileSync(nested, "utf8").trim());`,
+    `    console.log("\\t}");`,
+    `  }`,
     `  const path = readFileSync(marker, "utf8").trim();`,
     `  if (path !== "") console.log("\\tpath = " + path);`,
     `  console.log("}");`,
@@ -136,7 +144,8 @@ const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) =
       os,
       record: join(stubDir, "argv.jsonl"),
       loaded: join(stubDir, "loaded"),
-      failBootstrap: join(stubDir, "fail-bootstrap")
+      failBootstrap: join(stubDir, "fail-bootstrap"),
+      nested: join(stubDir, "nested")
     });
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -392,11 +401,38 @@ describe("install and uninstall", () => {
 
       const installed = run(env, ["install", "--json"]);
       expect(installed.status).toBe(1);
-      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("cannot be confirmed");
+      const failure = z.parse(failureSchema, json(installed.stdout));
+      expect(failure.error.message).toContain("cannot be confirmed");
+      // The refusal names the next steps: the app's Settings toggle, and the print command to inspect.
+      expect(failure.error.message).toContain("Settings");
+      expect(failure.error.message).toContain("launchctl print gui/");
       expect(existsSync(plistPathOf(env.home))).toBe(false);
 
       expect(run(env, ["uninstall", "--json"]).status).toBe(1);
       expect(existsSync(plistPathOf(env.home))).toBe(false);
+    });
+  });
+
+  it("reads the service path only from the top level of the print output", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const appPlist =
+        "/Applications/Snorlax.app/Contents/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+      const target = `gui/${uid()}/${LABEL}`;
+      // A nested block prints the app's plist before the service's own path; ownership still reads
+      // as the CLI's, so the repeat install proceeds.
+      await writeFile(env.loaded, plistPathOf(env.home), "utf8");
+      await writeFile(env.nested, appPlist, "utf8");
+      expect(run(env, ["install", "--json"]).status).toBe(0);
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", target],
+        ["bootout", target],
+        ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)]
+      ]);
+
+      // The reverse must not grant ownership: a nested CLI path under an app-owned service stays refused.
+      await writeFile(env.loaded, appPlist, "utf8");
+      await writeFile(env.nested, plistPathOf(env.home), "utf8");
+      expect(run(env, ["install", "--json"]).status).toBe(1);
     });
   });
 

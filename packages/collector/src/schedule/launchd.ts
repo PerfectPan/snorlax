@@ -250,19 +250,34 @@ type LoadedService =
   | { readonly state: "loaded"; readonly path: string }
   | { readonly state: "unknown" };
 
-/** The `path = …` line `launchctl print` prints inside a service's dictionary. */
+/** The `path = …` line `launchctl print` prints for a service loaded from a plist. */
 const SERVICE_PATH_LINE = /^[\t ]*path[\t ]*=[\t ]*(\S.*?)\s*$/;
+/** A line ending in `{` opens a nested block; a lone `}` closes one. */
+const OPEN_BLOCK = /[{]\s*$/;
+const CLOSE_BLOCK = /^[\t ]*}[ ;]*$/;
 
-/** `launchctl print` exits non-zero when the service is not loaded. A spawn failure throws instead. */
+/**
+ * `launchctl print` exits non-zero when the service is not loaded. A spawn failure throws instead. The
+ * `path` line only counts in the service's own dictionary (depth 1), never in a nested block that
+ * happens to print first.
+ */
 const loadedService = async (platform: SchedulerPlatform, target: string): Promise<LoadedService> => {
   const result = await runLaunchctl(platform, ["print", target]);
   if (result.code !== 0) {
     return { state: "not-loaded" };
   }
+  let depth = 0;
   for (const line of result.stdout.split("\n")) {
-    const match = SERVICE_PATH_LINE.exec(line);
-    if (match?.[1] !== undefined) {
-      return { state: "loaded", path: match[1] };
+    if (depth === 1) {
+      const match = SERVICE_PATH_LINE.exec(line);
+      if (match?.[1] !== undefined) {
+        return { state: "loaded", path: match[1] };
+      }
+    }
+    if (OPEN_BLOCK.test(line)) {
+      depth += 1;
+    } else if (CLOSE_BLOCK.test(line)) {
+      depth -= 1;
     }
   }
   return { state: "unknown" };
@@ -274,7 +289,7 @@ const loadedService = async (platform: SchedulerPlatform, target: string): Promi
  * changes nothing — not its own plist, not the data directory — unless the loaded service provably comes
  * from its own `~/Library/LaunchAgents` plist.
  */
-const refuseForeignService = (loaded: LoadedService, plistPath: string): void => {
+const refuseForeignService = (loaded: LoadedService, plistPath: string, target: string): void => {
   if (loaded.state === "not-loaded" || (loaded.state === "loaded" && loaded.path === plistPath)) {
     return;
   }
@@ -282,7 +297,9 @@ const refuseForeignService = (loaded: LoadedService, plistPath: string): void =>
     loaded.state === "loaded"
       ? `${LAUNCH_AGENT_LABEL} is already registered by Snorlax.app's Launch at login (${loaded.path}); ` +
         "turn Launch at login off in Snorlax's Settings first"
-      : `launchctl print names no plist for the loaded ${LAUNCH_AGENT_LABEL} agent, so its owner cannot be confirmed`;
+      : `launchctl print names no plist for the loaded ${LAUNCH_AGENT_LABEL} agent, so its owner cannot be ` +
+        `confirmed; check Launch at login in Snorlax's Settings and turn it off, or inspect the service ` +
+        `with \`launchctl print ${target}\``;
   throw new CliError("internal", `refusing to change the LaunchAgent: ${detail}`);
 };
 
@@ -316,7 +333,7 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
   const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
   // Ownership comes before any write: a foreign or unattributable service is never replaced.
   const loaded = await loadedService(platform, target);
-  refuseForeignService(loaded, plistPath);
+  refuseForeignService(loaded, plistPath, target);
   const plist = renderLaunchAgentPlist({
     ...runningCollectorPaths(),
     dataDir,
@@ -367,7 +384,7 @@ export async function uninstallLaunchAgent(
   const domain = guiDomain(currentUid());
   const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
   const loaded = await loadedService(platform, target);
-  refuseForeignService(loaded, plistPath);
+  refuseForeignService(loaded, plistPath, target);
   if (loaded.state === "loaded") {
     await bootout(platform, target);
   }
