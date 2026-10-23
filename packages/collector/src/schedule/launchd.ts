@@ -93,9 +93,7 @@ export async function resolvedDeletableDataDir(
   const homeReal = await fs.realpath(home);
   if (
     dataReal !== undefined &&
-    (dataReal === "/" ||
-      dataReal === homeReal ||
-      (homeReal !== undefined && homeReal.startsWith(`${dataReal}/`)))
+    (dataReal === "/" || dataReal === homeReal || (homeReal !== undefined && homeReal.startsWith(`${dataReal}/`)))
   ) {
     throw new CliError("data-dir", `refusing to delete the data directory ${dataDir}`);
   }

@@ -69,11 +69,7 @@ interface InstallEnv {
   readonly failBootstrap: string;
 }
 
-const run = (
-  env: InstallEnv,
-  args: readonly string[],
-  overrides?: { readonly snorlaxHome?: string }
-) =>
+const run = (env: InstallEnv, args: readonly string[], overrides?: { readonly snorlaxHome?: string }) =>
   spawnSync(process.execPath, [bundle, ...args], {
     encoding: "utf8",
     env: {
@@ -571,18 +567,16 @@ describe("uninstall --data path guard", () => {
   /** Stands in for `Platform["fs"]["realpath"]`; resolve checks only need that member. */
   const fakeFs = { realpath: async (path: string): Promise<string | undefined> => path };
   /** `/var` is a symlink to `/private/var` on macOS. */
-  const symlinkFs = { realpath: async (path: string): Promise<string | undefined> => path.replace(/^\/var/, "/private/var") };
+  const symlinkFs = {
+    realpath: async (path: string): Promise<string | undefined> => path.replace(/^\/var/, "/private/var")
+  };
 
   it("refuses to delete /, the home directory, its ancestors, or a relative path", async () => {
     await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(/refusing to delete/);
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home", "/tmp/home")).rejects.toThrow(/refusing to delete/);
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")).rejects.toThrow(/refusing to delete/);
-    await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(
-      /must be absolute/
-    );
-    await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe(
-      "/tmp/home/snorlax"
-    );
+    await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(/must be absolute/);
+    await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe("/tmp/home/snorlax");
     await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CliError);
   });
 
