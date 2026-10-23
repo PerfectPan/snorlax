@@ -40,10 +40,18 @@ jobs:
           require-lockfile: true
           cache: true
       - run: pnpm install --frozen-lockfile
-      - name: Regenerate Swift types
-        run: pnpm --filter @rivus/snorlax-protocol run generate:swift
-      - name: Fail when regeneration changes Swift
-        run: git diff --exit-code -- apps/macos/SnorlaxKit/Sources/SnorlaxKit/Generated
+      # The whole protocol build regenerates the JSON Schemas, the fixtures and
+      # the Swift types, so a zod change without regenerated outputs fails here.
+      - name: Regenerate protocol outputs
+        run: pnpm --filter @rivus/snorlax-protocol run build
+      - name: Fail when regeneration changes anything
+        run: |
+          paths="packages/protocol/schema packages/protocol/fixtures apps/macos/SnorlaxKit/Sources/SnorlaxKit/Generated"
+          if [ -n "$(git status --porcelain -- $paths)" ]; then
+            echo "::error::Regenerated protocol outputs differ from the committed files:"
+            git status --porcelain -- $paths
+            exit 1
+          fi
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate the Xcode project
