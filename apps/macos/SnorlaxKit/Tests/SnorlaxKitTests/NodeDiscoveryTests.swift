@@ -29,13 +29,13 @@ final class NodeDiscoveryTests: XCTestCase {
         XCTAssertEqual(NodeDiscovery.readPlan(terminatedBySignal: false, eofReceived: false), .readWhatArrived)
     }
 
-    func testOutputIsKeptWhenTheProcessExitedButThePipeStaysOpen() throws {
+    func testOutputIsKeptWhenTheProcessExitedButThePipeStaysOpen() async throws {
         let temp = try TempDirectory()
         defer { temp.remove() }
         // Prints the version, exits, and leaves a background `sleep` holding
-        // stdout: EOF never arrives, so only the probe budget can end the run.
-        // The stub records the background PID so the test kills it and leaves
-        // no orphan behind.
+        // stdout: EOF never arrives. The budget goes to the exit event, so
+        // the probe returns without waiting for the pipes. The stub records
+        // the background PID so the test kills it and leaves no orphan.
         let stub = try temp.writeExecutable(named: "node", contents: """
         #!/bin/sh
         dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -51,10 +51,22 @@ final class NodeDiscoveryTests: XCTestCase {
             }
         }
         // A 30 s budget keeps the run independent of machine load; the stub
-        // itself finishes at once. The test asserts no real-time threshold.
+        // itself finishes at once. The watchdog bounds the call far below the
+        // sleeper: waiting on the pipes instead of the exit event fails here.
         let probe = ProcessNodeProbe(timeout: 30)
+        let done = DispatchSemaphore(value: 0)
+        var output: String?
+        let run = Task.detached {
+            output = probe.versionOutput(executable: stub.path)
+            done.signal()
+        }
+        if done.wait(timeout: .now() + 5) == .timedOut {
+            XCTFail("the probe waited on the pipes instead of the exit event")
+            return
+        }
+        await run.value
 
-        XCTAssertEqual(probe.versionOutput(executable: stub.path), "v22.13.0\n")
+        XCTAssertEqual(output, "v22.13.0\n")
     }
 
     func testKeepsASavedNodeThatMeetsTheMinimum() throws {
