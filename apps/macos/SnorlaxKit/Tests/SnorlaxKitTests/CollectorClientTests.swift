@@ -115,6 +115,47 @@ final class CollectorClientTests: XCTestCase {
         XCTAssertEqual(CollectorClient.timeoutPlan(terminatedBySignal: true), .reportTimeout)
     }
 
+    func testAChildThatIgnoresSIGTERMIsKilledAndReportedAsTimeout() async throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        // Records its own PID and the sleeper's, ignores SIGTERM, and hangs:
+        // the run must escalate to SIGKILL and report a timeout. The test
+        // kills the sleeper so no orphan is left.
+        let stub = try temp.writeExecutable(named: "stub", contents: """
+        #!/bin/sh
+        dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+        printf '%s\\n' "$$" > "$dir/child-pid"
+        trap '' TERM
+        sleep 30 &
+        printf '%s\\n' "$!" > "$dir/sleep-pid"
+        wait
+        """)
+        defer {
+            for name in ["child-pid", "sleep-pid"] {
+                if let text = try? String(contentsOf: temp.url.appendingPathComponent(name), encoding: .utf8),
+                   let processIdentifier = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    kill(processIdentifier, SIGKILL)
+                }
+            }
+        }
+        // A 2 s budget keeps the test in seconds: SIGTERM at the budget is
+        // ignored, SIGKILL ends the child about a second later. The test
+        // asserts no real-time threshold.
+        let client = CollectorClient(executable: stub, timeout: .seconds(2))
+
+        do {
+            _ = try await client.run(["refresh"], as: RefreshResult.self)
+            XCTFail("a killed child is a timeout")
+        } catch let error as CollectorClientError {
+            XCTAssertEqual(error, .timedOut)
+        }
+
+        // The SIGKILLed child is gone, not lingering unreaped.
+        let childPID = try String(contentsOf: temp.url.appendingPathComponent("child-pid"), encoding: .utf8)
+        kill(Int32(childPID.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0, 0)
+        XCTAssertEqual(errno, ESRCH)
+    }
+
     func testAChildWhosePipeStaysOpenAfterSelfExitStillReturnsItsOutput() async throws {
         let temp = try TempDirectory()
         defer { temp.remove() }

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct ProcessOutput: Equatable, Sendable {
@@ -163,25 +164,33 @@ public struct FoundationProcessRunner: ProcessRunning {
             // The timeout starts with the process, before any stdin is written:
             // a child stuck on a full pipe must still be terminated in time.
             DispatchQueue.global().async {
-                if finished.wait(timeout: .now() + timeout.seconds) == .timedOut {
+                // The whole budget goes to the exit event, never to pipes: a
+                // grandchild holding the write end must not consume it.
+                var endedBySignal = false
+                if terminated.wait(timeout: .now() + timeout.seconds) == .timedOut {
                     if process.isRunning { process.terminate() }
-                    guard terminated.wait(timeout: .now() + 1) == .success else {
-                        once.resume(throwing: CollectorClientError.timedOut)
-                        return
+                    if terminated.wait(timeout: .now() + 1) == .timedOut {
+                        kill(process.processIdentifier, SIGKILL)
+                        if terminated.wait(timeout: .now() + 1) == .timedOut {
+                            once.resume(throwing: CollectorClientError.timedOut)
+                            return
+                        }
                     }
-                    switch CollectorClient.timeoutPlan(terminatedBySignal: process.terminationReason != .exit) {
-                    case .collect:
-                        // The child ended by itself but a pipe never reached
-                        // EOF, for example a grandchild holding the write
-                        // end; finish with what arrived instead of a false
-                        // timeout.
-                        once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: out.collected(), stderr: err.collected()))
-                    case .reportTimeout:
-                        once.resume(throwing: CollectorClientError.timedOut)
-                    }
-                    return
+                    endedBySignal = process.terminationReason != .exit
                 }
-                once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: out.drain(), stderr: err.drain()))
+                // A child a signal ended reports the timeout without pipe
+                // grace; a self-exited one gets a short grace, then what
+                // arrived is the result even if a grandchild holds the pipe.
+                let eofMissing = endedBySignal || finished.wait(timeout: .now() + PipeOutput.eofGrace) == .timedOut
+                switch CollectorClient.timeoutPlan(terminatedBySignal: endedBySignal) {
+                case .collect:
+                    let output = eofMissing
+                        ? ProcessOutput(status: process.terminationStatus, stdout: out.collected(), stderr: err.collected())
+                        : ProcessOutput(status: process.terminationStatus, stdout: out.drain(), stderr: err.drain())
+                    once.resume(returning: output)
+                case .reportTimeout:
+                    once.resume(throwing: CollectorClientError.timedOut)
+                }
             }
             let writer = standardInput.fileHandleForWriting
             if let stdin {

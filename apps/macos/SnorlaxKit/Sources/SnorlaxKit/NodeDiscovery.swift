@@ -146,10 +146,6 @@ public enum NodeDiscovery {
 public struct ProcessNodeProbe: NodeProbing {
     public var timeout: TimeInterval
 
-    /// How long a self-exited shell's pipes may take to reach EOF before the
-    /// remaining output is read without waiting.
-    public static let pipeGrace: TimeInterval = 0.2
-
     public init(timeout: TimeInterval = 5) {
         self.timeout = timeout
     }
@@ -194,31 +190,31 @@ public struct ProcessNodeProbe: NodeProbing {
         } catch {
             return nil
         }
-        if finished.wait(timeout: .now() + timeout) == .timedOut {
-            // The budget is spent: terminate at once, then settle the exit
-            // event (its delivery can lag the actual exit).
+        // The whole budget goes to the exit event, never to pipes: a
+        // grandchild holding the write end must not consume it.
+        var endedBySignal = false
+        if terminated.wait(timeout: .now() + timeout) == .timedOut {
             if process.isRunning { process.terminate() }
-            guard terminated.wait(timeout: .now() + 1) == .success else {
-                return nil
+            if terminated.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                if terminated.wait(timeout: .now() + 1) == .timedOut {
+                    return nil
+                }
             }
-            // `terminationReason` tells a self-exited shell from one this
-            // probe had to kill; a killed shell has no usable output.
-            let eofMissing = finished.wait(timeout: .now() + Self.pipeGrace) == .timedOut
-            switch NodeDiscovery.readPlan(
-                terminatedBySignal: process.terminationReason != .exit,
-                eofReceived: !eofMissing
-            ) {
-            case .none:
-                return nil
-            case .readFully:
-                let data = stdout.drain()
-                return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
-            case .readWhatArrived:
-                let data = stdout.collectRemaining()
-                return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
-            }
+            endedBySignal = process.terminationReason != .exit
         }
-        let data = stdout.drain()
-        return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        // A process a signal ended has no usable output and no pipe grace; a
+        // self-exited one gets a short grace, then what arrived is read.
+        let eofMissing = endedBySignal || finished.wait(timeout: .now() + PipeOutput.eofGrace) == .timedOut
+        switch NodeDiscovery.readPlan(terminatedBySignal: endedBySignal, eofReceived: !eofMissing) {
+        case .none:
+            return nil
+        case .readFully:
+            let data = stdout.drain()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        case .readWhatArrived:
+            let data = stdout.collected()
+            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        }
     }
 }
