@@ -580,11 +580,15 @@ describe("install and uninstall", () => {
         .map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()))
         .join("");
 
-      // Both outcomes are safe here and either may occur, depending on how the platform resolves
-      // letter case: the guard refuses the directory, or the known-entries deletion runs and removes
-      // nothing snorlax did not write. Either way the unrelated files must survive.
+      // The platform realpath canonicalizes letter case on the default APFS, so on a Mac the guard
+      // refuses; elsewhere the variant is a distinct directory and only known entries would go.
       const result = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: variant });
-      expect([0, 1]).toContain(result.status ?? -1);
+      if (process.platform === "darwin") {
+        expect(result.status).toBe(1);
+        expect(z.parse(failureSchema, json(result.stdout)).error.code).toBe("data-dir");
+      } else {
+        expect(result.status).toBe(0);
+      }
       expect(existsSync(join(env.home, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(env.home, "keep.txt"))).toBe(true);
       expect(existsSync(env.home)).toBe(true);
