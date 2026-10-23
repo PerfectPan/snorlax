@@ -105,6 +105,20 @@ public struct CollectorClient: Sendable {
             stderr: String(data: output.stderr, encoding: .utf8) ?? ""
         )
     }
+
+    /// What a run that ran out of budget does once the exit event has settled.
+    public enum TimeoutPlan: Equatable, Sendable {
+        /// The child ended by itself: its output is the result.
+        case collect
+        /// The child had to be killed: report the timeout.
+        case reportTimeout
+    }
+
+    /// Decides from the termination reason — the exit EVENT — not from
+    /// `isRunning`, whose reaping can lag the actual exit.
+    public static func timeoutPlan(terminatedBySignal: Bool) -> TimeoutPlan {
+        terminatedBySignal ? .reportTimeout : .collect
+    }
 }
 
 public struct FoundationProcessRunner: ProcessRunning {
@@ -134,7 +148,12 @@ public struct FoundationProcessRunner: ProcessRunning {
             finished.enter() // process termination
             out.start(onWait: finished.enter, onEOF: finished.leave)
             err.start(onWait: finished.enter, onEOF: finished.leave)
-            process.terminationHandler = { _ in finished.leave() }
+            let terminated = DispatchGroup()
+            terminated.enter()
+            process.terminationHandler = { _ in
+                finished.leave()
+                terminated.leave()
+            }
             do {
                 try process.run()
             } catch {
@@ -145,14 +164,20 @@ public struct FoundationProcessRunner: ProcessRunning {
             // a child stuck on a full pipe must still be terminated in time.
             DispatchQueue.global().async {
                 if finished.wait(timeout: .now() + timeout.seconds) == .timedOut {
-                    if process.isRunning {
-                        process.terminate()
+                    if process.isRunning { process.terminate() }
+                    guard terminated.wait(timeout: .now() + 1) == .success else {
                         once.resume(throwing: CollectorClientError.timedOut)
-                    } else {
-                        // The process ended but a pipe never reached EOF, for
-                        // example a grandchild holding the write end open.
-                        // Finish with what arrived instead of blocking forever.
+                        return
+                    }
+                    switch CollectorClient.timeoutPlan(terminatedBySignal: process.terminationReason != .exit) {
+                    case .collect:
+                        // The child ended by itself but a pipe never reached
+                        // EOF, for example a grandchild holding the write
+                        // end; finish with what arrived instead of a false
+                        // timeout.
                         once.resume(returning: ProcessOutput(status: process.terminationStatus, stdout: out.collected(), stderr: err.collected()))
+                    case .reportTimeout:
+                        once.resume(throwing: CollectorClientError.timedOut)
                     }
                     return
                 }

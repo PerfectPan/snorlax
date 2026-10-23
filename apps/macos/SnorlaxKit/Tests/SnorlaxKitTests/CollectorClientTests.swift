@@ -110,6 +110,42 @@ final class CollectorClientTests: XCTestCase {
         }
     }
 
+    func testTimeoutPlanFollowsTheTerminationReason() {
+        XCTAssertEqual(CollectorClient.timeoutPlan(terminatedBySignal: false), .collect)
+        XCTAssertEqual(CollectorClient.timeoutPlan(terminatedBySignal: true), .reportTimeout)
+    }
+
+    func testAChildWhosePipeStaysOpenAfterSelfExitStillReturnsItsOutput() async throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        try Fixtures.data("refresh-result").write(to: temp.url.appendingPathComponent("body.json"))
+        // Prints the result, exits, and leaves a background `sleep` holding
+        // stdout: EOF never arrives, so the budget ends the run and the
+        // termination reason must decide. The stub records the background
+        // PID so the test kills it and leaves no orphan behind.
+        let stub = try temp.writeExecutable(named: "stub", contents: """
+        #!/bin/sh
+        dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+        cat "$dir/body.json"
+        sleep 30 &
+        printf '%s\\n' "$!" > "$dir/background-pid"
+        exit 0
+        """)
+        defer {
+            if let text = try? String(contentsOf: temp.url.appendingPathComponent("background-pid"), encoding: .utf8),
+               let processIdentifier = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                kill(processIdentifier, SIGTERM)
+            }
+        }
+        // A 30 s budget keeps the run independent of machine load; the stub
+        // itself finishes at once. The test asserts no real-time threshold.
+        let client = CollectorClient(executable: stub, timeout: .seconds(30))
+
+        let result = try await client.run(["refresh"], as: RefreshResult.self)
+
+        XCTAssertEqual(result.records, 412)
+    }
+
     private let stubScript = """
     #!/bin/sh
     dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
