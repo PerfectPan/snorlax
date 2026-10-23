@@ -7,7 +7,8 @@ import SnorlaxKit
 // launchd sees one short-lived process. Never searches PATH or a login shell.
 
 let fileSystem = LauncherNode.FileSystem()
-let home = FileManager.default.homeDirectoryForCurrentUser
+let home = LauncherNode.homeDirectory(environment: ProcessInfo.processInfo.environment)
+    ?? FileManager.default.homeDirectoryForCurrentUser
 let dataDirectory = DataDirectory.resolve(environment: ProcessInfo.processInfo.environment, home: home)
 
 guard let node = LauncherNode.resolve(dataDirectory: dataDirectory, fileSystem: fileSystem) else {

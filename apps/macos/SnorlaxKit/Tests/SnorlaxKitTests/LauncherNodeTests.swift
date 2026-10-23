@@ -114,6 +114,25 @@ final class LauncherNodeTests: XCTestCase {
 
         XCTAssertEqual(LauncherNode.firstLine(ofFile: file.path), "/fake/node")
     }
+
+    func testFirstLineTakesTheLiteralFirstLineLikeHead() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let file = temp.url.appendingPathComponent("node-path")
+        // `head -n 1` reads the blank first line; it does not fall through to
+        // the second one, so the launcher falls back to the fixed directories.
+        try Data("\n/fake/node\n".utf8).write(to: file)
+        XCTAssertNil(LauncherNode.firstLine(ofFile: file.path))
+    }
+
+    func testHomeDirectoryPrefersTheEnvironmentLikeTheShell() {
+        XCTAssertEqual(
+            LauncherNode.homeDirectory(environment: ["HOME": "/tmp/snorlax-home"]),
+            URL(fileURLWithPath: "/tmp/snorlax-home", isDirectory: true)
+        )
+        XCTAssertNil(LauncherNode.homeDirectory(environment: ["HOME": ""]))
+        XCTAssertNil(LauncherNode.homeDirectory(environment: [:]))
+    }
 }
 
 private struct FakeFiles {

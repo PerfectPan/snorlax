@@ -56,11 +56,26 @@ public enum LauncherNode {
         return contents.appendingPathComponent(collectorResourcePath, isDirectory: false).path
     }
 
-    /// First line of a text file without surrounding whitespace; nil when unreadable or empty.
+    /// First line of a text file without surrounding whitespace; nil when
+    /// unreadable or empty. The literal first line, the way `head -n 1` reads
+    /// it — a leading blank line means no Node, not the second line. The
+    /// split names `\r\n` explicitly: Swift folds it into one grapheme, so a
+    /// plain `"\n"` separator would not cut a CRLF file's first line.
     public static func firstLine(ofFile path: String) -> String? {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let line = text
+            .split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r\n" || $0 == "\r" })
+            .first
+            .map(String.init) ?? ""
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The home directory the way the previous `/bin/sh` launcher saw it:
+    /// `$HOME` when set, otherwise nil (the caller falls back to the system
+    /// home, which `homeDirectoryForCurrentUser` reads without the variable).
+    public static func homeDirectory(environment: [String: String]) -> URL? {
+        guard let home = environment["HOME"], !home.isEmpty else { return nil }
+        return URL(fileURLWithPath: home, isDirectory: true)
     }
 }
