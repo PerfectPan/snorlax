@@ -87,7 +87,7 @@ interface PersistedScanSource {
   readonly mark?: { readonly time: number; readonly count: number };
 }
 
-const scanCursorSchema = z.object({
+const scanCursorSchema = z.looseObject({
   agent: z.string(),
   offset: z.number(),
   line: z.number(),
@@ -95,15 +95,17 @@ const scanCursorSchema = z.object({
   queue: z.optional(z.array(z.unknown()))
 });
 
-const scanStateSchema = z.object({
+// Loose at every level: the state returns to the kit's decoders, so fields a newer kit adds must survive
+// this build's read-back instead of being stripped (plan 3.7).
+const scanStateSchema = z.looseObject({
   sources: z.record(
     z.string(),
-    z.object({
+    z.looseObject({
       agent: z.string(),
       path: z.string(),
       mtimeMs: z.number(),
       cursor: z.optional(scanCursorSchema),
-      mark: z.optional(z.object({ time: z.number(), count: z.number() }))
+      mark: z.optional(z.looseObject({ time: z.number(), count: z.number() }))
     })
   ),
   requests: z.record(z.string(), z.record(z.string(), z.string()))
@@ -145,39 +147,86 @@ export interface Ledger {
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
 
-const readMeta = (db: SqliteDatabase): LedgerMeta => {
+// The ledger rows are unknown data at the read boundary: every table is parsed through a schema, and a row
+// this build cannot read fails as `data-dir` naming the table (AGENTS.md, plan 3.6).
+const metaRowSchema = z.object({
+  device_id: z.string(),
+  device_name: z.nullable(z.string()),
+  last_scan_completed_at: z.nullable(z.number()),
+  pull_cursor: z.number(),
+  pricing_version: z.nullable(z.string())
+});
+
+/** The bucket columns `buckets` and `remote_buckets` share (plan 3.3.2). */
+const bucketColumnsSchema = {
+  hour: z.number(),
+  agent: z.string(),
+  model: z.string(),
+  input_tokens: z.number(),
+  cache_read_tokens: z.number(),
+  cache_write_tokens: z.number(),
+  output_tokens: z.number(),
+  reasoning_tokens: z.number(),
+  requests: z.number(),
+  sessions_started: z.number(),
+  cost_usd: z.number(),
+  unpriced_requests: z.number()
+};
+
+const bucketRowSchema = z.object({ ...bucketColumnsSchema, dirty: z.number() });
+const remoteBucketRowSchema = z.object({ device_id: z.string(), seq: z.number(), ...bucketColumnsSchema });
+const sessionSeenRowSchema = z.object({ agent: z.string(), session_id: z.string() });
+const remoteDeviceRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  last_push_at: z.nullable(z.number()),
+  revoked: z.number()
+});
+
+const parseRow = <S extends z.core.$ZodType>(path: string, table: string, schema: S, row: unknown): z.output<S> => {
+  const parsed = z.safeParse(schema, row);
+  if (!parsed.success) {
+    throw new CliError(
+      "data-dir",
+      `${path}: the ledger's ${table} table holds a row this build cannot read: ${z.prettifyError(parsed.error)}`
+    );
+  }
+  return parsed.data;
+};
+
+const readMeta = (path: string, db: SqliteDatabase): LedgerMeta => {
   const row = db.prepare("SELECT * FROM meta WHERE id = 0").get();
   if (row === undefined) {
     throw new CliError("data-dir", "the ledger's meta row is missing; run snorlax doctor");
   }
+  const meta = parseRow(path, "meta", metaRowSchema, row);
   return {
-    deviceId: String(row.device_id),
-    deviceName: row.device_name === null || row.device_name === undefined ? null : String(row.device_name),
-    lastScanCompletedAt:
-      row.last_scan_completed_at === null || row.last_scan_completed_at === undefined
-        ? null
-        : Number(row.last_scan_completed_at),
-    pullCursor: Number(row.pull_cursor ?? 0),
-    pricingVersion:
-      row.pricing_version === null || row.pricing_version === undefined ? null : String(row.pricing_version)
+    deviceId: meta.device_id,
+    deviceName: meta.device_name,
+    lastScanCompletedAt: meta.last_scan_completed_at,
+    pullCursor: meta.pull_cursor,
+    pricingVersion: meta.pricing_version
   };
 };
 
-const bucketOf = (row: Record<string, unknown>): BucketRow => ({
-  hour: Number(row.hour),
-  agent: String(row.agent),
-  model: String(row.model),
-  inputTokens: Number(row.input_tokens),
-  cacheReadTokens: Number(row.cache_read_tokens),
-  cacheWriteTokens: Number(row.cache_write_tokens),
-  outputTokens: Number(row.output_tokens),
-  reasoningTokens: Number(row.reasoning_tokens),
-  requests: Number(row.requests),
-  sessionsStarted: Number(row.sessions_started),
-  costUsd: Number(row.cost_usd),
-  unpricedRequests: Number(row.unpriced_requests),
-  dirty: Number(row.dirty) !== 0
-});
+const bucketOf = (path: string, row: unknown): BucketRow => {
+  const bucket = parseRow(path, "buckets", bucketRowSchema, row);
+  return {
+    hour: bucket.hour,
+    agent: bucket.agent,
+    model: bucket.model,
+    inputTokens: bucket.input_tokens,
+    cacheReadTokens: bucket.cache_read_tokens,
+    cacheWriteTokens: bucket.cache_write_tokens,
+    outputTokens: bucket.output_tokens,
+    reasoningTokens: bucket.reasoning_tokens,
+    requests: bucket.requests,
+    sessionsStarted: bucket.sessions_started,
+    costUsd: bucket.cost_usd,
+    unpricedRequests: bucket.unpriced_requests,
+    dirty: bucket.dirty !== 0
+  };
+};
 
 const bucketParams = (bucket: BucketDelta): SqliteValue[] => [
   bucket.hour,
@@ -221,7 +270,12 @@ const parseScanState = (path: string, raw: string): PersistedScanState => {
 export async function openLedger(platform: LedgerPlatform, dataDir: string): Promise<Ledger> {
   const path = ledgerPath(dataDir);
   const existing = await platform.fs.stat(path);
-  const db = platform.sqlite.open(path);
+  let db: SqliteDatabase;
+  try {
+    db = platform.sqlite.open(path);
+  } catch (error) {
+    throw new CliError("data-dir", `cannot open the ledger ${path}: ${errorMessage(error)}`);
+  }
   let meta: LedgerMeta;
   let scanState: PersistedScanState | undefined;
   try {
@@ -234,7 +288,7 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
       db.exec("ROLLBACK");
       throw error;
     }
-    meta = readMeta(db);
+    meta = readMeta(path, db);
     const saved = db.prepare("SELECT state FROM scan_state WHERE id = 0").get();
     scanState = saved === undefined ? undefined : parseScanState(path, String(saved.state));
   } catch (error) {
@@ -291,11 +345,11 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
     },
     sessionsSeen(): Map<string, Set<string>> {
       const seen = new Map<string, Set<string>>();
-      for (const row of db.prepare("SELECT agent, session_id FROM sessions_seen").all()) {
-        const agent = String(row.agent);
-        const sessions = seen.get(agent) ?? new Set<string>();
-        sessions.add(String(row.session_id));
-        seen.set(agent, sessions);
+      const rows = db.prepare("SELECT agent, session_id FROM sessions_seen").all();
+      for (const row of rows.map((row) => parseRow(path, "sessions_seen", sessionSeenRowSchema, row))) {
+        const sessions = seen.get(row.agent) ?? new Set<string>();
+        sessions.add(row.session_id);
+        seen.set(row.agent, sessions);
       }
       return seen;
     },
@@ -308,24 +362,48 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
       db.prepare("UPDATE meta SET last_scan_completed_at = ? WHERE id = 0").run(atMs);
     },
     readBuckets(): BucketRow[] {
-      return db.prepare(`SELECT ${BUCKET_COLUMNS}, dirty FROM buckets ORDER BY hour, agent, model`).all().map(bucketOf);
+      return db
+        .prepare(`SELECT ${BUCKET_COLUMNS}, dirty FROM buckets ORDER BY hour, agent, model`)
+        .all()
+        .map((row) => bucketOf(path, row));
     },
     readRemoteBuckets(): RemoteBucketRow[] {
       return db
         .prepare(`SELECT device_id, seq, ${BUCKET_COLUMNS} FROM remote_buckets ORDER BY device_id, hour, agent, model`)
         .all()
-        .map((row) => ({ ...bucketOf({ ...row, dirty: 0 }), deviceId: String(row.device_id), seq: Number(row.seq) }));
+        .map((row): RemoteBucketRow => {
+          const bucket = parseRow(path, "remote_buckets", remoteBucketRowSchema, row);
+          return {
+            deviceId: bucket.device_id,
+            seq: bucket.seq,
+            hour: bucket.hour,
+            agent: bucket.agent,
+            model: bucket.model,
+            inputTokens: bucket.input_tokens,
+            cacheReadTokens: bucket.cache_read_tokens,
+            cacheWriteTokens: bucket.cache_write_tokens,
+            outputTokens: bucket.output_tokens,
+            reasoningTokens: bucket.reasoning_tokens,
+            requests: bucket.requests,
+            sessionsStarted: bucket.sessions_started,
+            costUsd: bucket.cost_usd,
+            unpricedRequests: bucket.unpriced_requests
+          };
+        });
     },
     readRemoteDevices(): RemoteDeviceRow[] {
       return db
         .prepare("SELECT id, name, last_push_at, revoked FROM remote_devices")
         .all()
-        .map((row) => ({
-          id: String(row.id),
-          name: String(row.name),
-          lastPushAt: row.last_push_at === null || row.last_push_at === undefined ? null : Number(row.last_push_at),
-          revoked: Number(row.revoked) !== 0
-        }));
+        .map((row): RemoteDeviceRow => {
+          const device = parseRow(path, "remote_devices", remoteDeviceRowSchema, row);
+          return {
+            id: device.id,
+            name: device.name,
+            lastPushAt: device.last_push_at,
+            revoked: device.revoked !== 0
+          };
+        });
     },
     zeroBucketsFrom(startHour) {
       db.prepare(
@@ -356,7 +434,7 @@ export async function readLedgerStatus(
   }
   const db = platform.sqlite.open(path, { readonly: true });
   try {
-    const meta = readMeta(db);
+    const meta = readMeta(path, db);
     return { deviceId: meta.deviceId, lastScanCompletedAt: meta.lastScanCompletedAt };
   } catch (error) {
     throw error instanceof CliError

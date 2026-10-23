@@ -138,11 +138,76 @@ describe("a database on an older schema version", () => {
   });
 });
 
+describe("the persisted scan state", () => {
+  it("keeps fields this build does not know, at the top and inside a source", async () => {
+    const ledger = await open();
+    ledger.setScanState({
+      sources: {
+        "a.jsonl": { agent: "claude-code", path: "a.jsonl", mtimeMs: 1, futureSourceField: true }
+      },
+      requests: {},
+      futureStateField: "kept"
+    });
+    ledger.close();
+
+    // A newer kit reads its own added fields back out of the state this build persisted (plan 3.7).
+    const reopened = await open();
+    try {
+      expect(reopened.scanState).toMatchObject({
+        futureStateField: "kept",
+        sources: { "a.jsonl": { futureSourceField: true } }
+      });
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+describe("a meta row this build cannot read", () => {
+  it('fails as data-dir instead of coercing a NULL device id into the string "null"', async () => {
+    // The schema forbids a NULL device id, so a row that has one stands for corruption or a foreign
+    // writer: rebuild the table without the constraint to plant the row.
+    const db = new DatabaseSync(ledgerPath(dataDir));
+    try {
+      db.exec(`CREATE TABLE meta_loose (
+         id                     INTEGER PRIMARY KEY CHECK (id = 0),
+         device_id              TEXT,
+         device_name            TEXT,
+         last_scan_completed_at INTEGER,
+         pull_cursor            INTEGER NOT NULL DEFAULT 0,
+         pricing_version        TEXT
+       )`);
+      db.exec("INSERT INTO meta_loose SELECT * FROM meta");
+      db.exec("DROP TABLE meta");
+      db.exec("ALTER TABLE meta_loose RENAME TO meta");
+      db.exec("UPDATE meta SET device_id = NULL");
+    } finally {
+      db.close();
+    }
+    await expect(open()).rejects.toMatchObject({ code: "data-dir", message: /meta/ });
+  });
+});
+
 describe("a database from a newer build", () => {
   it("refuses to open instead of downgrading", async () => {
     setUserVersion(SCHEMA_VERSION + 1);
     await expect(open()).rejects.toThrow(/newer snorlax/);
     await expect(open()).rejects.toBeInstanceOf(CliError);
     expect(userVersion()).toBe(SCHEMA_VERSION + 1);
+  });
+
+  it("reports a ledger whose sqlite cannot be opened as data-dir, naming the path", async () => {
+    const brokenPlatform = {
+      fs,
+      sqlite: {
+        open: () => {
+          throw new Error("sqlite cannot open the file");
+        }
+      }
+    };
+    await expect(openLedger(brokenPlatform, dataDir)).rejects.toMatchObject({
+      code: "data-dir",
+      message: /ledger\.db/
+    });
   });
 });
