@@ -30,8 +30,11 @@
     "directory": "packages/collector"
   },
   "dependencies": {
+    "@date-fns/tz": "catalog:",
     "@rivus/agent-kit": "catalog:",
+    "@rivus/agent-kit-collab": "catalog:",
     "@rivus/snorlax-protocol": "workspace:*",
+    "date-fns": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

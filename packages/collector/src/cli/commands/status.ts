@@ -3,6 +3,7 @@ import { detectAgents, type Installation } from "@rivus/agent-kit/discovery";
 import { type DetectedAgent, type Status } from "@rivus/snorlax-protocol";
 
 import { readConfig } from "../../config/config.ts";
+import { readLedgerStatus } from "../../ledger/ledger.ts";
 import { readSnapshotFile } from "../../snapshot/read.ts";
 import { parseCommandArgs } from "../args.ts";
 import type { Command, CommandOutcome } from "../command.ts";
@@ -35,19 +36,23 @@ export const statusCommand: Command = {
     const { values } = parseCommandArgs(args, { json: { type: "boolean" } });
 
     const config = await readConfig(ctx.platform, ctx.dataDir);
+    // Device id and last scan come from the ledger (plan 6.8, Batch 2); sync state and decode failures are
+    // the last refresh's, persisted in the snapshot, until sync owns them in Batch 7.
+    const ledger = await readLedgerStatus(ctx.platform, ctx.dataDir);
     const snapshot = await readSnapshotFile(ctx.platform, ctx.dataDir);
     const installations = await detectAgentsStatOnly(ctx.platform);
 
     const status = snapshot.kind === "ok" ? snapshot.snapshot.status : undefined;
-    const thisDevice =
-      snapshot.kind === "ok" ? (snapshot.snapshot.byDevice.find((device) => device.isThisDevice) ?? null) : null;
     const payload: Status = {
       schemaVersion: 1,
       ok: true,
       version: ctx.version,
       dataDir: ctx.dataDir,
-      device: { id: thisDevice?.deviceId ?? null, name: config.deviceName ?? null },
-      lastScanAt: status?.lastScanAt ?? null,
+      device: { id: ledger?.deviceId ?? null, name: config.deviceName ?? null },
+      lastScanAt:
+        ledger?.lastScanCompletedAt === undefined || ledger.lastScanCompletedAt === null
+          ? null
+          : new Date(ledger.lastScanCompletedAt).toISOString(),
       sync: status?.sync ?? { state: "unpaired", at: null },
       failuresByAgent: status?.failuresByAgent ?? {},
       agents: installations.map(toDetected)

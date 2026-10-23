@@ -4,14 +4,9 @@ import { type Failure } from "@rivus/snorlax-protocol";
 import { errorMessage } from "../util/error-message.ts";
 import type { Command } from "./command.ts";
 import { doctorCommand } from "./commands/doctor.ts";
-import {
-  installCommand,
-  pairCommand,
-  rebuildCommand,
-  refreshCommand,
-  uninstallCommand,
-  unpairCommand
-} from "./commands/pending.ts";
+import { installCommand, pairCommand, uninstallCommand, unpairCommand } from "./commands/pending.ts";
+import { rebuildCommand } from "./commands/rebuild.ts";
+import { refreshCommand } from "./commands/refresh.ts";
 import { snapshotCommand } from "./commands/snapshot.ts";
 import { statusCommand } from "./commands/status.ts";
 import { createContext, type CliDeps } from "./context.ts";
