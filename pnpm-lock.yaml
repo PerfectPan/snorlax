@@ -167,6 +167,9 @@ catalogs:
     '@perfectpan/lint-config':
       specifier: github:PerfectPan/lint-config#v0.6.0
       version: https://codeload.github.com/PerfectPan/lint-config/tar.gz/28be8c1e152dde6a44fce9e43fdb282957959cc0
+    '@rivus/agent-kit':
+      specifier: 0.20.0
+      version: 0.20.0
     '@types/node':
       specifier: 24.19.2
       version: 24.19.2
@@ -176,6 +179,9 @@ catalogs:
     vite-plus:
       specifier: 1.1.0
       version: 1.1.0
+    zod:
+      specifier: 4.6.7
+      version: 4.6.7
 
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.1.0
@@ -183,6 +189,50 @@ overrides:
 importers:
 
   .: {}
+
+  packages/collector:
+    dependencies:
+      '@rivus/agent-kit':
+        specifier: 'catalog:'
+        version: 0.20.0
+      '@rivus/snorlax-protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@perfectpan/lint-config':
+        specifier: 'catalog:'
+        version: https://codeload.github.com/PerfectPan/lint-config/tar.gz/28be8c1e152dde6a44fce9e43fdb282957959cc0(oxfmt@0.72.0(vite-plus@1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)))(oxlint-tsgolint@7.0.2003)(oxlint@1.87.0(oxlint-tsgolint@7.0.2003)(vite-plus@1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)))(typescript@7.0.2)(vite-plus@1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2))
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)
+
+  packages/protocol:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@perfectpan/lint-config':
+        specifier: 'catalog:'
+        version: https://codeload.github.com/PerfectPan/lint-config/tar.gz/28be8c1e152dde6a44fce9e43fdb282957959cc0(oxfmt@0.72.0(vite-plus@1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)))(oxlint-tsgolint@7.0.2003)(oxlint@1.87.0(oxlint-tsgolint@7.0.2003)(vite-plus@1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)))(typescript@7.0.2)(vite-plus@1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2))
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)
 
   scripts:
     devDependencies:
@@ -201,6 +251,11 @@ importers:
 
 packages:
 
+  '@agentclientprotocol/sdk@1.8.0':
+    resolution: {integrity: sha512-fbP7qHZsFyTJVT0/RPrcWJ8An26qLXHEuGCHHEKDyxD1xpXV+Ejyh2LAE6vBAFePkpVjZeeohnbgvuEhZ7wLMg==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
     engines: {node: '>=6.9.0'}
@@ -215,6 +270,10 @@ packages:
 
   '@blazediff/core@1.10.0':
     resolution: {integrity: sha512-AOQff0zgR7cGsZL+4E7hVkmujoPUpm0J9xzWGWZj5wCjd3gmxESXAPfKyuzs93VdpQNFhHlBhfOjrcZ+XTERtQ==}
+
+  '@decimalturn/toml-patch@3.3.1':
+    resolution: {integrity: sha512-bevRGAUJonKWPBEY0tmn6HxEsPS1hJquwoIRNg/WTJnN+/0J6nfomSkn4FBtGlw1dUEt8tkS97oR0wwy3bo2HQ==}
+    engines: {node: '>=16'}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -534,6 +593,15 @@ packages:
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
+
+  '@rivus/agent-kit@0.20.0':
+    resolution: {integrity: sha512-i+Yywj4OuDC0ib1CgrIFmJeQAJdkrZqrKr6Z4m6tAj3FMI9g/mZNsR4uvGqoK6HtKZ6wxN815DWDfkDCeYWd6g==}
+    engines: {node: '>=22.13'}
+    peerDependencies:
+      effect: 4.0.4
+    peerDependenciesMeta:
+      effect:
+        optional: true
 
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
@@ -1031,6 +1099,9 @@ packages:
   es-module-lexer@2.3.2:
     resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
 
+  es-toolkit@1.52.0:
+    resolution: {integrity: sha512-XTNEJQh1tY1ZJVcf6ayP/2n4ZPyaHlW2FWs7xvw5ddPuhUVjLD3olQVQS7kf58JbAB48iL0uL/jerTrjtV3lDA==}
+
   estree-walker@3.0.3:
     resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
 
@@ -1060,6 +1131,9 @@ packages:
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
 
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
@@ -1210,6 +1284,10 @@ packages:
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
+  shell-quote@1.12.0:
+    resolution: {integrity: sha512-PcByqNyT/38F2kDNi006HAMRJaULuBzq/FOsw3qdZvX/GA9W/jamDaRskgHjubHiftXK5sIFxLNkvrXUwcof6Q==}
+    engines: {node: '>= 0.4'}
+
   sirv@3.0.2:
     resolution: {integrity: sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==}
     engines: {node: '>=18'}
@@ -1336,7 +1414,14 @@ packages:
   yuku-parser@0.9.5:
     resolution: {integrity: sha512-IBnAdNVMswWbJcM7woPluOudectJzFjJ1N8jVRxP9Uq4CIv5hZdBIcdmtRbFDYF/Ph2j2gVup4YJ4N9mh0jYFA==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
+
+  '@agentclientprotocol/sdk@1.8.0(zod@4.6.7)':
+    dependencies:
+      zod: 4.6.7
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -1349,6 +1434,8 @@ snapshots:
   '@babel/runtime@7.29.10': {}
 
   '@blazediff/core@1.10.0': {}
+
+  '@decimalturn/toml-patch@3.3.1': {}
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
@@ -1506,6 +1593,15 @@ snapshots:
       vite-plus: 1.1.0(@types/node@24.19.2)(@vitest/ui@5.0.3)(typescript@7.0.2)
 
   '@polka/url@1.0.0-next.29': {}
+
+  '@rivus/agent-kit@0.20.0':
+    dependencies:
+      '@agentclientprotocol/sdk': 1.8.0(zod@4.6.7)
+      '@decimalturn/toml-patch': 3.3.1
+      es-toolkit: 1.52.0
+      jsonc-parser: 3.3.1
+      shell-quote: 1.12.0
+      zod: 4.6.7
 
   '@testing-library/dom@10.4.2':
     dependencies:
@@ -1867,6 +1963,8 @@ snapshots:
 
   es-module-lexer@2.3.2: {}
 
+  es-toolkit@1.52.0: {}
+
   estree-walker@3.0.3:
     dependencies:
       '@types/estree': 1.0.9
@@ -1885,6 +1983,8 @@ snapshots:
     optional: true
 
   js-tokens@4.0.0: {}
+
+  jsonc-parser@3.3.1: {}
 
   lightningcss-android-arm64@1.33.0:
     optional: true
@@ -2026,6 +2126,8 @@ snapshots:
       react-is: 17.0.2
 
   react-is@17.0.2: {}
+
+  shell-quote@1.12.0: {}
 
   sirv@3.0.2:
     dependencies:
@@ -2221,3 +2323,5 @@ snapshots:
       '@yuku-parser/binding-linux-x64-musl': 0.9.5
       '@yuku-parser/binding-win32-arm64': 0.9.5
       '@yuku-parser/binding-win32-x64': 0.9.5
+
+  zod@4.6.7: {}

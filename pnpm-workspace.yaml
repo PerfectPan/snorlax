@@ -12,10 +12,16 @@ catalog:
   # pnpm can only satisfy that peer through the override below. Keep the version in lockstep with the
   # `vite-plus` entry (same release train; Dependabot does not see the mapping).
   vite: npm:@voidzero-dev/vite-plus-core@1.1.0
+  '@date-fns/tz': 1.5.0
   '@perfectpan/lint-config': github:PerfectPan/lint-config#v0.6.0
+  '@rivus/agent-kit': 0.20.0
+  '@rivus/agent-kit-collab': 0.20.0
   '@types/node': 24.19.2
+  date-fns: 4.4.0
+  quicktype: 26.0.0
   typescript: 7.0.2
   vite-plus: 1.1.0
+  zod: 4.6.7
 
 # Redirect whatever declares a `vite` range to the vite-plus core alias.
 overrides:
@@ -27,6 +33,11 @@ peerDependencyRules:
 
 # Reject versions published less than a day ago, in minutes.
 minimumReleaseAge: 1440
+# The owner's own packages, pinned by docs/plans/0001-snorlax.md 3.10; snorlax tracks their releases
+# deliberately instead of waiting out the release-age window.
+minimumReleaseAgeExclude:
+  - '@rivus/agent-kit'
+  - '@rivus/agent-kit-collab'
 
 strictPeerDependencies: true
 autoInstallPeers: true
