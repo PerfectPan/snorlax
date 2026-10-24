@@ -90,13 +90,22 @@ const setUserVersion = (setup: RefreshSetup, version: number): void => {
   }
 };
 
+/**
+ * Waits until every run has settled, so a failed run cannot let `finally` remove the test bed while another still
+ * writes, then gives each as `true` when it succeeded, else its failure, so a failed assertion shows what failed.
+ */
+const settledOk = async (runs: readonly Promise<ScanAndCommitOutcome>[]): Promise<unknown[]> =>
+  (await Promise.allSettled(runs)).map((outcome) =>
+    outcome.status === "fulfilled" ? outcome.value.result.ok : outcome.reason
+  );
+
 interface Probe {
   readonly platform: TestPlatform;
   /** Resolves when the gated run reads its gate path for the first time: mid-scan, under the lock. */
   readonly gateReached: Promise<void>;
   releaseGate: () => void;
   readonly events: readonly string[];
-  /** Resolves once `event` has been recorded `occurrence` times. */
+  /** Resolves once `event` itself has been recorded `occurrence` times; other events leave it waiting. */
   waitForEvent: (event: string, occurrence: number) => Promise<void>;
 }
 
@@ -107,23 +116,20 @@ interface Probe {
  */
 const probedPlatform = (setup: RefreshSetup, gatePath: string): Probe => {
   const events: string[] = [];
-  const waiters: ((count: number) => void)[] = [];
+  const waiters: { readonly event: string; readonly occurrence: number; readonly resolve: () => void }[] = [];
+  const countOf = (event: string): number => events.filter((seen) => seen === event).length;
   const record = (event: string): void => {
     events.push(event);
-    for (const waiter of waiters.splice(0)) {
-      waiter(events.filter((seen) => seen === event).length);
+    for (const waiter of waiters.filter((waiting) => waiting.event === event && countOf(event) >= waiting.occurrence)) {
+      waiters.splice(waiters.indexOf(waiter), 1);
+      waiter.resolve();
     }
   };
-  const countOf = (event: string): number => events.filter((seen) => seen === event).length;
   const waitForEvent = (event: string, occurrence: number): Promise<void> =>
     countOf(event) >= occurrence
       ? Promise.resolve()
       : new Promise<void>((resolve) => {
-          waiters.push((count) => {
-            if (count >= occurrence) {
-              resolve();
-            }
-          });
+          waiters.push({ event, occurrence, resolve });
         });
 
   let resolveTripped!: () => void;
@@ -199,10 +205,7 @@ describe("overlapping runs count every request once", () => {
       await probe.gateReached;
       const second = refreshOn(probe.platform, parallel);
       probe.releaseGate();
-      const outcomes = await Promise.all([first, second]);
-      for (const outcome of outcomes) {
-        expect((outcome as { result: { ok: boolean } }).result.ok).toBe(true);
-      }
+      expect(await settledOk([first, second])).toEqual([true, true]);
 
       expect(await stateOf(parallel)).toEqual(await stateOf(sequential));
     } finally {
@@ -228,10 +231,7 @@ describe("overlapping runs count every request once", () => {
       await probe.gateReached;
       const second = rebuildOn(probe.platform, parallel);
       probe.releaseGate();
-      const outcomes = await Promise.all([first, second]);
-      for (const outcome of outcomes) {
-        expect((outcome as { result: { ok: boolean } }).result.ok).toBe(true);
-      }
+      expect(await settledOk([first, second])).toEqual([true, true]);
 
       expect(await stateOf(parallel)).toEqual(await stateOf(sequential));
     } finally {
@@ -265,10 +265,7 @@ describe("the ledger opens under the lock", () => {
       expect(probe.events.filter((event) => event === "backup")).toHaveLength(1);
 
       probe.releaseGate();
-      const outcomes = await Promise.all([first, second]);
-      for (const outcome of outcomes) {
-        expect((outcome as { result: { ok: boolean } }).result.ok).toBe(true);
-      }
+      expect(await settledOk([first, second])).toEqual([true, true]);
       expect(probe.events.filter((event) => event === "open")).toHaveLength(2);
       expect(probe.events.filter((event) => event === "backup")).toHaveLength(1);
       expect((await listBackups(setup.platform.fs, setup.dataDir)).map((backup) => backup.version)).toEqual([0]);
@@ -509,7 +506,7 @@ describe("a held lock", () => {
       expect(failure.message).toMatch(/^waited 60s for the ledger lock .*ledger\.lock: /);
 
       probe.releaseGate();
-      expect(((await holder) as { result: { ok: boolean } }).result.ok).toBe(true);
+      expect((await holder).result.ok).toBe(true);
     } finally {
       await setup.remove();
     }
