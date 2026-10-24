@@ -1,11 +1,8 @@
 import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { SnorlaxPlatform } from "../platform.ts";
-import { Context, Effect, Layer } from "effect";
 import * as z from "zod/mini";
 
-import { DataDir } from "../data-dir/data-dir.ts";
 import { CommandError } from "../errors.ts";
 import { errorMessage } from "../util/error-message.ts";
 import { readTextFile } from "../util/read-text-file.ts";
@@ -43,30 +40,4 @@ export async function readConfig(platform: Pick<Platform, "fs">, dataDir: string
     });
   }
   return parsed.data;
-}
-
-/**
- * Reads `<data>/config.json` on every call; nothing is read or opened when the layer is built. A
- * missing file is the default config, not a failure.
- */
-export class ConfigStore extends Context.Service<
-  ConfigStore,
-  {
-    readonly read: Effect.Effect<ConfigValue, CommandError>;
-  }
->()("snorlax/config/ConfigStore") {
-  static readonly live: Layer.Layer<ConfigStore, never, SnorlaxPlatform | DataDir> = Layer.effect(
-    ConfigStore,
-    Effect.gen(function* () {
-      const platform = yield* SnorlaxPlatform;
-      const dataDir = yield* DataDir;
-      return ConfigStore.of({
-        read: Effect.tryPromise({
-          try: () => readConfig(platform, dataDir.path),
-          catch: (error) =>
-            error instanceof CommandError ? error : new CommandError({ code: "data-dir", message: errorMessage(error) })
-        })
-      });
-    })
-  );
 }

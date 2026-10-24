@@ -14,7 +14,15 @@ export default defineConfig({
   lint: { ...lint, ignorePatterns: ["node_modules/**", "dist/**"] },
   build: {
     target: "node22.13",
-    minify: false,
+    // Terser with everything off except comment removal: the bundle stays readable and unminified
+    // (plan 2.4 D9 keeps a debuggable single file), but the inlined dependencies' doc comments —
+    // about 40% of the bytes — go. minify: false would keep every comment.
+    minify: "terser",
+    terserOptions: {
+      compress: false,
+      mangle: false,
+      format: { comments: false, keep_numbers: true }
+    },
     outDir: "dist",
     lib: {
       entry: "src/cli/bin.ts",

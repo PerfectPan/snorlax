@@ -39,17 +39,25 @@ const consoleInto = (write: Write): Console.Console => ({
   warn: (...args) => write("stderr", args)
 });
 
-/** A Console wired to the CLI's sinks, so effect/cli's help and version rendering lands there too. */
-export const cliConsole = (env: CliOutputEnv): Console.Console =>
-  consoleInto((sink, args) => env[sink].write(`${args.map(String).join(" ")}\n`));
+/**
+ * A Console wired to the CLI's sinks, so effect/cli's help and version rendering lands there too.
+ * Everything effect/cli renders on its own — help text, formatted parse errors — passes through
+ * `redactText` here: an error line can quote the command line it came from, and that line may name
+ * paths under the home (plan 3.8).
+ */
+export const cliConsole = (env: CliOutputEnv, home: string): Console.Console =>
+  consoleInto((sink, args) => env[sink].write(redactText(`${args.map(String).join(" ")}\n`, { home })));
 
 /**
- * A Console that holds effect/cli's rendering back in `buffered` instead of writing it out, so a
- * `--json` run can drop the help text and print exactly one JSON object.
+ * A Console that holds effect/cli's rendering back in `buffered` (already redacted) instead of
+ * writing it out, so a `--json` run can drop the help text and print exactly one JSON object.
  */
-export const bufferedConsole = (buffered: { readonly out: string[]; readonly err: string[] }): Console.Console =>
+export const bufferedConsole = (
+  home: string,
+  buffered: { readonly out: string[]; readonly err: string[] }
+): Console.Console =>
   consoleInto((sink, args) => {
-    const text = `${args.map(String).join(" ")}\n`;
+    const text = redactText(`${args.map(String).join(" ")}\n`, { home });
     if (sink === "stdout") {
       buffered.out.push(text);
     } else {

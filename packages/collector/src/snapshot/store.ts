@@ -4,6 +4,7 @@ import { Context, Effect, Layer } from "effect";
 
 import { DataDir } from "../data-dir/data-dir.ts";
 import { CommandError } from "../errors.ts";
+import { errorMessage } from "../util/error-message.ts";
 import { readSnapshotFile } from "./read.ts";
 
 /**
@@ -41,7 +42,7 @@ export class SnapshotStore extends Context.Service<
             return read.snapshot;
           },
           catch: (error) =>
-            error instanceof CommandError ? error : new CommandError({ code: "data-dir", message: String(error) })
+            error instanceof CommandError ? error : new CommandError({ code: "data-dir", message: errorMessage(error) })
         })
       });
     })

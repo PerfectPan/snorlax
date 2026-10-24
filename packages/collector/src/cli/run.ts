@@ -1,12 +1,11 @@
 import { SnorlaxPlatform } from "../platform.ts";
 import { ChildProcessSpawner } from "effect/process";
-import { CliError, Command } from "effect/cli";
-import { Console, Effect, FileSystem, Layer, Path, Runtime, Terminal } from "effect";
+import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
+import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
 import { layerTest as stdioLayerTest } from "effect/Stdio";
 
 import type { FailureCode } from "@rivus/snorlax-protocol";
 
-import { ConfigStore } from "../config/config.ts";
 import { DataDir } from "../data-dir/data-dir.ts";
 import { NodeFiles } from "../data-dir/node-fs.ts";
 import { Doctor } from "../doctor/service.ts";
@@ -40,8 +39,9 @@ import { rootCommand } from "./root.ts";
  */
 
 /**
- * The process exit carried out of the program. The marker is what the default teardown reads for the
- * exit code, and `errorReported` keeps the runner from logging a failure this CLI already rendered.
+ * The process exit carried out of the program. The exit-code marker is what `Runtime.defaultTeardown`
+ * reads in `bin.ts`; `errorReported` says the truth — every failure reaching this class has already
+ * been rendered by `cli/` (defects included), so a runtime logger must not report it again.
  */
 export class CliExit extends Error {
   readonly [Runtime.errorExitCode]: number;
@@ -81,7 +81,6 @@ interface Outcome {
 function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
   const writers = Layer.provideMerge(Layer.mergeAll(Refresh.live, Rebuild.live), Log.live);
   const readers = Layer.mergeAll(
-    ConfigStore.live,
     StatusReport.live,
     Doctor.live,
     SnapshotStore.live,
@@ -127,7 +126,11 @@ export const runCli = (
     const env = yield* CliEnv;
     const info = yield* RuntimeInfo;
     const home = platform.home;
-    const json = argv.includes("--json");
+    // The parsed flag decides the output mode, and `--json=` is rejected before anything runs: the
+    // boolean flag takes no value, and a silent `--json=false` meaning "json" would lie either way.
+    const jsonTokens = argv.filter((token) => token === "--json" || token.startsWith("--json="));
+    const malformedJson = jsonTokens.find((token) => token !== "--json");
+    const json = jsonTokens.length > 0;
     const startedAt = platform.clock.monotonic();
     const commandName = argv.find((token) => !token.startsWith("-"));
     let failureCode: string | undefined;
@@ -135,18 +138,33 @@ export const runCli = (
     // In `--json` mode effect/cli's help and version rendering is buffered and only flushed when it
     // is the thing the run was asked for, so a failed run still prints exactly one JSON object.
     const buffered: { readonly out: string[]; readonly err: string[] } = { out: [], err: [] };
-    const consoleImpl: Console.Console = json ? bufferedConsole(buffered) : cliConsole(env);
+    const consoleImpl: Console.Console = json ? bufferedConsole(home, buffered) : cliConsole(env, home);
 
-    const program = Effect.gen(function* () {
-      yield* Command.runWith(rootCommand, { version: info.version, renderErrors: true })([...argv]);
-      const output = yield* (yield* CommandOutput).take;
-      if (json) {
-        printPayloadJson(env, home, output.payload);
-      } else {
-        printHuman(env, home, output.human);
-      }
-      return { exit: 0, flushConsole: false } satisfies Outcome;
-    }).pipe(
+    const program = (
+      malformedJson === undefined
+        ? Effect.gen(function* () {
+            yield* Command.runWith(rootCommand, { version: info.version, renderErrors: true })([...argv]);
+            const output = yield* (yield* CommandOutput).take;
+            if (Option.isNone(output)) {
+              // A built-in action (--help/--version) ran: effect/cli rendered it through the Console.
+              // With --json that rendering is discarded and the run reports the unusable combination.
+              if (json) {
+                printFailureJson(env, home, "invalid-arguments", "--help/--version is not available with --json");
+                return { exit: 2, flushConsole: false } satisfies Outcome;
+              }
+              return { exit: 0, flushConsole: false } satisfies Outcome;
+            }
+            if (json) {
+              printPayloadJson(env, home, output.value.payload);
+            } else {
+              printHuman(env, home, output.value.human);
+            }
+            return { exit: 0, flushConsole: false } satisfies Outcome;
+          })
+        : Effect.fail(
+            new UsageError({ message: `--json does not take a value ("${malformedJson}"); pass it as a plain --json` })
+          )
+    ).pipe(
       Effect.provideService(Console.Console, consoleImpl),
       Effect.catchDefect((defect) => new CommandError({ code: "internal", message: errorMessage(defect) })),
       Effect.catch((error): Effect.Effect<Outcome> => {
@@ -207,4 +225,9 @@ export const runCli = (
       );
     }
     return yield* Effect.fail(new CliExit(exitCode));
-  }).pipe(Effect.provide(cliLayersOf(base)));
+  }).pipe(
+    Effect.provide(cliLayersOf(base)),
+    // Only help and version stay built in: --wizard would start an interactive prompt (plan 3.1
+    // allows none), and --completions/--log-level are not part of the snorlax calling convention.
+    Effect.provide(CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] }))
+  );

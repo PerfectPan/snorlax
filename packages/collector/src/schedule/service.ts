@@ -7,10 +7,12 @@ import { errorMessage } from "../util/error-message.ts";
 import { installLaunchAgent, uninstallLaunchAgent, type UninstallResult } from "./launchd.ts";
 
 /**
- * The LaunchAgent as a service. Both operations prepare the data directory first (like every writing
- * command, so a refused install still leaves the machine in the state `uninstall --data` expects),
- * then go through the plain orchestration in `launchd.ts`; the real `launchctl` is never started by
- * tests, which point `SNORLAX_LAUNCHCTL` at a stub.
+ * The LaunchAgent as a service, over the plain orchestration in `launchd.ts`; the real `launchctl`
+ * is never started by tests, which point `SNORLAX_LAUNCHCTL` at a stub. `install` prepares the data
+ * directory — but only after the ownership check has accepted the loaded service, so a refused
+ * install builds nothing (plan 3.13). `uninstall` prepares nothing at all: it only removes known
+ * entries, and both the kit's `fs.remove` and the leftovers handling treat a missing data directory
+ * or a missing `logs/` directory as already clean.
  */
 export class Schedule extends Context.Service<
   Schedule,
@@ -27,21 +29,15 @@ export class Schedule extends Context.Service<
       const asCommandError = (error: unknown): CommandError =>
         error instanceof CommandError ? error : new CommandError({ code: "internal", message: errorMessage(error) });
       return Schedule.of({
-        install: Effect.andThen(
-          dataDir.ensure,
+        install: Effect.tryPromise({
+          try: () => installLaunchAgent(platform, dataDir.path, () => Effect.runPromise(dataDir.ensure)),
+          catch: asCommandError
+        }),
+        uninstall: (options) =>
           Effect.tryPromise({
-            try: () => installLaunchAgent(platform, dataDir.path),
+            try: () => uninstallLaunchAgent(platform, dataDir.path, options),
             catch: asCommandError
           })
-        ),
-        uninstall: (options) =>
-          Effect.andThen(
-            dataDir.ensure,
-            Effect.tryPromise({
-              try: () => uninstallLaunchAgent(platform, dataDir.path, options),
-              catch: asCommandError
-            })
-          )
       });
     })
   );

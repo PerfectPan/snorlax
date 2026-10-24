@@ -103,6 +103,52 @@ describe("calling convention (plan 3.2.1)", () => {
     expect(run(["status", "--json"], home).status).toBe(0);
     expect(run(["status", "--json"], home).status).toBe(0);
   });
+
+  it("redacts effect/cli's own human rendering: an error quoting the command line hides the home", () => {
+    const result = run(["status", join(home, "secret-project")], home);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("~/secret-project");
+    expect(result.stderr).not.toContain(home);
+  });
+
+  it("rejects --json=… : the flag takes no value, one failure object, exit 2", () => {
+    const result = run(["status", "--json=true"], home);
+    expect(z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code).toBe("invalid-arguments");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe("built-in flags", () => {
+  it("--help, -h, --version and -v exit 0 in human mode with output on stdout", () => {
+    for (const flag of ["--help", "-h", "--version", "-v"]) {
+      const result = run([flag], home);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).not.toBe("");
+    }
+  });
+
+  it("help and version combined with --json print one invalid-arguments object and exit 2", () => {
+    for (const args of [
+      ["status", "--help", "--json"],
+      ["--version", "--json"]
+    ]) {
+      const result = run(args, home);
+      const failure = z.parse(failureSchema, parseOneJsonObject(result.stdout));
+      expect(failure.error.code).toBe("invalid-arguments");
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(2);
+    }
+  });
+
+  it("--wizard is not a flag: an unknown option, exit 2, no interactive prompt", () => {
+    const result = run(["--wizard", "--json"], home);
+    expect(z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code).toBe("invalid-arguments");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(result.status).toBe(2);
+  });
 });
 
 describe("data directory", () => {

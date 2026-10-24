@@ -331,7 +331,15 @@ const snorlaxHomeOverride = (platform: Pick<Platform, "env">): string | undefine
   return value;
 };
 
-export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: string): Promise<string> {
+/**
+ * Registers and loads the agent. `prepare`, when given, runs after the ownership check has accepted
+ * the loaded service — a refused install must build nothing — and before the first write.
+ */
+export async function installLaunchAgent(
+  platform: SchedulerPlatform,
+  dataDir: string,
+  prepare?: () => Promise<void>
+): Promise<string> {
   requireLaunchd(platform, "install");
   requireAbsolute(dataDir);
   const plistPath = launchAgentPlistPath(platform.home);
@@ -340,6 +348,9 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
   // Ownership comes before any write: a foreign or unattributable service is never replaced.
   const loaded = await loadedService(platform, target);
   refuseForeignService(loaded, plistPath, target);
+  if (prepare !== undefined) {
+    await prepare();
+  }
   const plist = renderLaunchAgentPlist({
     ...runningCollectorPaths(),
     dataDir,
