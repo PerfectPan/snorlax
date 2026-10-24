@@ -1,3 +1,11 @@
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
 import { failureSchema } from "@rivus/snorlax-protocol";
 import { Effect, Fiber, Layer } from "effect";
@@ -13,9 +21,10 @@ import { fakeScheduler, type SchedulerCall } from "./fixtures/scheduler.ts";
 
 /**
  * The scheduler capability in process, on the agent-kit memory platform: `install` and `uninstall` over the
- * fake scheduler (what the commands hand the scheduler and print), the system's scheduler selection, and the
- * launchd implementation's cleanup when a run is interrupted. The bundle tests in `install-uninstall.test.ts`
- * cover launchd itself through a `launchctl` stub.
+ * fake scheduler (what the commands hand the scheduler and print) and the launchd implementation's cleanup
+ * when a run is interrupted. The system's scheduler is picked in `cli/bin.ts`, so that test runs the built
+ * bundle (`pnpm run build` first). The bundle tests in `install-uninstall.test.ts` cover launchd itself
+ * through a `launchctl` stub.
  */
 
 const HOME = "/testroot/tester";
@@ -23,6 +32,7 @@ const DATA_DIR = `${HOME}/snorlax-data`;
 const JOB_FILE = `${HOME}/Library/LaunchAgents/fake.plist`;
 const LAUNCHCTL = "/stub/launchctl";
 const PLIST = `${HOME}/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist`;
+const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 
 type MemoryPlatform = ReturnType<typeof createMemoryPlatform>;
 
@@ -132,17 +142,38 @@ describe("install and uninstall on a fake scheduler", () => {
 
 describe("the system's scheduler", () => {
   it("SNORLAX_OS reaches only install and uninstall: status runs with an unknown value", async () => {
-    const platform = memoryPlatform({ SNORLAX_OS: "bogus" });
-    expect((await runCommand(["status", "--json"], platform, Scheduler.live)).exitCode).toBe(0);
-    for (const command of ["install", "uninstall"]) {
-      const failed = await runCommand([command, "--json"], platform, Scheduler.live);
-      expect(failed.exitCode).toBe(1);
-      expect(failureOf(failed.stdout)).toEqual({
-        code: "internal",
-        message: "SNORLAX_OS must be darwin, linux, or win32"
-      });
+    const home = await mkdtemp(join(tmpdir(), "snorlax-os-"));
+    try {
+      const dataDir = join(home, "snorlax-data");
+      // A failing stub, so even a wrong pick never reaches the real launchctl.
+      const launchctl = join(home, "launchctl");
+      await writeFile(launchctl, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const runBundle = (args: readonly string[]) => {
+        const result = spawnSync(process.execPath, [bundle, ...args], {
+          encoding: "utf8",
+          env: {
+            HOME: home,
+            SNORLAX_HOME: dataDir,
+            SNORLAX_OS: "bogus",
+            SNORLAX_LAUNCHCTL: launchctl,
+            PATH: "/usr/bin:/bin"
+          }
+        });
+        return { exitCode: result.status, stdout: result.stdout };
+      };
+      expect(runBundle(["status", "--json"]).exitCode).toBe(0);
+      for (const command of ["install", "uninstall"]) {
+        const failed = runBundle([command, "--json"]);
+        expect(failed.exitCode).toBe(1);
+        expect(failureOf(failed.stdout)).toEqual({
+          code: "internal",
+          message: "SNORLAX_OS must be darwin, linux, or win32"
+        });
+      }
+      expect(existsSync(dataDir)).toBe(false);
+    } finally {
+      await rm(home, { recursive: true, force: true });
     }
-    expect(await platform.fs.stat(DATA_DIR)).toBeUndefined();
   });
 
   it("an interrupted install stops launchctl and removes the plist it wrote (plan 3.13 rule 6)", async () => {
@@ -154,8 +185,8 @@ describe("the system's scheduler", () => {
     // `print` reports no loaded service; `bootstrap` hangs until the run's signal stops it.
     const platform = createMemoryPlatform({
       home: HOME,
-      env: { SNORLAX_HOME: DATA_DIR, SNORLAX_OS: "darwin", SNORLAX_LAUNCHCTL: LAUNCHCTL },
-      os: "linux",
+      env: { SNORLAX_HOME: DATA_DIR, SNORLAX_LAUNCHCTL: LAUNCHCTL },
+      os: "darwin",
       commands: {
         [LAUNCHCTL]: async (args, options) => {
           if (args[0] !== "bootstrap") {
@@ -173,7 +204,9 @@ describe("the system's scheduler", () => {
     box.platform = platform;
     const install = Effect.gen(function* () {
       return yield* (yield* Scheduler).install({ dataDir: DATA_DIR }, Effect.void);
-    }).pipe(Effect.provide(Layer.provide(Scheduler.live, Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform)))));
+    }).pipe(
+      Effect.provide(Layer.provide(Scheduler.launchd, Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform))))
+    );
 
     const fiber = Effect.runFork(install);
     await started;

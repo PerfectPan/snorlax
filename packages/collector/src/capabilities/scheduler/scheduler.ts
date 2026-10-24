@@ -55,7 +55,8 @@ const unavailable = (
 /**
  * The scheduled refresh (plan 3.11, 3.13 rule 5). Snorlax.app's Launch at login registers the same job under
  * the same label, so both operations refuse, changing nothing, while the loaded job is not provably the
- * CLI's own. Implementations: launchd (`launchd.ts`); systemd arrives with Batch 8; tests provide a fake.
+ * CLI's own. One Layer per implementation, picked by `cli/bin.ts`: launchd, and for the systems this build
+ * cannot schedule on, one whose operations fail; systemd arrives with Batch 8; tests provide a fake.
  */
 export class Scheduler extends Context.Service<
   Scheduler,
@@ -75,34 +76,33 @@ export class Scheduler extends Context.Service<
     readonly uninstall: <A, E>(job: RefreshJob, guard: Effect.Effect<A, E>) => Effect.Effect<A, UninstallFailure | E>;
   }
 >()("snorlax/scheduler/Scheduler") {
-  /**
-   * The scheduler of the system the CLI runs on: launchd on macOS. `SNORLAX_OS` (`darwin`, `linux` or
-   * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run the launchd path on the Linux
-   * CI job; it is not copied into the job. On other systems, and with any other `SNORLAX_OS`, install and
-   * uninstall fail while every other command runs as usual: building this layer only reads the environment.
-   */
-  static readonly live: Layer.Layer<Scheduler, never, SnorlaxPlatform> = Layer.effect(
+  /** launchd, the scheduler on macOS (`launchd.ts`). */
+  static readonly launchd: Layer.Layer<Scheduler, never, SnorlaxPlatform> = Layer.effect(
     Scheduler,
     Effect.gen(function* () {
-      const platform = yield* SnorlaxPlatform;
-      const override = platform.env.SNORLAX_OS;
-      const os = override === undefined || override === "" ? platform.os : override;
-      if (os === "darwin") {
-        return launchdScheduler(platform);
-      }
-      if (os === "linux" || os === "win32") {
-        return unavailable(
-          (command) =>
-            new SchedulerUnsupportedOs({
-              message: `snorlax ${command} schedules a LaunchAgent on macOS in this build; ${os} support arrives with Batch 8 (systemd user timer)`
-            })
-        );
-      }
-      // `platform.os` is always one of the three, so only the override names another system.
-      return unavailable(
-        () => new SchedulerOsOverrideInvalid({ message: "SNORLAX_OS must be darwin, linux, or win32" })
-      );
+      return launchdScheduler(yield* SnorlaxPlatform);
     })
+  );
+
+  /**
+   * A system this build has no scheduler for: install and uninstall fail before anything runs, and every other
+   * command runs as usual.
+   */
+  static readonly unsupported = (os: "linux" | "win32"): Layer.Layer<Scheduler> =>
+    Layer.succeed(
+      Scheduler,
+      unavailable(
+        (command) =>
+          new SchedulerUnsupportedOs({
+            message: `snorlax ${command} schedules a LaunchAgent on macOS in this build; ${os} support arrives with Batch 8 (systemd user timer)`
+          })
+      )
+    );
+
+  /** `SNORLAX_OS` names no system: install and uninstall fail, and every other command runs as usual. */
+  static readonly osOverrideInvalid: Layer.Layer<Scheduler> = Layer.succeed(
+    Scheduler,
+    unavailable(() => new SchedulerOsOverrideInvalid({ message: "SNORLAX_OS must be darwin, linux, or win32" }))
   );
 }
 

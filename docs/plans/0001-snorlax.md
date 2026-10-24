@@ -520,10 +520,10 @@ Rules, checked by `test/structure.test.ts` where they are about imports:
 3. Code only one command uses stays in that command's folder.
 4. Each module and capability has one entry file named after it (`modules/ledger/ledger.ts`); its other files are
    internal. Code outside it imports only the entry file. No re-export barrels.
-5. Capabilities are `Context.Service` interfaces; `cli/bin.ts` provides the implementation for the system it runs
-   on and tests provide fakes. Modules are plain modules, not services; the exception is the environment the CLI
-   runs in, which `bin.ts` provides and tests replace: `SnorlaxPlatform` and `NodeFiles` in `modules/platform`,
-   and the `TimeZone` and `RuntimeInfo` references.
+5. Capabilities are `Context.Service` interfaces with one `Layer` per implementation; `cli/bin.ts` picks the
+   implementation and tests provide fakes. Modules are plain modules, not services; the exception is the
+   environment the CLI runs in, which `bin.ts` provides and tests replace: `SnorlaxPlatform` and `NodeFiles` in
+   `modules/platform`, and the `TimeZone` and `RuntimeInfo` references.
 6. Flows (`commands/*/flow.ts`, and module flows several commands share, such as scan-and-commit) are written in
    Effect: the ledger, the ledger lock and other resources are acquired in scopes, so an interrupted run releases
    them. `core/` and command-specific rules (doctor verdicts) are plain functions without Effect types. No service
