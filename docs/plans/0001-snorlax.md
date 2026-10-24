@@ -497,13 +497,14 @@ packages/collector/src/
     rebuild/             command.ts + flow.ts (zeroes the window, then the ledger module's scan-and-commit)
     status/  snapshot/   command.ts + flow.ts
     doctor/              command.ts + flow.ts + checks.ts (doctor's own verdict rules, plain functions)
-    install/  uninstall/ command.ts + flow.ts, both on capabilities/scheduler
+    install/  uninstall/ command.ts + flow.ts, both on capabilities/scheduler; uninstall also has delete-data.ts
+                         (which directory `--data` may delete, and deleting only the entries snorlax wrote)
     pair/  unpair/       stubs until Batch 7
   core/                  pure rules, no IO: buckets (split by model, hourly accumulation), snapshot (windows,
                          series, building the snapshot from buckets), error-message
   modules/               IO with a single implementation: ledger (SQLite, migrations, the scan-and-commit flow
                          refresh and rebuild share), scan (agent-kit `scanUsage`, wrapped once), snapshot-file,
-                         data-dir (resolve, create, and `uninstall --data`'s deletion), config, log, read-text-file,
+                         data-dir (resolve, create, the absolute-path check), config, log, read-text-file,
                          version, time-zone, platform (the kit platform and the Node file ops it does not model)
   capabilities/          external systems with more than one implementation: scheduler (launchd; systemd in
                          Batch 8; the test fake in `test/fixtures/`), secrets (Batch 7: Keychain, libsecret,

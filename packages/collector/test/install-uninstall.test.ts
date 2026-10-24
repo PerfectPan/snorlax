@@ -13,8 +13,8 @@ import * as z from "zod/mini";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/modules/data-dir/data-dir.ts";
 import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
+import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 
 /**

@@ -1,8 +1,9 @@
 import { Effect } from "effect";
 
 import { Scheduler } from "../../capabilities/scheduler/scheduler.ts";
-import { deleteDataDir, resolveDataDir, resolvedDeletableDataDir } from "../../modules/data-dir/data-dir.ts";
+import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import { deleteDataDir, resolvedDeletableDataDir } from "./delete-data.ts";
 
 /**
  * Deletes the device token from the keychain. Pairing does not exist in this build, so there is no item to
