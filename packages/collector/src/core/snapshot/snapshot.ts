@@ -200,7 +200,11 @@ export function buildSnapshot(input: BuildSnapshotInput): Snapshot {
       unpricedRequests: bucket.unpricedRequests
     }))
   ];
-  const inWindow = all.filter((bucket) => bucket.hour * 1000 >= windows.last30dStart);
+  // A bucket after today (a clock running ahead) is in no window, so it must not open an agent or model group
+  // that reads 0 in every window.
+  const inWindow = all.filter(
+    (bucket) => bucket.hour * 1000 >= windows.last30dStart && bucket.hour * 1000 < windows.dayEnd
+  );
   const totals = sumWindows(inWindow, windows);
   const byAgent: ByAgentEntry[] = groupEntries(inWindow, windows, (bucket) => bucket.agent).map((group) => ({
     agent: group.key,
