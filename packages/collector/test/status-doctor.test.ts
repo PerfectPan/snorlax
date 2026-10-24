@@ -285,9 +285,9 @@ describe("doctor", () => {
 });
 
 describe("the schedule check", () => {
-  const PLIST = "/Users/me/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+  const PLIST = "/opt/snorlax-test/home/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
   const APP = "/Applications/Snorlax.app/Contents/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
-  const NODE = "/Users/me/.nvm/versions/node/v22.13.0/bin/node";
+  const NODE = "/opt/snorlax-test/home/.nvm/versions/node/v22.13.0/bin/node";
   const cliJob: CliJob = { file: PLIST, nodePath: NODE };
   const inspected = (job: CliJob | undefined, loaded: LoadedJob): JobInspection => ({
     kind: "inspected",
