@@ -6,8 +6,9 @@ import { describe, expect, it } from "vite-plus/test";
 /**
  * Plan 3.13 rules 1, 2 and 4 over every source file, as one pure function of the files' paths and texts:
  * `src/` holds only the five layers; core, module and capability units are folders entered through a file
- * named after them; imports go cli → commands → capabilities → modules → core and never up; a command folder
- * never imports another; code outside a unit imports only its entry file; and core/ does not use Effect.
+ * named after them; commands/ holds only command folders; imports go cli → commands → capabilities → modules →
+ * core and never up; a command folder never imports another; code outside a unit imports only its entry file;
+ * and core/ does not use Effect.
  * All three import forms count — `from "…"`, side-effect `import "…"` and dynamic `import("…")` — and
  * relative specifiers are resolved against the importing file's directory before they are judged.
  */
@@ -18,9 +19,6 @@ type LayerName = (typeof LAYERS)[number];
 
 /** Layers made of units (`modules/ledger/`), each entered through `<unit>/<name>.ts`. */
 const UNIT_LAYERS: ReadonlySet<LayerName> = new Set(["core", "modules", "capabilities"]);
-
-// 3.13 places these framework files in cli/, but commands/ cannot import cli/; Batch 4c removes this exception.
-const COMMAND_FRAMEWORK_FILES: ReadonlySet<string> = new Set(["commands/flags.ts", "commands/output.ts"]);
 
 type Rule = "layout" | "entry-file" | "upward-import" | "cross-command" | "deep-import" | "core-effect";
 
@@ -73,11 +71,7 @@ function structureViolations(files: readonly SourceFile[]): Violation[] {
       units.add(unit);
     }
     const directlyInLayer = path.split("/").length === 2;
-    if (
-      layer === undefined ||
-      (directlyInLayer && UNIT_LAYERS.has(layer)) ||
-      (directlyInLayer && layer === "commands" && !COMMAND_FRAMEWORK_FILES.has(path))
-    ) {
+    if (layer === undefined || (directlyInLayer && (UNIT_LAYERS.has(layer) || layer === "commands"))) {
       violations.push({ rule: "layout", file: path });
     }
     for (const spec of importSpecs(text)) {
@@ -146,13 +140,11 @@ describe("collector structure (plan 3.13 rules 1, 2 and 4)", () => {
     expect(structureViolations(files)).toEqual([]);
   });
 
-  it("allows entry imports, imports inside one unit, downward imports and the commands/ framework files", () => {
+  it("allows entry imports, imports inside one unit and downward imports", () => {
     expect(
       check({
         "cli/root.ts": 'import { refreshCommand } from "../commands/refresh/command.ts";',
-        "commands/flags.ts": "",
-        "commands/output.ts": "",
-        "commands/refresh/command.ts": 'import { JsonFlag } from "../flags.ts";\nimport { refresh } from "./flow.ts";',
+        "commands/refresh/command.ts": 'import { refresh } from "./flow.ts";',
         "commands/refresh/flow.ts": [
           'import { openLedger } from "../../modules/ledger/ledger.ts";',
           'import { Scheduler } from "../../capabilities/scheduler/scheduler.ts";'
@@ -201,7 +193,7 @@ describe("collector structure (plan 3.13 rules 1, 2 and 4)", () => {
     ["core/ to modules/", "core/buckets/buckets.ts", "../../modules/ledger/ledger.ts"],
     ["modules/ to capabilities/", "modules/ledger/ledger.ts", "../../capabilities/scheduler/scheduler.ts"],
     ["modules/ to commands/", "modules/ledger/ledger.ts", "../../commands/refresh/command.ts"],
-    ["modules/ to a commands/ framework file", "modules/log/log.ts", "../../commands/flags.ts"],
+    ["modules/ to cli/", "modules/log/log.ts", "../../cli/root.ts"],
     ["capabilities/ to commands/", "capabilities/scheduler/scheduler.ts", "../../commands/install/command.ts"],
     ["commands/ to cli/", "commands/refresh/command.ts", "../../cli/run.ts"]
   ])("catches an upward import from %s", (_, file, spec) => {
@@ -230,7 +222,8 @@ describe("collector structure (plan 3.13 rules 1, 2 and 4)", () => {
   it.each([
     ["a file at the top of src/", "errors.ts"],
     ["a directory that is not a layer", "util/error-message.ts"],
-    ["a file directly in commands/ other than the framework files", "commands/shared.ts"],
+    ["a file directly in commands/", "commands/shared.ts"],
+    ["framework code directly in commands/", "commands/output.ts"],
     ["a file directly in modules/", "modules/time-zone.ts"]
   ])("catches %s", (_, file) => {
     expect(check({ [file]: "" })).toEqual([{ rule: "layout", file }]);

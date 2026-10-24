@@ -1,10 +1,7 @@
-import { Command } from "effect/cli";
 import { Effect } from "effect";
 import type { Snapshot } from "@rivus/snorlax-protocol";
 
 import { SnapshotStore } from "./store.ts";
-import { JsonFlag } from "../flags.ts";
-import { CommandOutput } from "../output.ts";
 
 const humanSummary = (snapshot: Snapshot): string => {
   const { totals } = snapshot;
@@ -29,14 +26,13 @@ const humanSummary = (snapshot: Snapshot): string => {
  * (`{ schemaVersion, ok, snapshot }`) with `--json`. The snapshot is written by `refresh`, so a
  * fresh data directory has none yet and the command fails without creating anything.
  */
-export const snapshotCommand = Command.make("snapshot", {}, () =>
-  Effect.gen(function* () {
-    const json = yield* JsonFlag;
-    const snapshot = yield* (yield* SnapshotStore).current;
-    yield* (yield* CommandOutput).render({
-      payload: { schemaVersion: 1, ok: true, snapshot },
-      human: `${humanSummary(snapshot)}\n`,
-      json
-    });
-  })
-).pipe(Command.withDescription("print the current snapshot"));
+export const snapshotCommand = {
+  name: "snapshot",
+  description: "print the current snapshot",
+  flags: {},
+  run: () =>
+    Effect.gen(function* () {
+      const snapshot = yield* (yield* SnapshotStore).current;
+      return { payload: { schemaVersion: 1, ok: true, snapshot }, human: `${humanSummary(snapshot)}\n` };
+    })
+};

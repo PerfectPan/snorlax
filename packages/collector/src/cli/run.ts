@@ -11,14 +11,12 @@ import { Log } from "../modules/log/log.ts";
 import { Schedule } from "../capabilities/scheduler/scheduler.ts";
 import { SnapshotStore } from "../commands/snapshot/store.ts";
 import { StatusReport } from "../commands/status/report.ts";
-import { JsonFlag } from "../commands/flags.ts";
-import { CommandOutput } from "../commands/output.ts";
 import { errorMessage } from "../core/error-message/error-message.ts";
 import { RuntimeInfo } from "../modules/version/version.ts";
 import { CliEnv } from "./env.ts";
 import { FAILURES, UNMAPPED, type FailureExit } from "./failures.ts";
 import { cliConsole, printFailureJson, printFailureMessage, printHuman, printPayloadJson } from "./output.ts";
-import { rootCommand } from "./root.ts";
+import { CommandOutput, JsonFlag, rootCommand } from "./root.ts";
 
 /**
  * The `snorlax` invocation (plan 3.2.1, 3.13): one command, one exit. `effect/cli` parses the

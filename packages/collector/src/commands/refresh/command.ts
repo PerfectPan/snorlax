@@ -1,9 +1,6 @@
-import { Command } from "effect/cli";
 import { Effect } from "effect";
 
 import { refreshFlow } from "./flow.ts";
-import { JsonFlag } from "../flags.ts";
-import { CommandOutput } from "../output.ts";
 
 const humanSummary = (scannedAt: string, records: number, failures: number): string =>
   [
@@ -13,14 +10,13 @@ const humanSummary = (scannedAt: string, records: number, failures: number): str
   ].join("\n");
 
 /** `snorlax refresh` (plan 3.1, 3.4.1): scan, commit the ledger, write the snapshot. */
-export const refreshCommand = Command.make("refresh", {}, () =>
-  Effect.gen(function* () {
-    const json = yield* JsonFlag;
-    const { result } = yield* refreshFlow;
-    yield* (yield* CommandOutput).render({
+export const refreshCommand = {
+  name: "refresh",
+  description: "scan agent usage since the last run, update the ledger, write the snapshot",
+  flags: {},
+  run: () =>
+    Effect.map(refreshFlow, ({ result }) => ({
       payload: result,
-      human: `${humanSummary(result.scannedAt, result.records, result.failures)}\n`,
-      json
-    });
-  })
-).pipe(Command.withDescription("scan agent usage since the last run, update the ledger, write the snapshot"));
+      human: `${humanSummary(result.scannedAt, result.records, result.failures)}\n`
+    }))
+};
