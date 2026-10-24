@@ -1,28 +1,18 @@
-import { SnorlaxPlatform } from "../platform.ts";
 import { ChildProcessSpawner } from "effect/process";
 import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
 import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
 import { layerTest as stdioLayerTest } from "effect/Stdio";
 
-import type { FailureCode } from "@rivus/snorlax-protocol";
-
-import { DataDir } from "../data-dir/data-dir.ts";
-import { NodeFiles } from "../data-dir/node-fs.ts";
-import { Doctor } from "../doctor/service.ts";
-import { CommandError, UsageError } from "../errors.ts";
-import { Log } from "../log/logger.ts";
-import { Rebuild } from "../rebuild/service.ts";
-import { Refresh } from "../refresh/service.ts";
-import { Schedule } from "../schedule/service.ts";
-import { SnapshotStore } from "../snapshot/store.ts";
-import { StatusReport } from "../status/report.ts";
-import { JsonFlag } from "../commands/flags.ts";
-import { CommandOutput } from "../commands/output.ts";
-import { errorMessage } from "../util/error-message.ts";
-import { RuntimeInfo } from "../version.ts";
+import type { Scheduler } from "../capabilities/scheduler/scheduler.ts";
+import { errorMessage } from "../core/error-message/error-message.ts";
+import { resolveDataDir } from "../modules/data-dir/data-dir.ts";
+import { appendingLogger } from "../modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../modules/platform/platform.ts";
+import { RuntimeInfo } from "../modules/version/version.ts";
 import { CliEnv } from "./env.ts";
+import { FAILURES, UNMAPPED, type FailureExit } from "./failures.ts";
 import { cliConsole, printFailureJson, printFailureMessage, printHuman, printPayloadJson } from "./output.ts";
-import { rootCommand } from "./root.ts";
+import { CommandOutput, JsonFlag, rootCommand } from "./root.ts";
 
 /**
  * The `snorlax` invocation (plan 3.2.1, 3.13): one command, one exit. `effect/cli` parses the
@@ -66,19 +56,16 @@ interface Outcome {
   readonly output: "json" | "human";
 }
 
+/** What the caller provides: the platform, the file ops, the scheduler implementation and the sinks. */
+type CliBase = SnorlaxPlatform | NodeFiles | Scheduler | CliEnv;
+
 /**
- * The whole service graph of one invocation, built around the caller's `base`: `base` feeds DataDir
- * the platform and the sinks, DataDir feeds every feature layer, and Log feeds the refresh and
- * rebuild layers that write summary lines. The merges keep every service the invocation itself reads
- * exposed to the program.
+ * Everything one invocation runs on, around the caller's `base`: the command handoff and what effect/cli
+ * itself needs. The flows read the platform, the file ops and the scheduler themselves; `provideMerge`
+ * keeps `base` exposed to the program.
  */
-function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
-  const writers = Layer.provideMerge(Layer.mergeAll(Refresh.live, Rebuild.live), Log.live);
-  const readers = Layer.mergeAll(
-    StatusReport.live,
-    Doctor.live,
-    SnapshotStore.live,
-    Schedule.live,
+function cliLayersOf(base: Layer.Layer<CliBase>) {
+  const services = Layer.mergeAll(
     CommandOutput.live,
     // The services effect/cli itself needs; the collector goes through the kit platform, so the
     // file system here is only the inert requirement of the parser.
@@ -103,20 +90,18 @@ function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
   return Layer.provideMerge(
     // The parsed --json value reaches the handlers through runWith itself; this default only
     // satisfies the type at the top and reads as human mode where no run provided it.
-    Layer.mergeAll(writers, readers, Layer.succeed(JsonFlag, false)),
-    Layer.provideMerge(Log.live, Layer.provideMerge(DataDir.live, base))
+    Layer.mergeAll(services, Layer.succeed(JsonFlag, false)),
+    base
   );
 }
 
 /**
  * Runs one CLI invocation over `argv` (without the program name). Always fails with `CliExit`,
  * carrying the exit code; stdout and stderr carry the output. `base` provides the platform, the
- * file-ops seam and the output sinks — the Node platform in `bin.ts`, memory doubles in tests.
+ * file-ops seam, the scheduler and the output sinks — the Node platform and the system's scheduler in
+ * `bin.ts`, memory doubles and a fake scheduler in tests.
  */
-export const runCli = (
-  argv: readonly string[],
-  base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>
-): Effect.Effect<never, CliExit> =>
+export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Effect.Effect<never, CliExit> =>
   Effect.gen(function* () {
     const platform = yield* SnorlaxPlatform;
     const env = yield* CliEnv;
@@ -139,6 +124,18 @@ export const runCli = (
     const buffered: { readonly out: string[]; readonly err: string[] } = { out: [], err: [] };
     const consoleImpl: Console.Console = cliConsole(home, buffered);
 
+    // A command failure or defect: the JSON envelope or the message on stderr. An exit-2 failure drops
+    // effect/cli's buffered rendering in both modes.
+    const renderFailure = ({ code, exit }: FailureExit, message: string): Outcome => {
+      failureCode = code;
+      if (fallbackJson) {
+        printFailureJson(env, home, code, message);
+      } else {
+        printFailureMessage(env, home, message);
+      }
+      return { exit, output: exit === 2 || fallbackJson ? "json" : "human" };
+    };
+
     const program = Effect.gen(function* () {
       yield* Command.runWith(rootCommand, { version: info.version, renderErrors: true })([...argv]);
       const output = yield* (yield* CommandOutput).take;
@@ -159,7 +156,7 @@ export const runCli = (
       return { exit: 0, output: "human" } satisfies Outcome;
     }).pipe(
       Effect.provideService(Console.Console, consoleImpl),
-      Effect.catchDefect((defect) => new CommandError({ code: "internal", message: errorMessage(defect) })),
+      Effect.catchDefect((defect) => Effect.succeed(renderFailure(UNMAPPED, errorMessage(defect)))),
       Effect.catch((error): Effect.Effect<Outcome> => {
         // Parse and usage errors arrive as ShowHelp: help text was already rendered through the
         // Console above (buffered when --json), the error details too when not suppressed.
@@ -174,24 +171,9 @@ export const runCli = (
           }
           return Effect.succeed({ exit: 2, output: "human" });
         }
-        if (error instanceof UsageError) {
-          failureCode = "invalid-arguments";
-          if (fallbackJson) {
-            printFailureJson(env, home, failureCode, error.message);
-          } else {
-            printFailureMessage(env, home, error.message);
-          }
-          return Effect.succeed({ exit: 2, output: "json" });
-        }
-        const code: FailureCode = error instanceof CommandError ? error.code : "internal";
-        failureCode = code;
-        const message = errorMessage(error);
-        if (fallbackJson) {
-          printFailureJson(env, home, code, message);
-        } else {
-          printFailureMessage(env, home, message);
-        }
-        return Effect.succeed({ exit: 1, output: fallbackJson ? "json" : "human" });
+        return Effect.succeed(
+          renderFailure(CliError.isCliError(error) ? UNMAPPED : FAILURES[error._tag], errorMessage(error))
+        );
       })
     );
 
@@ -208,15 +190,13 @@ export const runCli = (
 
     const exitCode = outcome.exit;
     if (commandName !== undefined && COMMAND_NAMES.has(commandName)) {
-      const log = yield* Log;
-      yield* Effect.promise(() =>
-        log.event("command", {
-          name: commandName,
-          exitCode,
-          ...(failureCode === undefined ? {} : { error: failureCode }),
-          durationMs: Math.round(platform.clock.monotonic() - startedAt)
-        })
-      );
+      const log = appendingLogger(platform, yield* NodeFiles, resolveDataDir(platform));
+      yield* log.event("command", {
+        name: commandName,
+        exitCode,
+        ...(failureCode === undefined ? {} : { error: failureCode }),
+        durationMs: Math.round(platform.clock.monotonic() - startedAt)
+      });
     }
     return yield* Effect.fail(new CliExit(exitCode));
   }).pipe(

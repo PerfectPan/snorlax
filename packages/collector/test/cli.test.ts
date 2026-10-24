@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import * as z from "zod/mini";
@@ -279,5 +280,63 @@ describe("refresh and rebuild", () => {
     const missing = runRefreshHome(["rebuild", "--json"]);
     expect(z.parse(failureSchema, parseOneJsonObject(missing.stdout)).error.code).toBe("invalid-arguments");
     expect(missing.status).toBe(2);
+  });
+
+  it("refresh and rebuild log their summary and command lines in the data directory (plan 3.9)", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-log-"));
+    try {
+      expect(run(["refresh"], fresh).status).toBe(0);
+      expect(run(["rebuild", "--days", "2"], fresh).status).toBe(0);
+      const events = (await readFile(join(fresh, "data", "logs", "snorlax.log"), "utf8"))
+        .trimEnd()
+        .split("\n")
+        .map((line) => line.replace(/^\S+ /, "").replace(/"durationMs":\d+/, '"durationMs":0'));
+      expect(events).toEqual([
+        'refresh {"records":0,"failures":0,"pushed":0,"pulled":0,"durationMs":0}',
+        'command {"name":"refresh","exitCode":0,"durationMs":0}',
+        'rebuild {"days":2,"records":0,"failures":0,"pushed":0,"pulled":0,"durationMs":0}',
+        'command {"name":"rebuild","exitCode":0,"durationMs":0}'
+      ]);
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ledger and snapshot failures", () => {
+  // The ledger and snapshot modules name these failures; cli/ alone turns them into data-dir.
+  const inFreshHome = async (prepare: (data: string) => Promise<void>, args: readonly string[]) => {
+    const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-failure-"));
+    try {
+      await mkdir(join(fresh, "data"));
+      await prepare(join(fresh, "data"));
+      const result = run(args, fresh);
+      return { code: z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code, status: result.status };
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
+  };
+
+  it("exits 1 with data-dir when the ledger is not a database or comes from a newer build", async () => {
+    const notADatabase = (data: string) => writeFile(join(data, "ledger.db"), "not a database\n", "utf8");
+    const newerSchema = async (data: string) => {
+      const db = new DatabaseSync(join(data, "ledger.db"));
+      try {
+        db.exec("PRAGMA user_version = 99");
+      } finally {
+        db.close();
+      }
+    };
+    expect(await inFreshHome(notADatabase, ["status", "--json"])).toEqual({ code: "data-dir", status: 1 });
+    expect(await inFreshHome(notADatabase, ["refresh", "--json"])).toEqual({ code: "data-dir", status: 1 });
+    expect(await inFreshHome(newerSchema, ["refresh", "--json"])).toEqual({ code: "data-dir", status: 1 });
+  });
+
+  it("exits 1 with data-dir when the snapshot cannot be written", async () => {
+    // A non-empty directory in the snapshot's place makes the atomic write's rename fail.
+    const occupied = async (data: string) => {
+      await mkdir(join(data, "snapshot.json", "occupied"), { recursive: true });
+    };
+    expect(await inFreshHome(occupied, ["refresh", "--json"])).toEqual({ code: "data-dir", status: 1 });
   });
 });

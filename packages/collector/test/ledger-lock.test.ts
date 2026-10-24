@@ -1,22 +1,25 @@
 import { basename, join } from "node:path";
 
+import { acquireProcessLock } from "@rivus/agent-kit-collab/process-lock";
+import { Duration, Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ledgerPath, openLedger, readLedgerStatus } from "../src/ledger/ledger.ts";
-import { listBackups } from "../src/ledger/migrations.ts";
-import type { Logger } from "../src/log/logger.ts";
-import { runRebuild } from "../src/rebuild/rebuild.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import type { RefreshPlatform } from "../src/refresh/lock.ts";
+import { ledgerPath, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
+import { LOCK_WAIT_MS } from "../src/modules/ledger/lock.ts";
+import { listBackups } from "../src/modules/ledger/migrations.ts";
+import type { Logger } from "../src/modules/log/log.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
-import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
+import { readLedger, rebuildRun, refreshRun, runRebuild, runRefresh, type RunDeps } from "./fixtures/flows.ts";
+import { createRefreshSetup, type RefreshSetup, type TestPlatform } from "./fixtures/platform.ts";
 
 /**
  * One refresh at a time per data directory (plan 3.5): the ledger lock serializes overlapping runs, and
  * the ledger — migration, backup, meta and scan state included — opens only under it. A gate hung inside
  * the first run's scan holds the lock mid-transaction, so the second run provably starts while the lock is
- * held; no test sleeps or asserts on real elapsed time. Fixtures are generated under a temporary home and
- * removed afterwards.
+ * held. The same gate holds a run mid-scan while it is interrupted (plan 3.13 rule 6: the lock and the ledger
+ * are released with the run's scope), and a waiter's lock timeout runs on `TestClock`; no test sleeps or
+ * asserts on real elapsed time. Fixtures are generated under a temporary home and removed afterwards.
  */
 
 const NOW = Date.UTC(2026, 9, 22, 12, 0, 0);
@@ -25,7 +28,7 @@ const HOUR_9 = Date.UTC(2026, 9, 22, 9) / 1000;
 const HOUR_10 = Date.UTC(2026, 9, 22, 10) / 1000;
 const TIME_ZONE = "UTC";
 const CC_PROJECT = join(".claude", "projects", "-Users-tester-fixture");
-const SILENT_LOG: Logger = { event: async () => {} };
+const SILENT_LOG: Logger = { event: () => Effect.void };
 
 const cc1Path = (home: string): string => join(home, CC_PROJECT, "cc-1.jsonl");
 
@@ -65,21 +68,17 @@ const appendOne = (home: string): Promise<void> =>
     MTIME
   );
 
-const refreshOn = (platform: RefreshPlatform, setup: RefreshSetup): Promise<unknown> =>
+const refreshOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
   runRefresh({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE });
 
-const rebuildOn = (platform: RefreshPlatform, setup: RefreshSetup): Promise<unknown> =>
+const rebuildOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
   runRebuild({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE }, 30);
 
 /** The ledger result two runs must land on, whichever order they ran in: buckets and the scan time. */
-const stateOf = async (setup: RefreshSetup): Promise<unknown> => {
-  const ledger = await openLedger(setup.platform, setup.dataDir);
-  try {
-    return { lastScanCompletedAt: ledger.meta.lastScanCompletedAt, buckets: ledger.readBuckets() };
-  } finally {
-    ledger.close();
-  }
-};
+const stateOf = (setup: RefreshSetup): Promise<unknown> =>
+  readLedger(setup.platform, setup.dataDir, (ledger) =>
+    Effect.map(ledger.readBuckets(), (buckets) => ({ lastScanCompletedAt: ledger.meta.lastScanCompletedAt, buckets }))
+  );
 
 const setUserVersion = (setup: RefreshSetup, version: number): void => {
   const db = setup.platform.sqlite.open(ledgerPath(setup.dataDir));
@@ -91,7 +90,7 @@ const setUserVersion = (setup: RefreshSetup, version: number): void => {
 };
 
 interface Probe {
-  readonly platform: RefreshPlatform;
+  readonly platform: TestPlatform;
   /** Resolves when the gated run reads its gate path for the first time: mid-scan, under the lock. */
   readonly gateReached: Promise<void>;
   releaseGate: () => void;
@@ -137,7 +136,7 @@ const probedPlatform = (setup: RefreshSetup, gatePath: string): Probe => {
   let gateTripped = false;
   const base = setup.platform.fs;
 
-  const platform: RefreshPlatform = {
+  const platform: TestPlatform = {
     ...setup.platform,
     fs: {
       ...base,
@@ -287,12 +286,117 @@ describe("the ledger opens under the lock", () => {
       const run = refreshOn(probe.platform, setup);
       await probe.gateReached;
 
-      const status = await readLedgerStatus(setup.platform, setup.dataDir);
+      const status = await Effect.runPromise(readLedgerStatus(setup.platform, setup.dataDir));
       expect(status?.deviceId).toMatch(/^[0-9a-f-]{36}$/);
       expect(status?.lastScanCompletedAt).toBe(NOW);
 
       probe.releaseGate();
       await run;
+    } finally {
+      await setup.remove();
+    }
+  });
+});
+
+/** Counts the ledger connections a run opens and closes, through the platform's SQLite. */
+const countingLedgerConnections = (
+  platform: TestPlatform,
+  setup: RefreshSetup
+): { readonly platform: TestPlatform; readonly connections: { opened: number; closed: number } } => {
+  const connections = { opened: 0, closed: 0 };
+  return {
+    connections,
+    platform: {
+      ...platform,
+      sqlite: {
+        open: (path, options) => {
+          const db = platform.sqlite.open(path, options);
+          if (path !== ledgerPath(setup.dataDir)) {
+            return db;
+          }
+          connections.opened += 1;
+          return {
+            exec: (sql) => db.exec(sql),
+            prepare: (sql) => db.prepare(sql),
+            close: () => {
+              connections.closed += 1;
+              db.close();
+            }
+          };
+        }
+      }
+    }
+  };
+};
+
+describe("an interrupted run", () => {
+  const runs = [
+    ["refresh", (deps: RunDeps) => refreshRun(deps)],
+    ["rebuild", (deps: RunDeps) => rebuildRun(deps, 30)]
+  ] as const;
+  for (const [name, run] of runs) {
+    it(`${name} releases the ledger lock, closes the ledger and leaves it as it was`, async () => {
+      const setup = await createRefreshSetup({ now: NOW });
+      try {
+        await writeFixtures(setup.home);
+        await refreshOn(setup.platform, setup);
+        await appendOne(setup.home);
+        const before = await stateOf(setup);
+
+        const probe = probedPlatform(setup, cc1Path(setup.home));
+        const counted = countingLedgerConnections(probe.platform, setup);
+        const fiber = Effect.runFork(
+          run({ platform: counted.platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE })
+        );
+        await probe.gateReached;
+        // Mid-scan, inside the transaction (a rebuild has zeroed its window by now), holding the lock.
+        expect(counted.connections).toEqual({ opened: 1, closed: 0 });
+
+        await Effect.runPromise(Fiber.interrupt(fiber));
+        probe.releaseGate();
+
+        expect(counted.connections).toEqual({ opened: 1, closed: 1 });
+        // The lock is free in this process and in SQLite: an attempt that does not wait takes it.
+        const relock = await acquireProcessLock(setup.platform, join(setup.dataDir, "ledger.lock"));
+        expect(relock.ok).toBe(true);
+        if (relock.ok) {
+          await relock.value.release();
+        }
+        expect(await stateOf(setup)).toEqual(before);
+      } finally {
+        await setup.remove();
+      }
+    });
+  }
+});
+
+describe("a held lock", () => {
+  it("fails a waiting refresh as locked once the injected clock passes the wait", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    try {
+      await writeFixtures(setup.home);
+      await refreshOn(setup.platform, setup);
+      await appendOne(setup.home);
+
+      const probe = probedPlatform(setup, cc1Path(setup.home));
+      const holder = refreshOn(probe.platform, setup);
+      await probe.gateReached;
+
+      const deps = { platform: probe.platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE };
+      const failure = await Effect.runPromise(
+        Effect.gen(function* () {
+          const waiter = yield* Effect.forkChild(Effect.flip(refreshRun(deps)));
+          // The waiter has reached the lock, so its wait is on the test clock.
+          yield* Effect.promise(() => probe.waitForEvent("realpath", 2));
+          yield* TestClock.adjust(Duration.millis(LOCK_WAIT_MS));
+          return yield* Fiber.join(waiter);
+        }).pipe(Effect.provide(TestClock.layer()))
+      );
+      expect(failure._tag).toBe("LedgerLockHeld");
+      expect(failure.message).toMatch(/^waited 60s for the ledger lock .*ledger\.lock: /);
+
+      probe.releaseGate();
+      expect(((await holder) as { result: { ok: boolean } }).result.ok).toBe(true);
     } finally {
       await setup.remove();
     }

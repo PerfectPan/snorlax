@@ -4,8 +4,10 @@ import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ensureDataDir, resolveDataDir } from "../src/data-dir/data-dir.ts";
-import { nodeFileOps } from "../src/data-dir/node-fs.ts";
+import { Effect } from "effect";
+
+import { ensureDataDir, resolveDataDir } from "../src/modules/data-dir/data-dir.ts";
+import { nodeFileOps } from "../src/modules/platform/platform.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 let tempRoot: string;
@@ -50,7 +52,7 @@ describe("ensureDataDir", () => {
   it("creates the directory with mode 0700, including parents", async () => {
     const platform = createNodePlatform({ home: tempRoot });
     const path = join(tempRoot, "nested", "snorlax");
-    await ensureDataDir(platform, nodeFileOps, path);
+    await Effect.runPromise(ensureDataDir(platform, nodeFileOps, path));
     expect(((await stat(path)).mode & 0o777).toString(8)).toBe("700");
   });
 
@@ -59,7 +61,7 @@ describe("ensureDataDir", () => {
     const path = join(tempRoot, "loose");
     await mkdir(path, { recursive: true, mode: 0o755 });
     await chmod(path, 0o755);
-    await ensureDataDir(platform, nodeFileOps, path);
+    await Effect.runPromise(ensureDataDir(platform, nodeFileOps, path));
     expect(((await stat(path)).mode & 0o777).toString(8)).toBe("700");
   });
 });

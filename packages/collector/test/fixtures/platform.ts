@@ -4,8 +4,10 @@ import { join } from "node:path";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 import type { Platform } from "@rivus/agent-kit/platform";
+import type { createMemoryPlatform } from "@rivus/agent-kit/testing";
 
-import type { RefreshPlatform } from "../../src/refresh/lock.ts";
+/** The Node platform of a test bed: SQLite is always there, so tests open the ledger and its lock directly. */
+export type TestPlatform = Platform & { readonly sqlite: NonNullable<Platform["sqlite"]> };
 
 /**
  * A refresh test bed: a real temporary home (generated fixtures only — a real agent home is never read),
@@ -15,7 +17,7 @@ import type { RefreshPlatform } from "../../src/refresh/lock.ts";
 export interface RefreshSetup {
   readonly home: string;
   readonly dataDir: string;
-  readonly platform: RefreshPlatform;
+  readonly platform: TestPlatform;
   readonly readBytes: Map<string, number>;
   readonly remove: () => Promise<void>;
 }
@@ -28,8 +30,8 @@ export interface SetupOptions {
 export async function createRefreshSetup(options: SetupOptions): Promise<RefreshSetup> {
   const home = await mkdtemp(join(tmpdir(), "snorlax-refresh-"));
   const dataDir = join(home, "data");
-  // The CLI's context creates the data directory (plan 3.4.1 step 1); these tests call the use case
-  // directly, so the setup stands in for that step.
+  // The CLI's flows create the data directory (plan 3.4.1 step 1); the test runs of the flows prepare
+  // nothing (test/fixtures/flows.ts), so the setup stands in for that step.
   await mkdir(dataDir, { recursive: true });
   const base = createNodePlatform({
     home,
@@ -56,7 +58,7 @@ export async function createRefreshSetup(options: SetupOptions): Promise<Refresh
   if (sqlite === undefined) {
     throw new Error("the agent-kit Node platform must provide SQLite");
   }
-  const platform: RefreshPlatform = {
+  const platform: TestPlatform = {
     env: base.env,
     home: base.home,
     os: base.os,
@@ -71,5 +73,34 @@ export async function createRefreshSetup(options: SetupOptions): Promise<Refresh
     platform,
     readBytes,
     remove: () => rm(home, { recursive: true, force: true })
+  };
+}
+
+const missingOnMemory = (member: string): Error => new Error(`the memory platform has no process.${member}`);
+
+/**
+ * The kit's memory platform as the full kit `Platform` the collector runs on. The memory platform runs scripted
+ * commands only; the process members it lacks (spawning and process identity, which no command run on it
+ * uses) throw.
+ */
+export function memoryKitPlatform(memory: ReturnType<typeof createMemoryPlatform>): Platform {
+  return {
+    env: memory.env,
+    home: memory.home,
+    os: memory.os,
+    fs: memory.fs,
+    clock: memory.clock,
+    process: {
+      run: (command, args, options) => memory.process.run(command, args, options),
+      spawn: () => {
+        throw missingOnMemory("spawn");
+      },
+      identify: () => {
+        throw missingOnMemory("identify");
+      },
+      get self(): never {
+        throw missingOnMemory("self");
+      }
+    }
   };
 }

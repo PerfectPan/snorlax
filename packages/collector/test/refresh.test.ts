@@ -7,14 +7,15 @@ import { fileURLToPath } from "node:url";
 
 import { snapshotOutputSchema, snapshotSchema, type Snapshot } from "@rivus/snorlax-protocol";
 import * as z from "zod/mini";
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { openLedger, type BucketRow } from "../src/ledger/ledger.ts";
-import { createLogger, type Logger } from "../src/log/logger.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import { readSnapshotFile } from "../src/snapshot/read.ts";
-import { nodeFileOps } from "../src/data-dir/node-fs.ts";
+import type { BucketRow } from "../src/core/buckets/buckets.ts";
+import { createLogger, type Logger } from "../src/modules/log/log.ts";
+import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
+import { nodeFileOps } from "../src/modules/platform/platform.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
+import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
 /**
@@ -31,7 +32,7 @@ const HOUR_10 = Date.UTC(2026, 9, 22, 10) / 1000;
 const TIME_ZONE = "Asia/Shanghai";
 const CC_PROJECT = join(".claude", "projects", "-Users-tester-fixture");
 
-const silentLog: Logger = { event: async () => {} };
+const silentLog: Logger = { event: () => Effect.void };
 
 let setup: RefreshSetup;
 
@@ -54,14 +55,7 @@ const snapshot = async (): Promise<Snapshot> => {
   return read.snapshot;
 };
 
-const buckets = async (): Promise<BucketRow[]> => {
-  const ledger = await openLedger(setup.platform, setup.dataDir);
-  try {
-    return ledger.readBuckets();
-  } finally {
-    ledger.close();
-  }
-};
+const buckets = (): Promise<BucketRow[]> => readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
 
 const claudeRequest = (
   requestId: string,
@@ -241,14 +235,10 @@ describe("S1: the first run counts the history", () => {
   });
 
   it("creates the ledger with a device id and persists the scan time", async () => {
-    const ledger = await openLedger(setup.platform, setup.dataDir);
-    try {
-      expect(ledger.meta.deviceId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(ledger.meta.lastScanCompletedAt).toBe(NOW);
-      expect(ledger.scanState).toBeDefined();
-    } finally {
-      ledger.close();
-    }
+    const ledger = await readLedger(setup.platform, setup.dataDir, Effect.succeed);
+    expect(ledger.meta.deviceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ledger.meta.lastScanCompletedAt).toBe(NOW);
+    expect(ledger.scanState).toBeDefined();
   });
 });
 
@@ -407,7 +397,7 @@ describe("failures", () => {
     };
     await expect(
       runRefresh({ platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE })
-    ).rejects.toMatchObject({ code: "data-dir", message: /snapshot\.json/ });
+    ).rejects.toMatchObject({ _tag: "SnapshotWriteFailed", message: /snapshot\.json/ });
   });
 
   it("counts a source that cannot be decoded per agent", async () => {
@@ -428,7 +418,7 @@ describe("failures", () => {
 
 describe("logging", () => {
   it("writes one summary line per refresh", async () => {
-    const log = await createLogger(setup.platform, nodeFileOps, setup.dataDir);
+    const log = await Effect.runPromise(createLogger(setup.platform, nodeFileOps, setup.dataDir));
     await runRefresh({ platform: setup.platform, dataDir: setup.dataDir, log, timeZone: TIME_ZONE });
     const text = await readFile(join(setup.dataDir, "logs", "snorlax.log"), "utf8");
     const refreshLine = text

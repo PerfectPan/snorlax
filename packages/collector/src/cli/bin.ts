@@ -3,17 +3,40 @@ import process from "node:process";
 import { NodePlatformLive } from "@rivus/agent-kit/node/effect";
 import { Effect, Layer, Runtime } from "effect";
 
-import { NodeFiles } from "../data-dir/node-fs.ts";
-import { SnorlaxPlatform } from "../platform.ts";
+import { Scheduler } from "../capabilities/scheduler/scheduler.ts";
+import { NodeFiles, SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
 
 /**
+ * The scheduler of the system the CLI runs on (plan 3.13 rule 5). `SNORLAX_OS` (`darwin`, `linux` or
+ * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run the launchd path on the Linux
+ * CI job; it is not copied into the job. Picking one only reads the environment, and the implementations
+ * for other systems fail install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
+ */
+const schedulerLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const platform = yield* SnorlaxPlatform;
+    const override = platform.env.SNORLAX_OS;
+    const os = override === undefined || override === "" ? platform.os : override;
+    if (os === "darwin") {
+      return Scheduler.launchd;
+    }
+    if (os === "linux" || os === "win32") {
+      return Scheduler.unsupported(os);
+    }
+    // `platform.os` is always one of the three, so only the override names another system.
+    return Scheduler.osOverrideInvalid;
+  })
+);
+
+/**
  * The `snorlax` bin (plan 3.13): composes the Node layers — the kit platform through
- * `NodePlatformLive`, the real file ops, the process streams — and runs one command.
+ * `NodePlatformLive`, the real file ops, the scheduler of this system, the process streams — and runs
+ * one command.
  */
 const liveLayers = Layer.mergeAll(
-  Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive),
+  Layer.provideMerge(schedulerLive, Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive)),
   NodeFiles.live,
   Layer.succeed(
     CliEnv,

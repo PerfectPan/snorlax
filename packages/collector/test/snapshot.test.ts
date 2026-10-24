@@ -1,5 +1,5 @@
-import { buildSnapshot } from "../src/snapshot/build.ts";
-import type { BucketRow } from "../src/ledger/ledger.ts";
+import { buildSnapshot } from "../src/core/snapshot/snapshot.ts";
+import type { BucketRow } from "../src/core/buckets/buckets.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 /**

@@ -1,14 +1,15 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { openLedger, type BucketRow } from "../src/ledger/ledger.ts";
-import { rebuildStartHour, REBUILD_MAX_DAYS, runRebuild } from "../src/rebuild/rebuild.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import { readSnapshotFile } from "../src/snapshot/read.ts";
-import type { Logger } from "../src/log/logger.ts";
+import type { BucketRow } from "../src/core/buckets/buckets.ts";
+import { rebuildStartHour, REBUILD_MAX_DAYS } from "../src/commands/rebuild/flow.ts";
+import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
+import type { Logger } from "../src/modules/log/log.ts";
 import { quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
+import { readLedger, runRebuild, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
 /**
@@ -20,7 +21,7 @@ import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 const NOW = Date.UTC(2026, 9, 22, 12, 0, 0);
 const MTIME = quietMtime(NOW);
 const TIME_ZONE = "UTC";
-const SILENT_LOG: Logger = { event: async () => {} };
+const SILENT_LOG: Logger = { event: () => Effect.void };
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -42,14 +43,7 @@ const refresh = (hooks?: Parameters<typeof runRefresh>[1]) =>
 const rebuild = (days: number, hooks?: Parameters<typeof runRebuild>[2]) =>
   runRebuild({ platform: setup.platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE }, days, hooks);
 
-const rows = async (): Promise<BucketRow[]> => {
-  const ledger = await openLedger(setup.platform, setup.dataDir);
-  try {
-    return ledger.readBuckets();
-  } finally {
-    ledger.close();
-  }
-};
+const rows = (): Promise<BucketRow[]> => readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
 
 const totalsOf = async (): Promise<{ tokens: number; requests: number; sessions: number }> => {
   const read = await readSnapshotFile(setup.platform, setup.dataDir);

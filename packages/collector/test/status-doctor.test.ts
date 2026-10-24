@@ -1,5 +1,5 @@
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
-import { SnorlaxPlatform } from "../src/platform.ts";
+import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
 import { doctorSchema, statusSchema } from "@rivus/snorlax-protocol";
 import { Effect, Layer } from "effect";
 import * as z from "zod/mini";
@@ -7,9 +7,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { runCli } from "../src/cli/run.ts";
 import { CliEnv } from "../src/cli/env.ts";
-import type { NodeFileOps } from "../src/data-dir/node-fs.ts";
-import { NodeFiles } from "../src/data-dir/node-fs.ts";
-import { RuntimeInfo } from "../src/version.ts";
+import { RuntimeInfo } from "../src/modules/version/version.ts";
+import { memoryKitPlatform } from "./fixtures/platform.ts";
+import { fakeScheduler } from "./fixtures/scheduler.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
@@ -59,8 +59,9 @@ const runCommand = async (
   const err = createCapture();
   const nodeFiles = memoryNodeFiles(deps?.mode);
   const base = Layer.mergeAll(
-    Layer.succeed(SnorlaxPlatform, platform),
+    Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform)),
     Layer.succeed(NodeFiles, nodeFiles),
+    fakeScheduler([], { jobFile: "/testroot/tester/job" }),
     Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
     Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
   );
