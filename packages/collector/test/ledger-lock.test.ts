@@ -286,7 +286,7 @@ describe("the ledger opens under the lock", () => {
       const run = refreshOn(probe.platform, setup);
       await probe.gateReached;
 
-      const status = await readLedgerStatus(setup.platform, setup.dataDir);
+      const status = await Effect.runPromise(readLedgerStatus(setup.platform, setup.dataDir));
       expect(status?.deviceId).toMatch(/^[0-9a-f-]{36}$/);
       expect(status?.lastScanCompletedAt).toBe(NOW);
 

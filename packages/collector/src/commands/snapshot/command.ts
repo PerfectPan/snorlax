@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { Snapshot } from "@rivus/snorlax-protocol";
 
-import { SnapshotStore } from "./store.ts";
+import { snapshotFlow } from "./flow.ts";
 
 const humanSummary = (snapshot: Snapshot): string => {
   const { totals } = snapshot;
@@ -31,8 +31,8 @@ export const snapshotCommand = {
   description: "print the current snapshot",
   flags: {},
   run: () =>
-    Effect.gen(function* () {
-      const snapshot = yield* (yield* SnapshotStore).current;
-      return { payload: { schemaVersion: 1, ok: true, snapshot }, human: `${humanSummary(snapshot)}\n` };
-    })
+    Effect.map(snapshotFlow, (snapshot) => ({
+      payload: { schemaVersion: 1, ok: true, snapshot },
+      human: `${humanSummary(snapshot)}\n`
+    }))
 };

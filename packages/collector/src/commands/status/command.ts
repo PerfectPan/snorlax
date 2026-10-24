@@ -1,7 +1,7 @@
 import type { Status } from "@rivus/snorlax-protocol";
 import { Effect } from "effect";
 
-import { StatusReport } from "./report.ts";
+import { statusFlow } from "./flow.ts";
 
 const humanStatus = (payload: Status): string =>
   [
@@ -25,9 +25,5 @@ export const statusCommand = {
   name: "status",
   description: "version, data directory, device, last scan and sync, decode failures, detected agents",
   flags: {},
-  run: () =>
-    Effect.gen(function* () {
-      const payload = yield* (yield* StatusReport).report;
-      return { payload, human: `${humanStatus(payload)}\n` };
-    })
+  run: () => Effect.map(statusFlow, (payload) => ({ payload, human: `${humanStatus(payload)}\n` }))
 };

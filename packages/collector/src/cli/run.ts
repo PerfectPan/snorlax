@@ -6,11 +6,8 @@ import { layerTest as stdioLayerTest } from "effect/Stdio";
 
 import { DataDir } from "../modules/data-dir/data-dir.ts";
 import { NodeFiles } from "../modules/data-dir/data-dir.ts";
-import { Doctor } from "../commands/doctor/service.ts";
 import { Log } from "../modules/log/log.ts";
 import { Schedule } from "../capabilities/scheduler/scheduler.ts";
-import { SnapshotStore } from "../commands/snapshot/store.ts";
-import { StatusReport } from "../commands/status/report.ts";
 import { errorMessage } from "../core/error-message/error-message.ts";
 import { RuntimeInfo } from "../modules/version/version.ts";
 import { CliEnv } from "./env.ts";
@@ -68,9 +65,6 @@ interface Outcome {
  */
 function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
   const readers = Layer.mergeAll(
-    StatusReport.live,
-    Doctor.live,
-    SnapshotStore.live,
     Schedule.live,
     CommandOutput.live,
     // The services effect/cli itself needs; the collector goes through the kit platform, so the

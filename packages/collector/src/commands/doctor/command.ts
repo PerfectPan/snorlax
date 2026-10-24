@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 
-import { Doctor } from "./service.ts";
+import { doctorFlow } from "./flow.ts";
 
 /**
  * `snorlax doctor` (plan 3.1): local checks only in this milestone — Node version, data directory
@@ -11,9 +11,8 @@ export const doctorCommand = {
   description: "local checks: node version, data directory, config",
   flags: {},
   run: () =>
-    Effect.gen(function* () {
-      const payload = yield* (yield* Doctor).run;
-      const human = payload.checks.map((check) => `${check.id}: ${check.status} — ${check.detail}`).join("\n");
-      return { payload, human: `${human}\n` };
-    })
+    Effect.map(doctorFlow, (payload) => ({
+      payload,
+      human: `${payload.checks.map((check) => `${check.id}: ${check.status} — ${check.detail}`).join("\n")}\n`
+    }))
 };

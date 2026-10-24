@@ -436,27 +436,35 @@ export const openLedger = (
     );
   });
 
-/** The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything. */
-export async function readLedgerStatus(
+/**
+ * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
+ * there is no ledger yet. A `stat` or open that throws is a defect; a meta row that cannot be read is
+ * `LedgerUnreadable`.
+ */
+export const readLedgerStatus = (
   platform: Pick<Platform, "fs"> & { readonly sqlite?: PlatformSqlite },
   dataDir: string
-): Promise<{ readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null> {
-  const path = ledgerPath(dataDir);
-  if ((await platform.fs.stat(path)) === undefined || platform.sqlite === undefined) {
-    return null;
-  }
-  const db = platform.sqlite.open(path, { readonly: true });
-  try {
-    const meta = Effect.runSync(readMeta(path, db));
+): Effect.Effect<{ readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null, LedgerUnreadable> =>
+  Effect.gen(function* () {
+    const path = ledgerPath(dataDir);
+    const existing = yield* Effect.promise(() => platform.fs.stat(path));
+    const { sqlite } = platform;
+    if (existing === undefined || sqlite === undefined) {
+      return null;
+    }
+    const meta = yield* Effect.acquireUseRelease(
+      Effect.sync(() => sqlite.open(path, { readonly: true })),
+      (db) =>
+        readMeta(path, db).pipe(
+          // A statement that throws while meta is read means the ledger cannot be read.
+          Effect.catchDefect((defect) =>
+            Effect.fail(new LedgerUnreadable({ message: `cannot read the ledger ${path}: ${errorMessage(defect)}` }))
+          )
+        ),
+      (db) => Effect.sync(() => db.close())
+    );
     return { deviceId: meta.deviceId, lastScanCompletedAt: meta.lastScanCompletedAt };
-  } catch (error) {
-    throw error instanceof LedgerUnreadable
-      ? error
-      : new LedgerUnreadable({ message: `cannot read the ledger ${path}: ${errorMessage(error)}` });
-  } finally {
-    db.close();
-  }
-}
+  });
 
 /** The platform has no SQLite, which the ledger needs. */
 export class LedgerPlatformUnsupported extends Data.TaggedError("LedgerPlatformUnsupported")<{
