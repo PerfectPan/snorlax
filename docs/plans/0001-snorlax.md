@@ -487,9 +487,10 @@ with IO, and capabilities with more than one implementation.
 ```text
 packages/collector/src/
   cli/                   framework: root command, global `--json`, output envelope (one JSON object on stdout
-                         with `schemaVersion` and `ok`), FailureCode -> exit code 0/1/2, redaction of all output,
-                         the command log line; `bin.ts` picks the capability implementations and runs the
-                         signal-relaying runner (interrupt, then re-raise SIGINT/SIGTERM)
+                         with `schemaVersion` and `ok`), usage errors, the table that maps every error to a
+                         FailureCode and exit code 0/1/2, redaction of all output, the command log line; `bin.ts`
+                         picks the capability implementations and runs the signal-relaying runner (interrupt,
+                         then re-raise SIGINT/SIGTERM)
   commands/
     refresh/             command.ts (flags, rendering) + flow.ts (the flow, in Effect)
     rebuild/             command.ts + flow.ts (zeroes the window, then the ledger module's scan-and-commit)
@@ -505,7 +506,6 @@ packages/collector/src/
   capabilities/          external systems with more than one implementation: scheduler (launchd; systemd in
                          Batch 8; test fake), secrets (Batch 7: Keychain, libsecret, memory), backend (Batch 6:
                          HTTP client, memory)
-  errors.ts              tagged errors whose codes are the protocol `FailureCode`
 ```
 
 Rules, checked by `test/structure.test.ts` where they are about imports:
@@ -523,12 +523,16 @@ Rules, checked by `test/structure.test.ts` where they are about imports:
    Effect: the ledger, the ledger lock and other resources are acquired in scopes, so an interrupted run releases
    them. `core/` and command-specific rules (doctor verdicts) are plain functions without Effect types. No service
    exists only to wrap a Promise function.
-7. Building a Layer has no side effects. `status`, `doctor` and `snapshot` create or change no files: `doctor`
+7. Errors belong to the code that raises them. Each module, capability and command folder defines its own
+   tagged errors describing what went wrong (for example the ledger's "newer schema" or "busy", the scheduler's
+   "owned by the app"); none of them knows `FailureCode`. `cli/` owns usage errors and one table that maps every
+   error `_tag` to a `FailureCode` and exit code, written so the TypeScript compiler fails when a tag is missing;
+   anything unmapped, including defects, is `internal`. There is no shared `errors.ts`.
+8. Building a Layer has no side effects. `status`, `doctor` and `snapshot` create or change no files: `doctor`
    reports a missing directory, a wrong mode or a data directory that is a file as failed checks in a `Doctor`
    payload, and repairs nothing.
 
-- Errors: modules and flows fail with the tagged errors in `errors.ts`; only `cli/` maps them to exit codes and
-  the failure shape. The protocol's `FailureCode` is the type of every error code.
+- `FailureCode` appears only in `cli/` and the protocol package.
 - agent-kit calls take the platform from `PlatformService` (`NodePlatformLive` in `bin.ts`, a memory platform in
   tests).
 - Output: help, usage errors and version use `effect/cli`'s `CliOutput.defaultFormatter`; command failures are
@@ -734,7 +738,9 @@ Each batch leaves `pnpm run check` green.
   `rebuild`, `schedule`, `snapshot`, `doctor`) and the platform adapters they need go away; the scan-and-commit
   step refresh and rebuild share becomes an Effect flow in `modules/ledger/` that acquires the ledger and the lock
   in a scope; pure rules move to `core/`; `scheduler` becomes a capability in `capabilities/` (interface, launchd
-  layer, test fake). No CLI behavior changes.
+  layer, test fake); `errors.ts` is split into errors owned by each module, capability and command, plus the
+  error-to-FailureCode table in `cli/` (3.13 rule 7). No CLI behavior changes: every failure keeps its current
+  code and exit code.
 - Tests: existing tests pass with unchanged assertions (only import paths move); the structure test catches a
   cross-command import, a deep import into a module or capability, and an upward import (for example `core/` →
   `modules/`, `modules/` → `commands/`); an interrupted refresh releases the ledger lock and closes the ledger
