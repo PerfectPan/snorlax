@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { Effect } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 
 import { listBackups, SCHEMA_VERSION } from "../src/modules/ledger/migrations.ts";
-import { ledgerPath, LedgerSchemaTooNew } from "../src/modules/ledger/ledger.ts";
+import { ledgerPath, LedgerSchemaTooNew, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
 import { readLedger } from "./fixtures/flows.ts";
 
 /**
@@ -173,7 +173,7 @@ describe("a meta row this build cannot read", () => {
     } finally {
       db.close();
     }
-    await expect(open()).rejects.toMatchObject({ _tag: "LedgerUnreadable", message: /meta/ });
+    await expect(open()).rejects.toMatchObject({ _tag: "LedgerUnreadable", message: expect.stringMatching(/meta/) });
   });
 });
 
@@ -196,7 +196,74 @@ describe("a database from a newer build", () => {
     };
     await expect(readLedger(brokenPlatform, dataDir, Effect.succeed)).rejects.toMatchObject({
       _tag: "LedgerUnreadable",
-      message: /ledger\.db/
+      message: expect.stringMatching(/ledger\.db/)
+    });
+  });
+});
+
+describe("a value or an open this build cannot handle, on a ledger of its own", () => {
+  let own: string;
+
+  beforeEach(async () => {
+    own = await mkdtemp(join(tmpdir(), "snorlax-unreadable-"));
+    await readLedger(platform, own, Effect.succeed);
+  });
+
+  afterEach(async () => {
+    await rm(own, { recursive: true, force: true });
+  });
+
+  it("fails a scan_state row that is not text as data-dir, naming the table", async () => {
+    const db = new DatabaseSync(ledgerPath(own));
+    try {
+      // The bytes of "{}" stored as a blob: the column's text affinity keeps a blob a blob.
+      db.exec("INSERT INTO scan_state (id, state) VALUES (0, x'7b7d')");
+    } finally {
+      db.close();
+    }
+    await expect(readLedger(platform, own, Effect.succeed)).rejects.toMatchObject({
+      _tag: "LedgerUnreadable",
+      message: expect.stringMatching(/scan_state table holds a row this build cannot read/)
+    });
+  });
+
+  it("fails a user_version that is not a number as data-dir, naming the pragma", async () => {
+    // SQLite itself always answers with an integer; a connection that answers with text stands in for a
+    // driver or file that does not.
+    const textVersion: typeof sqlite = {
+      open: (path, options) => {
+        const db = sqlite.open(path, options);
+        return {
+          exec: (sql) => db.exec(sql),
+          close: () => db.close(),
+          prepare: (sql) => {
+            const statement = db.prepare(sql);
+            return sql === "PRAGMA user_version"
+              ? {
+                  run: (...params) => statement.run(...params),
+                  get: () => ({ user_version: String(SCHEMA_VERSION) }),
+                  all: (...params) => statement.all(...params)
+                }
+              : statement;
+          }
+        };
+      }
+    };
+    await expect(readLedger({ fs, sqlite: textVersion }, own, Effect.succeed)).rejects.toMatchObject({
+      _tag: "LedgerUnreadable",
+      message: expect.stringMatching(/user_version pragma holds a value this build cannot read/)
+    });
+  });
+
+  it("reports a ledger that status cannot open as data-dir, naming the path", async () => {
+    const unopenable: typeof sqlite = {
+      open: () => {
+        throw new Error("unable to open database file");
+      }
+    };
+    await expect(Effect.runPromise(readLedgerStatus({ fs, sqlite: unopenable }, own))).rejects.toMatchObject({
+      _tag: "LedgerUnreadable",
+      message: expect.stringMatching(/^cannot open the ledger .*ledger\.db: unable to open database file$/)
     });
   });
 });

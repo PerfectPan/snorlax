@@ -27,6 +27,28 @@ interface RefreshJob {
 
 type SchedulerUnavailable = SchedulerOsOverrideInvalid | SchedulerUnsupportedOs;
 
+/**
+ * Where the loaded job with snorlax's label comes from: nowhere, the job file `snorlax install` writes, another
+ * file (Snorlax.app's Launch at login, the only other registrant of the label), or a source the scheduler cannot
+ * name, with the reason.
+ */
+export type LoadedJob =
+  | { readonly from: "nothing" }
+  | { readonly from: "cli"; readonly file: string }
+  | { readonly from: "app"; readonly file: string }
+  | { readonly from: "unknown"; readonly reason: string };
+
+/** The job file `snorlax install` writes, and the Node binary it runs: undefined when the file does not read back. */
+export interface CliJob {
+  readonly file: string;
+  readonly nodePath: string | undefined;
+}
+
+/** What the scheduler sees of the refresh job, for `doctor`; `cliJob` is undefined when there is no job file. */
+export type JobInspection =
+  | { readonly kind: "unsupported"; readonly reason: string }
+  | { readonly kind: "inspected"; readonly cliJob: CliJob | undefined; readonly loaded: LoadedJob };
+
 type InstallFailure =
   | SchedulerUnavailable
   | DataDirNotAbsolute
@@ -44,12 +66,14 @@ type UninstallFailure =
   | ForeignServiceLoaded
   | PlistRemoveFailed;
 
-/** A system without a scheduler in this build: both operations fail before anything runs. */
+/** A system without a scheduler in this build: both operations fail before anything runs, and `inspect` says why. */
 const unavailable = (
-  failure: (command: "install" | "uninstall") => SchedulerUnavailable
+  failure: (command: "install" | "uninstall") => SchedulerUnavailable,
+  reason: string
 ): Context.Service.Shape<typeof Scheduler> => ({
   install: () => Effect.fail(failure("install")),
-  uninstall: () => Effect.fail(failure("uninstall"))
+  uninstall: () => Effect.fail(failure("uninstall")),
+  inspect: Effect.succeed({ kind: "unsupported", reason })
 });
 
 /**
@@ -74,6 +98,11 @@ export class Scheduler extends Context.Service<
      * leaves the job loaded; its value is returned.
      */
     readonly uninstall: <A, E>(job: RefreshJob, guard: Effect.Effect<A, E>) => Effect.Effect<A, UninstallFailure | E>;
+    /**
+     * Reads the job file and asks the scheduler what it has loaded, writing nothing (plan 3.13 rule 8). A
+     * scheduler that cannot answer says so in the result instead of failing.
+     */
+    readonly inspect: Effect.Effect<JobInspection>;
   }
 >()("snorlax/scheduler/Scheduler") {
   /** launchd, the scheduler on macOS (`launchd.ts`). */
@@ -95,14 +124,18 @@ export class Scheduler extends Context.Service<
         (command) =>
           new SchedulerUnsupportedOs({
             message: `snorlax ${command} schedules a LaunchAgent on macOS in this build; ${os} support arrives with Batch 8 (systemd user timer)`
-          })
+          }),
+        `this build schedules refresh only with launchd on macOS; ${os} support arrives with Batch 8 (systemd user timer)`
       )
     );
 
   /** `SNORLAX_OS` names no system: install and uninstall fail, and every other command runs as usual. */
   static readonly osOverrideInvalid: Layer.Layer<Scheduler> = Layer.succeed(
     Scheduler,
-    unavailable(() => new SchedulerOsOverrideInvalid({ message: "SNORLAX_OS must be darwin, linux, or win32" }))
+    unavailable(
+      () => new SchedulerOsOverrideInvalid({ message: "SNORLAX_OS must be darwin, linux, or win32" }),
+      "SNORLAX_OS must be darwin, linux, or win32, so no scheduler was picked"
+    )
   );
 }
 

@@ -1,17 +1,24 @@
+import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 
 import { acquireProcessLock } from "@rivus/agent-kit-collab/process-lock";
-import { Duration, Effect, Fiber } from "effect";
+import { failureSchema } from "@rivus/snorlax-protocol";
+import { Duration, Effect, Fiber, Layer } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
+import * as z from "zod/mini";
 
-import { ledgerPath, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
+import { CliEnv } from "../src/cli/env.ts";
+import { runCli } from "../src/cli/run.ts";
+import { ledgerPath, readLedgerStatus, type ScanAndCommitOutcome } from "../src/modules/ledger/ledger.ts";
 import { LOCK_WAIT_MS } from "../src/modules/ledger/lock.ts";
 import { listBackups } from "../src/modules/ledger/migrations.ts";
 import type { Logger } from "../src/modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
 import { readLedger, rebuildRun, refreshRun, runRebuild, runRefresh, type RunDeps } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup, type TestPlatform } from "./fixtures/platform.ts";
+import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
  * One refresh at a time per data directory (plan 3.5): the ledger lock serializes overlapping runs, and
@@ -68,10 +75,10 @@ const appendOne = (home: string): Promise<void> =>
     MTIME
   );
 
-const refreshOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
+const refreshOn = (platform: TestPlatform, setup: RefreshSetup): Promise<ScanAndCommitOutcome> =>
   runRefresh({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE });
 
-const rebuildOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
+const rebuildOn = (platform: TestPlatform, setup: RefreshSetup): Promise<ScanAndCommitOutcome> =>
   runRebuild({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE }, 30);
 
 /** The ledger result two runs must land on, whichever order they ran in: buckets and the scan time. */
@@ -89,13 +96,22 @@ const setUserVersion = (setup: RefreshSetup, version: number): void => {
   }
 };
 
+/**
+ * Waits until every run has settled, so a failed run cannot let `finally` remove the test bed while another still
+ * writes, then gives each as `true` when it succeeded, else its failure, so a failed assertion shows what failed.
+ */
+const settledOk = async (runs: readonly Promise<ScanAndCommitOutcome>[]): Promise<unknown[]> =>
+  (await Promise.allSettled(runs)).map((outcome) =>
+    outcome.status === "fulfilled" ? outcome.value.result.ok : outcome.reason
+  );
+
 interface Probe {
   readonly platform: TestPlatform;
   /** Resolves when the gated run reads its gate path for the first time: mid-scan, under the lock. */
   readonly gateReached: Promise<void>;
   releaseGate: () => void;
   readonly events: readonly string[];
-  /** Resolves once `event` has been recorded `occurrence` times. */
+  /** Resolves once `event` itself has been recorded `occurrence` times; other events leave it waiting. */
   waitForEvent: (event: string, occurrence: number) => Promise<void>;
 }
 
@@ -106,23 +122,20 @@ interface Probe {
  */
 const probedPlatform = (setup: RefreshSetup, gatePath: string): Probe => {
   const events: string[] = [];
-  const waiters: ((count: number) => void)[] = [];
+  const waiters: { readonly event: string; readonly occurrence: number; readonly resolve: () => void }[] = [];
+  const countOf = (event: string): number => events.filter((seen) => seen === event).length;
   const record = (event: string): void => {
     events.push(event);
-    for (const waiter of waiters.splice(0)) {
-      waiter(events.filter((seen) => seen === event).length);
+    for (const waiter of waiters.filter((waiting) => waiting.event === event && countOf(event) >= waiting.occurrence)) {
+      waiters.splice(waiters.indexOf(waiter), 1);
+      waiter.resolve();
     }
   };
-  const countOf = (event: string): number => events.filter((seen) => seen === event).length;
   const waitForEvent = (event: string, occurrence: number): Promise<void> =>
     countOf(event) >= occurrence
       ? Promise.resolve()
       : new Promise<void>((resolve) => {
-          waiters.push((count) => {
-            if (count >= occurrence) {
-              resolve();
-            }
-          });
+          waiters.push({ event, occurrence, resolve });
         });
 
   let resolveTripped!: () => void;
@@ -198,10 +211,7 @@ describe("overlapping runs count every request once", () => {
       await probe.gateReached;
       const second = refreshOn(probe.platform, parallel);
       probe.releaseGate();
-      const outcomes = await Promise.all([first, second]);
-      for (const outcome of outcomes) {
-        expect((outcome as { result: { ok: boolean } }).result.ok).toBe(true);
-      }
+      expect(await settledOk([first, second])).toEqual([true, true]);
 
       expect(await stateOf(parallel)).toEqual(await stateOf(sequential));
     } finally {
@@ -227,10 +237,7 @@ describe("overlapping runs count every request once", () => {
       await probe.gateReached;
       const second = rebuildOn(probe.platform, parallel);
       probe.releaseGate();
-      const outcomes = await Promise.all([first, second]);
-      for (const outcome of outcomes) {
-        expect((outcome as { result: { ok: boolean } }).result.ok).toBe(true);
-      }
+      expect(await settledOk([first, second])).toEqual([true, true]);
 
       expect(await stateOf(parallel)).toEqual(await stateOf(sequential));
     } finally {
@@ -264,10 +271,7 @@ describe("the ledger opens under the lock", () => {
       expect(probe.events.filter((event) => event === "backup")).toHaveLength(1);
 
       probe.releaseGate();
-      const outcomes = await Promise.all([first, second]);
-      for (const outcome of outcomes) {
-        expect((outcome as { result: { ok: boolean } }).result.ok).toBe(true);
-      }
+      expect(await settledOk([first, second])).toEqual([true, true]);
       expect(probe.events.filter((event) => event === "open")).toHaveLength(2);
       expect(probe.events.filter((event) => event === "backup")).toHaveLength(1);
       expect((await listBackups(setup.platform.fs, setup.dataDir)).map((backup) => backup.version)).toEqual([0]);
@@ -293,6 +297,118 @@ describe("the ledger opens under the lock", () => {
       probe.releaseGate();
       await run;
     } finally {
+      await setup.remove();
+    }
+  });
+});
+
+/**
+ * The reader, run as `node -e READER <ledger> <PROBE>`: it opens a read transaction on the ledger, holding SQLite's
+ * shared lock, and ends it only once a probe process sees a read fail with SQLITE_BUSY. A COMMIT takes the PENDING
+ * lock before it waits for readers to leave, and from then on a new read is busy, so the reader leaves only once the
+ * refresh's first COMMIT waits on it. The probe is a third process because a second connection in the reader's
+ * process would share the reader's lock and never see the PENDING one.
+ */
+const READER = `
+const { spawn } = require("node:child_process");
+const { DatabaseSync } = require("node:sqlite");
+const [path, probeScript] = process.argv.slice(1);
+const reader = new DatabaseSync(path, { readOnly: true });
+reader.exec("BEGIN");
+reader.prepare("SELECT device_id FROM meta").get();
+const probe = spawn(process.execPath, ["-e", probeScript, path], { stdio: ["pipe", "ignore", "inherit"] });
+probe.on("exit", (code) => {
+  reader.prepare("SELECT device_id FROM meta").get();
+  reader.exec("COMMIT");
+  reader.close();
+  process.stdout.write("released " + code + "\\n");
+});
+process.stdout.write("holding\\n");
+`;
+
+/** Reads until a read is busy, then exits 0; exits 1 once its parent, the reader, is gone. */
+const PROBE = `
+const { DatabaseSync } = require("node:sqlite");
+process.stdin.on("end", () => process.exit(1));
+process.stdin.resume();
+const probe = new DatabaseSync(process.argv[1], { readOnly: true });
+const busy = () => {
+  try {
+    probe.prepare("SELECT device_id FROM meta").get();
+    return false;
+  } catch (error) {
+    if ((error.errcode & 0xff) === 5) {
+      return true;
+    }
+    throw error;
+  }
+};
+const poll = () => {
+  if (busy()) {
+    probe.close();
+    process.exit(0);
+  }
+  setImmediate(poll);
+};
+poll();
+`;
+
+interface ReaderRun {
+  /** Resolves once the reader holds its shared lock; rejects if it exits first. */
+  readonly holding: Promise<void>;
+  readonly exited: Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }>;
+  readonly stop: () => void;
+}
+
+/** A `status`-like reader of the ledger in another process (see `READER`). */
+const readerInAnotherProcess = (path: string): ReaderRun => {
+  const child = spawn(process.execPath, ["-e", READER, path, PROBE], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let holds!: () => void;
+  let fails!: (error: Error) => void;
+  const holding = new Promise<void>((resolve, reject) => {
+    holds = resolve;
+    fails = reject;
+  });
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+    if (stdout.startsWith("holding\n")) {
+      holds();
+    }
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const exited = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    child.on("close", (code) => {
+      fails(new Error(`the reader exited ${code} before it held its lock: ${stderr}`));
+      resolve({ code, stdout, stderr });
+    });
+  });
+  return { holding, exited, stop: () => child.kill() };
+};
+
+describe("a status read in another process", () => {
+  it("holds its shared lock across a refresh's COMMIT, and the refresh and the read both succeed", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    let reader: ReaderRun | undefined;
+    try {
+      await writeFixtures(setup.home);
+      await refreshOn(setup.platform, setup);
+      await appendOne(setup.home);
+      const before = await stateOf(setup);
+
+      reader = readerInAnotherProcess(ledgerPath(setup.dataDir));
+      await reader.holding;
+      const outcome = await refreshOn(setup.platform, setup);
+
+      expect(outcome.result.ok).toBe(true);
+      expect(await reader.exited).toMatchObject({ code: 0, stdout: "holding\nreleased 0\n" });
+      expect(await stateOf(setup)).not.toEqual(before);
+    } finally {
+      reader?.stop();
+      await reader?.exited;
       await setup.remove();
     }
   });
@@ -396,7 +512,61 @@ describe("a held lock", () => {
       expect(failure.message).toMatch(/^waited 60s for the ledger lock .*ledger\.lock: /);
 
       probe.releaseGate();
-      expect(((await holder) as { result: { ok: boolean } }).result.ok).toBe(true);
+      expect((await holder).result.ok).toBe(true);
+    } finally {
+      await setup.remove();
+    }
+  });
+
+  it("reports the timed-out wait through the CLI as one locked failure object on stdout and exit 1", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    try {
+      await writeFixtures(setup.home);
+      await refreshOn(setup.platform, setup);
+      await appendOne(setup.home);
+
+      const probe = probedPlatform(setup, cc1Path(setup.home));
+      const holder = refreshOn(probe.platform, setup);
+      await probe.gateReached;
+
+      const stdout: string[] = [];
+      const base = Layer.mergeAll(
+        // The CLI finds the test bed's data directory through SNORLAX_HOME, as a run under launchd does.
+        Layer.succeed(SnorlaxPlatform, {
+          ...probe.platform,
+          env: { ...probe.platform.env, SNORLAX_HOME: setup.dataDir }
+        }),
+        NodeFiles.live,
+        fakeScheduler([], { jobFile: join(setup.home, "job") }),
+        Layer.succeed(
+          CliEnv,
+          CliEnv.of({
+            stdout: { write: (text) => void stdout.push(text) },
+            stderr: { write: () => undefined },
+            colors: false
+          })
+        )
+      );
+      const exit = await Effect.runPromise(
+        Effect.gen(function* () {
+          const cli = yield* Effect.forkChild(Effect.flip(runCli(["refresh", "--json"], base)));
+          // The CLI's refresh has reached the lock, so its wait is on the test clock.
+          yield* Effect.promise(() => probe.waitForEvent("realpath", 2));
+          yield* TestClock.adjust(Duration.millis(LOCK_WAIT_MS));
+          return yield* Fiber.join(cli);
+        }).pipe(Effect.provide(TestClock.layer()))
+      );
+
+      expect(exit.exitCode).toBe(1);
+      // JSON.parse takes the whole of stdout, so anything printed besides the one object fails here.
+      expect(z.parse(failureSchema, JSON.parse(stdout.join("")))).toEqual({
+        schemaVersion: 1,
+        ok: false,
+        error: { code: "locked", message: expect.stringMatching(/^waited 60s for the ledger lock .*ledger\.lock: /) }
+      });
+
+      probe.releaseGate();
+      expect((await holder).result.ok).toBe(true);
     } finally {
       await setup.remove();
     }

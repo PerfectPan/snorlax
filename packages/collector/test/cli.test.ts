@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,20 +8,16 @@ import * as z from "zod/mini";
 import { failureSchema, refreshResultSchema, snapshotOutputSchema, statusSchema } from "@rivus/snorlax-protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
+import { runBundle, spawnBundle } from "./fixtures/bundle.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
- * End-to-end tests against the built bundle (`dist/snorlax.mjs`), run under a temporary `HOME` and
- * `SNORLAX_HOME` so no real agent directory is ever touched. The bundle is built before tests run
- * (`pnpm run check` orders build before test); a bare `pnpm test` needs `pnpm run build` first.
+ * Runs the built bundle end to end under the temporary `home`, with `SNORLAX_HOME` at `<home>/data`, so no real
+ * agent directory is ever touched. `doctor` asks launchd about the scheduled job on macOS; the helper's default
+ * launchctl path does not exist, which keeps the real launchctl out of the tests and creates no stub file in the
+ * home whose emptiness they assert.
  */
-const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
-
-const run = (args: readonly string[], home: string) =>
-  spawnSync(process.execPath, [bundle, ...args], {
-    encoding: "utf8",
-    env: { HOME: home, SNORLAX_HOME: join(home, "data"), PATH: "/usr/bin:/bin" }
-  });
+const run = (args: readonly string[], home: string) => runBundle(args, { home });
 
 /** One JSON object and nothing else: a plain-object record, parsed at the boundary with a schema. */
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -41,9 +35,6 @@ const parseOneJsonObject = (stdout: string): z.output<typeof jsonObjectSchema> =
 let home: string;
 
 beforeAll(async () => {
-  if (!existsSync(bundle)) {
-    throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
-  }
   home = await mkdtemp(join(tmpdir(), "snorlax-cli-"));
 });
 
@@ -243,11 +234,7 @@ describe("refresh and rebuild", () => {
     await rm(refreshHome, { recursive: true, force: true });
   });
 
-  const runRefreshHome = (args: readonly string[]) =>
-    spawnSync(process.execPath, [bundle, ...args], {
-      encoding: "utf8",
-      env: { HOME: refreshHome, SNORLAX_HOME: join(refreshHome, "data"), PATH: "/usr/bin:/bin" }
-    });
+  const runRefreshHome = (args: readonly string[]) => runBundle(args, { home: refreshHome });
 
   it("creates the data directory with mode 0700 on the first writing command", async () => {
     const refreshed = runRefreshHome(["refresh", "--json"]);
@@ -338,5 +325,30 @@ describe("ledger and snapshot failures", () => {
       await mkdir(join(data, "snapshot.json", "occupied"), { recursive: true });
     };
     expect(await inFreshHome(occupied, ["refresh", "--json"])).toEqual({ code: "data-dir", status: 1 });
+  });
+});
+
+describe("a closed stdout", () => {
+  /** Runs the bundle with the read end of its stdout closed before it starts, so every write to stdout fails with EPIPE. */
+  const runWithClosedStdout = (args: readonly string[], where: string) =>
+    new Promise<{ readonly code: number | null; readonly stderr: string }>((resolve) => {
+      const child = spawnBundle(args, { home: where });
+      child.stdout.destroy();
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += String(chunk);
+      });
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+
+  it("drops EPIPE quietly and exits with the command's own code", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-epipe-"));
+    try {
+      expect(await runWithClosedStdout(["status", "--json"], fresh)).toEqual({ code: 0, stderr: "" });
+      expect(await runWithClosedStdout(["status"], fresh)).toEqual({ code: 0, stderr: "" });
+      expect(await runWithClosedStdout(["rebuild", "--days", "0", "--json"], fresh)).toEqual({ code: 2, stderr: "" });
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
   });
 });

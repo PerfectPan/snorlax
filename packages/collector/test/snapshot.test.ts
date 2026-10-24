@@ -136,6 +136,19 @@ describe("windows", () => {
     expect(snapshot.byModel.map((entry) => [entry.model, entry.last30d.requests])).toEqual([["claude-opus-5-5", 1]]);
     expect(snapshot.totals.today.requests).toBe(1);
   });
+
+  it("opens no per-agent or per-model entry for an agent or model seen only after today", () => {
+    const snapshot = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      buckets: [
+        bucket("2026-10-22T02:00:00Z"),
+        bucket("2026-10-23T02:00:00Z", { agent: "codex", model: "gpt-5-codex" })
+      ]
+    });
+    expect(snapshot.byAgent.map((entry) => entry.agent)).toEqual(["claude-code"]);
+    expect(snapshot.byModel.map((entry) => entry.model)).toEqual(["claude-opus-5-5"]);
+  });
 });
 
 describe("daily and hourlyToday", () => {

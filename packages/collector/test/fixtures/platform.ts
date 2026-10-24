@@ -81,9 +81,13 @@ const missingOnMemory = (member: string): Error => new Error(`the memory platfor
 /**
  * The kit's memory platform as the full kit `Platform` the collector runs on. The memory platform runs scripted
  * commands only; the process members it lacks (spawning and process identity, which no command run on it
- * uses) throw.
+ * uses) throw. `run`, when given, replaces the scripted commands: the memory platform's own `run` rejects an
+ * aborted run at once, so a program that outlives the abort, as a real child does, needs its own.
  */
-export function memoryKitPlatform(memory: ReturnType<typeof createMemoryPlatform>): Platform {
+export function memoryKitPlatform(
+  memory: ReturnType<typeof createMemoryPlatform>,
+  run: Platform["process"]["run"] = (command, args, options) => memory.process.run(command, args, options)
+): Platform {
   return {
     env: memory.env,
     home: memory.home,
@@ -91,7 +95,7 @@ export function memoryKitPlatform(memory: ReturnType<typeof createMemoryPlatform
     fs: memory.fs,
     clock: memory.clock,
     process: {
-      run: (command, args, options) => memory.process.run(command, args, options),
+      run,
       spawn: () => {
         throw missingOnMemory("spawn");
       },
