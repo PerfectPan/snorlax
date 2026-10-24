@@ -35,6 +35,8 @@ export function holdLedgerLock(
       orElse: () =>
         Effect.fail(
           new LedgerLockHeld({
+            // The suffix is the text of the TimeoutError that `AbortSignal.timeout` raises, spelled out so the
+            // `locked` message stays what callers already see; Effect's timeout raises no error to read it from.
             message: `waited ${LOCK_WAIT_MS / 1000}s for the ledger lock ${path}: The operation was aborted due to timeout`
           })
         )

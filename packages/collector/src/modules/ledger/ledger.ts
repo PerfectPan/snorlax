@@ -15,7 +15,7 @@ import type { LogFieldValue, Logger } from "../log/log.ts";
 import { writeSnapshot, type SnapshotWriteFailed } from "../snapshot-file/snapshot-file.ts";
 import { holdLedgerLock, LedgerLockHeld } from "./lock.ts";
 import { LedgerBackupFailed, LedgerSchemaTooNew, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
-import { commitScan, type ScanWindow } from "./scan-and-commit.ts";
+import { commitScan, type ScanWindow } from "./commit-scan.ts";
 import type { PlatformSqlite, SqliteDatabase, SqliteValue } from "./sqlite.ts";
 
 /** The `meta` row; `device_id` is generated once, here, when the ledger is created. */

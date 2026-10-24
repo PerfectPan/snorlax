@@ -3,9 +3,9 @@ import type { DoctorCheck } from "@rivus/snorlax-protocol";
 import { DATA_DIR_MODE } from "../../modules/data-dir/data-dir.ts";
 
 /**
- * Pure verdicts for the `doctor` checks (plan 3.1, 3.13): each takes what the service observed and
+ * Pure verdicts for the `doctor` checks (plan 3.1, 3.13): each takes what the flow observed and
  * decides status and detail. No Effect types and no I/O here, so the verdicts are testable on their
- * own and the service only gathers the inputs.
+ * own and the flow only gathers the inputs.
  */
 
 /** The oldest Node the collector runs on (plan: "Compatibility And Constraints", Node 22.13). */
@@ -31,7 +31,7 @@ export const nodeVersionCheck = (nodeVersion: string): DoctorCheck => {
   return { id: "node-version", status: satisfiesRequired(parts) ? "ok" : "error", detail };
 };
 
-/** What the service observed about the data directory, before any verdict. */
+/** What the flow observed about the data directory, before any verdict. */
 export interface DataDirObservation {
   readonly path: string;
   readonly kind: "dir" | "file" | "other" | "missing";
@@ -62,7 +62,7 @@ export const dataDirCheck = (observed: DataDirObservation): DoctorCheck => {
   return { id: "data-dir", status: "ok", detail: `${path} is a directory with mode 0700` };
 };
 
-/** The outcome of reading `config.json`, as the service observed it. */
+/** The outcome of reading `config.json`, as the flow observed it. */
 export type ConfigObservation = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
 export const configCheck = (observed: ConfigObservation): DoctorCheck =>
