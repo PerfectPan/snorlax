@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 
 import { acquireProcessLock } from "@rivus/agent-kit-collab/process-lock";
@@ -5,7 +6,7 @@ import { Duration, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ledgerPath, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
+import { ledgerPath, readLedgerStatus, type ScanAndCommitOutcome } from "../src/modules/ledger/ledger.ts";
 import { LOCK_WAIT_MS } from "../src/modules/ledger/lock.ts";
 import { listBackups } from "../src/modules/ledger/migrations.ts";
 import type { Logger } from "../src/modules/log/log.ts";
@@ -68,10 +69,10 @@ const appendOne = (home: string): Promise<void> =>
     MTIME
   );
 
-const refreshOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
+const refreshOn = (platform: TestPlatform, setup: RefreshSetup): Promise<ScanAndCommitOutcome> =>
   runRefresh({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE });
 
-const rebuildOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
+const rebuildOn = (platform: TestPlatform, setup: RefreshSetup): Promise<ScanAndCommitOutcome> =>
   runRebuild({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE }, 30);
 
 /** The ledger result two runs must land on, whichever order they ran in: buckets and the scan time. */
@@ -293,6 +294,118 @@ describe("the ledger opens under the lock", () => {
       probe.releaseGate();
       await run;
     } finally {
+      await setup.remove();
+    }
+  });
+});
+
+/**
+ * The reader, run as `node -e READER <ledger> <PROBE>`: it opens a read transaction on the ledger, holding SQLite's
+ * shared lock, and ends it only once a probe process sees a read fail with SQLITE_BUSY. A COMMIT takes the PENDING
+ * lock before it waits for readers to leave, and from then on a new read is busy, so the reader leaves only once the
+ * refresh's first COMMIT waits on it. The probe is a third process because a second connection in the reader's
+ * process would share the reader's lock and never see the PENDING one.
+ */
+const READER = `
+const { spawn } = require("node:child_process");
+const { DatabaseSync } = require("node:sqlite");
+const [path, probeScript] = process.argv.slice(1);
+const reader = new DatabaseSync(path, { readOnly: true });
+reader.exec("BEGIN");
+reader.prepare("SELECT device_id FROM meta").get();
+const probe = spawn(process.execPath, ["-e", probeScript, path], { stdio: ["pipe", "ignore", "inherit"] });
+probe.on("exit", (code) => {
+  reader.prepare("SELECT device_id FROM meta").get();
+  reader.exec("COMMIT");
+  reader.close();
+  process.stdout.write("released " + code + "\\n");
+});
+process.stdout.write("holding\\n");
+`;
+
+/** Reads until a read is busy, then exits 0; exits 1 once its parent, the reader, is gone. */
+const PROBE = `
+const { DatabaseSync } = require("node:sqlite");
+process.stdin.on("end", () => process.exit(1));
+process.stdin.resume();
+const probe = new DatabaseSync(process.argv[1], { readOnly: true });
+const busy = () => {
+  try {
+    probe.prepare("SELECT device_id FROM meta").get();
+    return false;
+  } catch (error) {
+    if ((error.errcode & 0xff) === 5) {
+      return true;
+    }
+    throw error;
+  }
+};
+const poll = () => {
+  if (busy()) {
+    probe.close();
+    process.exit(0);
+  }
+  setImmediate(poll);
+};
+poll();
+`;
+
+interface ReaderRun {
+  /** Resolves once the reader holds its shared lock; rejects if it exits first. */
+  readonly holding: Promise<void>;
+  readonly exited: Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }>;
+  readonly stop: () => void;
+}
+
+/** A `status`-like reader of the ledger in another process (see `READER`). */
+const readerInAnotherProcess = (path: string): ReaderRun => {
+  const child = spawn(process.execPath, ["-e", READER, path, PROBE], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let holds!: () => void;
+  let fails!: (error: Error) => void;
+  const holding = new Promise<void>((resolve, reject) => {
+    holds = resolve;
+    fails = reject;
+  });
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+    if (stdout.startsWith("holding\n")) {
+      holds();
+    }
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const exited = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    child.on("close", (code) => {
+      fails(new Error(`the reader exited ${code} before it held its lock: ${stderr}`));
+      resolve({ code, stdout, stderr });
+    });
+  });
+  return { holding, exited, stop: () => child.kill() };
+};
+
+describe("a status read in another process", () => {
+  it("holds its shared lock across a refresh's COMMIT, and the refresh and the read both succeed", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    let reader: ReaderRun | undefined;
+    try {
+      await writeFixtures(setup.home);
+      await refreshOn(setup.platform, setup);
+      await appendOne(setup.home);
+      const before = await stateOf(setup);
+
+      reader = readerInAnotherProcess(ledgerPath(setup.dataDir));
+      await reader.holding;
+      const outcome = await refreshOn(setup.platform, setup);
+
+      expect(outcome.result.ok).toBe(true);
+      expect(await reader.exited).toMatchObject({ code: 0, stdout: "holding\nreleased 0\n" });
+      expect(await stateOf(setup)).not.toEqual(before);
+    } finally {
+      reader?.stop();
+      await reader?.exited;
       await setup.remove();
     }
   });

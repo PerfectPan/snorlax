@@ -120,6 +120,30 @@ export interface Ledger {
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
 
+/**
+ * How long a ledger connection waits for another connection's lock before failing with SQLITE_BUSY. `status` reads
+ * without the ledger lock, so its read and a refresh's COMMIT in another process can meet: in the rollback journal
+ * the COMMIT waits for open reads to end and a read waits for the COMMIT to finish, neither longer than one
+ * statement or one commit. WAL would remove the wait, but every read-only `status` would then create and write
+ * `ledger.db-wal` and `-shm`, which plan 3.13 rule 8 forbids.
+ */
+const BUSY_TIMEOUT_MS = 5_000;
+
+const openConnection = (
+  sqlite: PlatformSqlite,
+  path: string,
+  options?: Parameters<PlatformSqlite["open"]>[1]
+): SqliteDatabase => {
+  const db = sqlite.open(path, options);
+  try {
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  return db;
+};
+
 /** The ledger could not be opened, or holds a row or scan state this build cannot read. */
 export class LedgerUnreadable extends Data.TaggedError("LedgerUnreadable")<{ readonly message: string }> {}
 
@@ -445,7 +469,7 @@ export const openLedger = (
     const path = ledgerPath(dataDir);
     const existing = yield* Effect.promise(() => platform.fs.stat(path));
     const db = yield* Effect.acquireRelease(
-      Effect.try({ try: () => platform.sqlite.open(path), catch: (error) => cannotOpen(path, error) }),
+      Effect.try({ try: () => openConnection(platform.sqlite, path), catch: (error) => cannotOpen(path, error) }),
       (opened) => Effect.sync(() => opened.close())
     );
     return yield* Effect.gen(function* () {
@@ -485,7 +509,10 @@ export const readLedgerStatus = (
       return null;
     }
     const meta = yield* Effect.acquireUseRelease(
-      Effect.try({ try: () => sqlite.open(path, { readonly: true }), catch: (error) => cannotOpen(path, error) }),
+      Effect.try({
+        try: () => openConnection(sqlite, path, { readonly: true }),
+        catch: (error) => cannotOpen(path, error)
+      }),
       (db) =>
         readMeta(path, db).pipe(
           // A statement that throws while meta is read means the ledger cannot be read.
