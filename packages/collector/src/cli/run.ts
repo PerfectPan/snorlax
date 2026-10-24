@@ -117,6 +117,7 @@ export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Eff
     const startedAt = platform.clock.monotonic();
     const commandName = argv.find((token) => !token.startsWith("-"));
     let failureCode: string | undefined;
+    let dataDirRefused: true | undefined;
 
     // effect/cli renders help and parse errors through the Console while it runs, but the parsed
     // `--json` value is known only afterwards, so every rendering is buffered first and flushed to
@@ -126,8 +127,9 @@ export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Eff
 
     // A command failure or defect: the JSON envelope or the message on stderr. An exit-2 failure drops
     // effect/cli's buffered rendering in both modes.
-    const renderFailure = ({ code, exit }: FailureExit, message: string): Outcome => {
+    const renderFailure = ({ code, exit, refusesDataDir }: FailureExit, message: string): Outcome => {
       failureCode = code;
+      dataDirRefused = refusesDataDir;
       if (fallbackJson) {
         printFailureJson(env, home, code, message);
       } else {
@@ -189,7 +191,7 @@ export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Eff
     }
 
     const exitCode = outcome.exit;
-    if (commandName !== undefined && COMMAND_NAMES.has(commandName)) {
+    if (commandName !== undefined && COMMAND_NAMES.has(commandName) && dataDirRefused !== true) {
       const log = appendingLogger(platform, yield* NodeFiles, resolveDataDir(platform));
       yield* log.event("command", {
         name: commandName,

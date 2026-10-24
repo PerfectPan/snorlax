@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { createNodePlatform } from "@rivus/agent-kit/node";
+import type { Platform } from "@rivus/agent-kit/platform";
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
 import { failureSchema } from "@rivus/snorlax-protocol";
 import { Effect, Fiber, Layer } from "effect";
@@ -17,6 +19,7 @@ import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
 import { memoryKitPlatform } from "./fixtures/platform.ts";
+import { readLedger } from "./fixtures/flows.ts";
 import { fakeScheduler, type SchedulerCall } from "./fixtures/scheduler.ts";
 
 /**
@@ -46,14 +49,14 @@ const quietNodeFiles: NodeFileOps = {
 const memoryPlatform = (env: Record<string, string>, files: Record<string, string> = {}): MemoryPlatform =>
   createMemoryPlatform({ home: HOME, env: { SNORLAX_HOME: DATA_DIR, ...env }, os: "darwin", files });
 
-const runCommand = async (
+const runOn = async (
   args: readonly string[],
-  platform: MemoryPlatform,
+  platform: Platform,
   scheduler: Layer.Layer<Scheduler, never, SnorlaxPlatform>
 ) => {
   const out: string[] = [];
   const err: string[] = [];
-  const platformLayer = Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform));
+  const platformLayer = Layer.succeed(SnorlaxPlatform, platform);
   const base = Layer.mergeAll(
     Layer.provideMerge(scheduler, platformLayer),
     Layer.succeed(NodeFiles, quietNodeFiles),
@@ -69,6 +72,12 @@ const runCommand = async (
   const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
   return { exitCode: exit.exitCode, stdout: out.join(""), stderr: err.join("") };
 };
+
+const runCommand = (
+  args: readonly string[],
+  platform: MemoryPlatform,
+  scheduler: Layer.Layer<Scheduler, never, SnorlaxPlatform>
+) => runOn(args, memoryKitPlatform(platform), scheduler);
 
 const failureOf = (stdout: string) => z.parse(failureSchema, JSON.parse(stdout)).error;
 
@@ -103,26 +112,42 @@ describe("install and uninstall on a fake scheduler", () => {
   });
 
   it("uninstall --data removes the job, then deletes what snorlax wrote and names what it kept", async () => {
-    const calls: SchedulerCall[] = [];
-    const platform = memoryPlatform(
-      {},
-      { [`${DATA_DIR}/config.json`]: "{}", [`${DATA_DIR}/logs/snorlax.log`]: "", [`${DATA_DIR}/notes.txt`]: "mine" }
-    );
-    const kept = await runCommand(["uninstall", "--data"], platform, fakeScheduler(calls, { jobFile: JOB_FILE }));
-    expect(kept).toEqual({
-      exitCode: 0,
-      stdout:
-        "LaunchAgent removed\nthe data directory ~/snorlax-data is kept; entries snorlax did not write remain: notes.txt\n",
-      stderr: ""
-    });
-    expect(calls).toEqual([{ operation: "uninstall", dataDir: DATA_DIR }]);
-    expect(await platform.fs.stat(`${DATA_DIR}/config.json`)).toBeUndefined();
-    expect(await platform.fs.stat(`${DATA_DIR}/logs`)).toBeUndefined();
+    // --data needs the ledger SQLite reads as the snorlax marker, so this run is on the Node platform over a
+    // temporary home rather than the memory platform.
+    const home = await mkdtemp(join(tmpdir(), "snorlax-uninstall-"));
+    try {
+      const dataDir = join(home, "snorlax-data");
+      const platform = createNodePlatform({ home, env: { SNORLAX_HOME: dataDir, PATH: "/usr/bin:/bin" } });
+      const { sqlite } = platform;
+      if (sqlite === undefined) {
+        throw new Error("the agent-kit Node platform must provide SQLite");
+      }
+      await mkdir(join(dataDir, "logs"), { recursive: true });
+      await writeFile(join(dataDir, "config.json"), "{}");
+      await writeFile(join(dataDir, "logs", "snorlax.log"), "");
+      await writeFile(join(dataDir, "notes.txt"), "mine");
+      await readLedger({ fs: platform.fs, sqlite }, dataDir, Effect.succeed);
 
-    await platform.fs.remove(`${DATA_DIR}/notes.txt`);
-    const deleted = await runCommand(["uninstall", "--data"], platform, fakeScheduler([], { jobFile: JOB_FILE }));
-    expect(deleted.stdout).toBe("LaunchAgent removed and data directory deleted\n");
-    expect(await platform.fs.stat(DATA_DIR)).toBeUndefined();
+      const calls: SchedulerCall[] = [];
+      const kept = await runOn(["uninstall", "--data"], platform, fakeScheduler(calls, { jobFile: JOB_FILE }));
+      expect(kept).toEqual({
+        exitCode: 0,
+        stdout:
+          "LaunchAgent removed\nthe data directory ~/snorlax-data is kept; entries snorlax did not write remain: notes.txt\n",
+        stderr: ""
+      });
+      expect(calls).toEqual([{ operation: "uninstall", dataDir }]);
+      expect(await platform.fs.stat(join(dataDir, "config.json"))).toBeUndefined();
+      expect(await platform.fs.stat(join(dataDir, "logs"))).toBeUndefined();
+
+      // The ledger went with the first run; the directory left empty passes without it.
+      await platform.fs.remove(join(dataDir, "notes.txt"));
+      const deleted = await runOn(["uninstall", "--data"], platform, fakeScheduler([], { jobFile: JOB_FILE }));
+      expect(deleted.stdout).toBe("LaunchAgent removed and data directory deleted\n");
+      expect(await platform.fs.stat(dataDir)).toBeUndefined();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("uninstall --data refuses the home directory before the scheduler changes anything", async () => {

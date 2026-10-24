@@ -5,6 +5,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
@@ -549,6 +550,8 @@ describe("install and uninstall", () => {
       const dataDir = dataDirOf(env.home);
       await mkdir(join(dataDir, "logs"), { recursive: true });
       await writeFile(join(dataDir, "logs", "keep.txt"), "unrelated\n");
+      // The ledger a refresh creates marks the directory as snorlax's, which --data requires.
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
 
       const removed = run(env, ["uninstall", "--data"]);
       expect(removed.status).toBe(0);
@@ -562,6 +565,7 @@ describe("install and uninstall", () => {
       const reports = join(env.home, "Library", "Logs", "DiagnosticReports");
       await mkdir(reports, { recursive: true });
       await writeFile(join(reports, "x.ips"), "crash report\n");
+      expect(run(env, ["refresh", "--json"], { snorlaxHome: join(env.home, "Library") }).status).toBe(0);
 
       // `logs` matches the user's `Logs` on a case-insensitive volume; only known log files may go.
       const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: join(env.home, "Library") });
@@ -589,10 +593,58 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("refuses --data in a directory without a snorlax ledger and changes nothing in it", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const domain = `gui/${uid()}`;
+      const plistPath = plistPathOf(env.home);
+      expect(run(env, ["install", "--json"]).status).toBe(0);
+      // Entries under the names snorlax writes, none of them snorlax's.
+      const other = join(env.home, "other");
+      await mkdir(join(other, "logs"), { recursive: true });
+      await writeFile(join(other, "config.json"), '{"theirs":true}\n');
+      await writeFile(join(other, "snapshot.json"), "{}\n");
+      await writeFile(join(other, "node-path"), "/usr/bin/node\n");
+      await writeFile(join(other, "logs", "snorlax.log"), "theirs\n");
+
+      const expectRefused = async (reason: string): Promise<void> => {
+        const before = await hashTree(other);
+        const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: other });
+        expect(removed.status).toBe(1);
+        expect(await hashTree(other)).toBe(before);
+        const failure = z.parse(failureSchema, json(removed.stdout)).error;
+        expect(failure.code).toBe("data-dir");
+        expect(failure.message).toContain("not a snorlax data directory: ~/other");
+        expect(failure.message).toContain(reason);
+      };
+      await expectRefused("no ledger.db");
+
+      // Another program's ledger.db in WAL mode: opening it, even read-only, would add -wal and -shm files.
+      const wal = new DatabaseSync(join(other, "ledger.db"));
+      wal.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (amount INTEGER)");
+      wal.close();
+      await expectRefused("not a SQLite database in rollback-journal mode");
+
+      await rm(join(other, "ledger.db"));
+      const rollback = new DatabaseSync(join(other, "ledger.db"));
+      rollback.exec("CREATE TABLE entries (amount INTEGER)");
+      rollback.close();
+      await expectRefused("cannot read the ledger");
+
+      // The refusals came before launchctl was asked anything: the installed service is untouched.
+      expect(existsSync(plistPath)).toBe(true);
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", `${domain}/${LABEL}`],
+        ["bootstrap", domain, plistPath]
+      ]);
+    });
+  });
+
   it("reports a data-dir failure when an emptied data directory cannot be removed", async () => {
     await withInstallHome("darwin", async (env) => {
-      // install creates the data directory; the read-only HOME then keeps its rmdir from succeeding.
+      // install and a refresh create the data directory and its ledger; the read-only HOME then keeps its rmdir
+      // from succeeding.
       expect(run(env, ["install", "--json"]).status).toBe(0);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
       await chmod(env.home, 0o555);
       try {
         const removed = run(env, ["uninstall", "--data", "--json"]);
@@ -613,6 +665,7 @@ describe("install and uninstall", () => {
       await writeFixtures(env.home);
       const before = await hashAgentDirs(env.home);
       expect(run(env, ["install", "--json"]).status).toBe(0);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
 
       const removed = run(env, ["uninstall", "--data", "--json"]);
       expect(removed.status).toBe(0);

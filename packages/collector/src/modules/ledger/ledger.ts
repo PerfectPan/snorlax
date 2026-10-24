@@ -125,7 +125,8 @@ export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db"
  * without the ledger lock, so its read and a refresh's COMMIT in another process can meet: in the rollback journal
  * the COMMIT waits for open reads to end and a read waits for the COMMIT to finish, neither longer than one
  * statement or one commit. WAL would remove the wait, but every read-only `status` would then create and write
- * `ledger.db-wal` and `-shm`, which plan 3.13 rule 8 forbids.
+ * `ledger.db-wal` and `-shm`, which plan 3.13 rule 8 forbids. `uninstall --data` relies on the rollback journal too:
+ * it does not take a WAL `ledger.db` as snorlax's.
  */
 const BUSY_TIMEOUT_MS = 5_000;
 
@@ -494,7 +495,7 @@ export const openLedger = (
 
 /**
  * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
- * there is no ledger yet. A `stat` that throws is a defect; a ledger that cannot be opened, or whose meta row
+ * there is no ledger yet. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect; a ledger that cannot be opened, or whose meta row
  * cannot be read, is `LedgerUnreadable`, as in `openLedger`.
  */
 export const readLedgerStatus = (

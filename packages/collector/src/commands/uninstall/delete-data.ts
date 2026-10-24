@@ -5,9 +5,13 @@ import { Data, Effect } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { requireAbsoluteDataDir, type DataDirNotAbsolute } from "../../modules/data-dir/data-dir.ts";
+import { ledgerPath, readLedgerStatus } from "../../modules/ledger/ledger.ts";
 
 /** `uninstall --data` refuses the data directory: it is `/`, the home directory or one of its ancestors. */
 export class DataDirNotDeletable extends Data.TaggedError("DataDirNotDeletable")<{ readonly message: string }> {}
+
+/** `uninstall --data` refuses the data directory: it holds no ledger snorlax can read, so it may not be snorlax's. */
+class DataDirNotSnorlax extends Data.TaggedError("DataDirNotSnorlax")<{ readonly message: string }> {}
 
 /** `uninstall --data` could not delete the data directory or an entry snorlax wrote in it. */
 class DataDirDeleteFailed extends Data.TaggedError("DataDirDeleteFailed")<{ readonly message: string }> {}
@@ -40,6 +44,72 @@ export const resolvedDeletableDataDir = (
       return yield* Effect.fail(refused);
     }
     return resolved;
+  });
+
+/** The start of a SQLite file: the 16-byte magic, then at offsets 18 and 19 the write and read format versions. */
+const SQLITE_MAGIC = "SQLite format 3\0";
+const SQLITE_HEADER_BYTES = 20;
+/** Format version 1 is the rollback journal the ledger runs in; WAL databases carry 2. */
+const ROLLBACK_JOURNAL_FORMAT = 1;
+
+const readHeader = (fs: Pick<Platform["fs"], "read">, path: string): Effect.Effect<number[], unknown> =>
+  Effect.tryPromise({
+    try: async () => {
+      const bytes: number[] = [];
+      for await (const chunk of fs.read(path, { start: 0, end: SQLITE_HEADER_BYTES })) {
+        bytes.push(...chunk);
+      }
+      return bytes;
+    },
+    catch: (error) => error
+  });
+
+const isRollbackJournalSqlite = (header: readonly number[]): boolean =>
+  header.length === SQLITE_HEADER_BYTES &&
+  String.fromCharCode(...header.slice(0, SQLITE_MAGIC.length)) === SQLITE_MAGIC &&
+  header[18] === ROLLBACK_JOURNAL_FORMAT &&
+  header[19] === ROLLBACK_JOURNAL_FORMAT;
+
+/**
+ * The snorlax marker `uninstall --data` requires before it deletes anything or touches the scheduled job: the
+ * directory holds snorlax's ledger, a rollback-journal SQLite database whose `meta` row reads, opened read-only as
+ * `status` opens it. Same-named files (`config.json`, `logs/`) prove nothing, so a directory without that ledger —
+ * including one `install` created before its first refresh — is refused. Nothing at the path, or an empty
+ * directory, holds nothing to protect and passes; the empty directory is what a repeat `uninstall --data` finds
+ * once the user has moved away the entries an earlier run kept. The header is checked before SQLite opens the
+ * file: a read-only open of a WAL database creates `-wal` and `-shm` files beside it, and a WAL `ledger.db` is
+ * not snorlax's.
+ */
+export const requireSnorlaxDataDir = (
+  platform: Pick<Platform, "fs" | "sqlite">,
+  dir: string
+): Effect.Effect<void, DataDirNotSnorlax> =>
+  Effect.gen(function* () {
+    const found = yield* Effect.promise(() => platform.fs.stat(dir));
+    if (
+      found === undefined ||
+      (found.kind === "dir" && (yield* Effect.promise(() => platform.fs.list(dir))).length === 0)
+    ) {
+      return;
+    }
+    const notSnorlax = (reason: string) =>
+      new DataDirNotSnorlax({
+        message: `not a snorlax data directory: ${dir} (${reason}); nothing was deleted and the LaunchAgent was left in place`
+      });
+    const ledger = ledgerPath(dir);
+    if ((yield* Effect.promise(() => platform.fs.stat(ledger)))?.kind !== "file") {
+      return yield* Effect.fail(notSnorlax("no ledger.db"));
+    }
+    const header = yield* readHeader(platform.fs, ledger).pipe(
+      Effect.mapError((error) => notSnorlax(`cannot read ${ledger}: ${errorMessage(error)}`))
+    );
+    if (!isRollbackJournalSqlite(header)) {
+      return yield* Effect.fail(notSnorlax("ledger.db is not a SQLite database in rollback-journal mode"));
+    }
+    const status = yield* readLedgerStatus(platform, dir).pipe(Effect.mapError((error) => notSnorlax(error.message)));
+    if (status === null) {
+      return yield* Effect.fail(notSnorlax("ledger.db cannot be read"));
+    }
   });
 
 type DirEntry = Awaited<ReturnType<Platform["fs"]["list"]>>[number];
@@ -118,7 +188,8 @@ const removeDirKeepingLeftovers = (
  * remains; the surviving names are returned for the command output. Nothing here deletes
  * recursively: `logs/` is emptied file by file too, so a data directory that happens to be
  * `~/Library` (same name as `logs`, case-insensitive APFS) cannot lose the user's `Logs` tree.
- * This is the sole deletion path for `uninstall --data`; `dir` comes from `resolvedDeletableDataDir`.
+ * This is the sole deletion path for `uninstall --data`; `dir` comes from `resolvedDeletableDataDir` and has
+ * passed `requireSnorlaxDataDir`.
  */
 export const deleteDataDir = (fs: Platform["fs"], dir: string): Effect.Effect<readonly string[], DataDirDeleteFailed> =>
   Effect.gen(function* () {

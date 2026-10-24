@@ -12,6 +12,11 @@ type CommandFailure = Command.Error<typeof rootCommand>;
 export interface FailureExit {
   readonly code: FailureCode;
   readonly exit: 1 | 2;
+  /**
+   * The failure rejects the data directory itself, so the run writes nothing into it, not even the command log
+   * line `cli/` otherwise appends to `<data>/logs/snorlax.log`.
+   */
+  readonly refusesDataDir?: true;
 }
 
 /**
@@ -38,8 +43,9 @@ export const FAILURES = {
   SchedulerOsOverrideInvalid: { code: "internal", exit: 1 },
   // Plan 3.2.1 has no code for an unsupported platform; the message names the batch that adds one.
   SchedulerUnsupportedOs: { code: "internal", exit: 1 },
-  DataDirNotAbsolute: { code: "data-dir", exit: 1 },
-  DataDirNotDeletable: { code: "data-dir", exit: 1 },
+  DataDirNotAbsolute: { code: "data-dir", exit: 1, refusesDataDir: true },
+  DataDirNotDeletable: { code: "data-dir", exit: 1, refusesDataDir: true },
+  DataDirNotSnorlax: { code: "data-dir", exit: 1, refusesDataDir: true },
   DataDirDeleteFailed: { code: "data-dir", exit: 1 },
   CollectorPathUnresolved: { code: "internal", exit: 1 },
   UserIdUnavailable: { code: "internal", exit: 1 },
