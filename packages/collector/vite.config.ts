@@ -19,6 +19,9 @@ export default defineConfig({
     // legal ones. minify would reformat the whole file into long lines; comments alone do not.
     minify: false,
     outDir: "dist",
+    // The inlined packages' notices ship with the bundle: Vite lists every package the bundle's modules come from,
+    // with its license field and LICENSE file. Our own workspace packages are not in node_modules and stay out.
+    license: { fileName: "THIRD_PARTY_LICENSES.md" },
     lib: {
       entry: "src/cli/bin.ts",
       formats: ["es"],
