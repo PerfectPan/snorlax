@@ -148,6 +148,9 @@ const openConnection = (
 /** The ledger could not be opened, or holds a row or scan state this build cannot read. */
 export class LedgerUnreadable extends Data.TaggedError("LedgerUnreadable")<{ readonly message: string }> {}
 
+/** SQLite reads `ledger.db`, but the database has no `meta` table, so another program wrote it. */
+export class LedgerNotSnorlax extends Data.TaggedError("LedgerNotSnorlax")<{ readonly message: string }> {}
+
 // The ledger rows are unknown data at the read boundary: every table is parsed through a schema, and a row
 // this build cannot read fails as `LedgerUnreadable` naming the table (AGENTS.md, plan 3.6).
 const metaRowSchema = z.object({
@@ -495,13 +498,17 @@ export const openLedger = (
 
 /**
  * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
- * there is no ledger yet. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect; a ledger that cannot be opened, or whose meta row
- * cannot be read, is `LedgerUnreadable`, as in `openLedger`.
+ * there is no ledger yet. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect; a
+ * ledger that cannot be opened, or whose meta row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a
+ * database SQLite reads without a `meta` table is `LedgerNotSnorlax`.
  */
 export const readLedgerStatus = (
   platform: Pick<Platform, "fs"> & { readonly sqlite?: PlatformSqlite },
   dataDir: string
-): Effect.Effect<{ readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null, LedgerUnreadable> =>
+): Effect.Effect<
+  { readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null,
+  LedgerUnreadable | LedgerNotSnorlax
+> =>
   Effect.gen(function* () {
     const path = ledgerPath(dataDir);
     const existing = yield* Effect.promise(() => platform.fs.stat(path));
@@ -515,7 +522,14 @@ export const readLedgerStatus = (
         catch: (error) => cannotOpen(path, error)
       }),
       (db) =>
-        readMeta(path, db).pipe(
+        Effect.gen(function* () {
+          if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get() === undefined) {
+            return yield* Effect.fail(
+              new LedgerNotSnorlax({ message: `${path} is not a snorlax ledger: it has no meta table` })
+            );
+          }
+          return yield* readMeta(path, db);
+        }).pipe(
           // A statement that throws while meta is read means the ledger cannot be read.
           Effect.catchDefect((defect) =>
             Effect.fail(new LedgerUnreadable({ message: `cannot read the ledger ${path}: ${errorMessage(defect)}` }))

@@ -10,8 +10,11 @@ import { ledgerPath, readLedgerStatus } from "../../modules/ledger/ledger.ts";
 /** `uninstall --data` refuses the data directory: it is `/`, the home directory or one of its ancestors. */
 export class DataDirNotDeletable extends Data.TaggedError("DataDirNotDeletable")<{ readonly message: string }> {}
 
-/** `uninstall --data` refuses the data directory: it holds no ledger snorlax can read, so it may not be snorlax's. */
+/** `uninstall --data` refuses the data directory: it holds no `ledger.db`, or a `ledger.db` that is not snorlax's. */
 class DataDirNotSnorlax extends Data.TaggedError("DataDirNotSnorlax")<{ readonly message: string }> {}
+
+/** `uninstall --data` refuses the data directory: its `ledger.db` cannot be read to tell whether it is snorlax's. */
+class DataDirLedgerUnreadable extends Data.TaggedError("DataDirLedgerUnreadable")<{ readonly message: string }> {}
 
 /** `uninstall --data` could not delete the data directory or an entry snorlax wrote in it. */
 class DataDirDeleteFailed extends Data.TaggedError("DataDirDeleteFailed")<{ readonly message: string }> {}
@@ -78,12 +81,15 @@ const isRollbackJournalSqlite = (header: readonly number[]): boolean =>
  * directory, holds nothing to protect and passes; the empty directory is what a repeat `uninstall --data` finds
  * once the user has moved away the entries an earlier run kept. The header is checked before SQLite opens the
  * file: a read-only open of a WAL database creates `-wal` and `-shm` files beside it, and a WAL `ledger.db` is
- * not snorlax's.
+ * not snorlax's. A refusal says which case it met: no `ledger.db`; a `ledger.db` that is not snorlax's; or one
+ * that cannot be read (a hot journal a read-only connection cannot roll back, a lock held past the busy timeout,
+ * a damaged file). Only the last suggests `snorlax refresh`, which rolls back a hot journal and waits out a lock;
+ * on a database another program wrote, a refresh would migrate it into a ledger.
  */
 export const requireSnorlaxDataDir = (
   platform: Pick<Platform, "fs" | "sqlite">,
   dir: string
-): Effect.Effect<void, DataDirNotSnorlax> =>
+): Effect.Effect<void, DataDirNotSnorlax | DataDirLedgerUnreadable> =>
   Effect.gen(function* () {
     const found = yield* Effect.promise(() => platform.fs.stat(dir));
     if (
@@ -92,23 +98,43 @@ export const requireSnorlaxDataDir = (
     ) {
       return;
     }
-    const notSnorlax = (reason: string) =>
-      new DataDirNotSnorlax({
-        message: `not a snorlax data directory: ${dir} (${reason}); nothing was deleted and the LaunchAgent was left in place`
-      });
+    const untouched = "nothing was deleted and the LaunchAgent was left in place";
     const ledger = ledgerPath(dir);
-    if ((yield* Effect.promise(() => platform.fs.stat(ledger)))?.kind !== "file") {
-      return yield* Effect.fail(notSnorlax("no ledger.db"));
+    const ledgerFound = yield* Effect.promise(() => platform.fs.stat(ledger));
+    if (ledgerFound === undefined) {
+      return yield* Effect.fail(
+        new DataDirNotSnorlax({
+          message:
+            `no snorlax ledger in ${dir}: it has no ledger.db, so ${untouched}; to remove only the scheduled ` +
+            "refresh, run `snorlax uninstall` without --data"
+        })
+      );
+    }
+    const notSnorlax = (reason: string) => new DataDirNotSnorlax({ message: `${reason}, so ${untouched}` });
+    const unreadable = (reason: string) =>
+      new DataDirLedgerUnreadable({
+        message:
+          `cannot tell whether ${ledger} is a snorlax ledger (${reason}), so ${untouched}; run \`snorlax refresh\` ` +
+          "once, then `snorlax uninstall --data` again"
+      });
+    if (ledgerFound.kind !== "file") {
+      return yield* Effect.fail(notSnorlax(`${ledger} is not a snorlax ledger: it is not a regular file`));
     }
     const header = yield* readHeader(platform.fs, ledger).pipe(
-      Effect.mapError((error) => notSnorlax(`cannot read ${ledger}: ${errorMessage(error)}`))
+      Effect.mapError((error) => unreadable(`cannot read ${ledger}: ${errorMessage(error)}`))
     );
     if (!isRollbackJournalSqlite(header)) {
-      return yield* Effect.fail(notSnorlax("ledger.db is not a SQLite database in rollback-journal mode"));
+      return yield* Effect.fail(
+        notSnorlax(`${ledger} is not a snorlax ledger: it is not a SQLite database in rollback-journal mode`)
+      );
     }
-    const status = yield* readLedgerStatus(platform, dir).pipe(Effect.mapError((error) => notSnorlax(error.message)));
+    const status = yield* readLedgerStatus(platform, dir).pipe(
+      Effect.mapError((error) =>
+        error._tag === "LedgerNotSnorlax" ? notSnorlax(error.message) : unreadable(error.message)
+      )
+    );
     if (status === null) {
-      return yield* Effect.fail(notSnorlax("ledger.db cannot be read"));
+      return yield* Effect.fail(unreadable(`cannot open ${ledger}`));
     }
   });
 

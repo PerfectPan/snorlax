@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -709,29 +709,35 @@ describe("install and uninstall", () => {
       await writeFile(join(other, "node-path"), "/usr/bin/node\n");
       await writeFile(join(other, "logs", "snorlax.log"), "theirs\n");
 
-      const expectRefused = async (reason: string): Promise<void> => {
+      const untouched = "so nothing was deleted and the LaunchAgent was left in place";
+      const expectRefused = async (message: string): Promise<void> => {
         const before = await hashTree(other);
         const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: other });
         expect(removed.status).toBe(1);
         expect(await hashTree(other)).toBe(before);
         const failure = z.parse(failureSchema, json(removed.stdout)).error;
         expect(failure.code).toBe("data-dir");
-        expect(failure.message).toContain("not a snorlax data directory: ~/other");
-        expect(failure.message).toContain(reason);
+        expect(failure.message).toBe(message);
       };
-      await expectRefused("no ledger.db");
+      await expectRefused(
+        `no snorlax ledger in ~/other: it has no ledger.db, ${untouched}; to remove only the scheduled refresh, ` +
+          "run `snorlax uninstall` without --data"
+      );
 
       // Another program's ledger.db in WAL mode: opening it, even read-only, would add -wal and -shm files.
       const wal = new DatabaseSync(join(other, "ledger.db"));
       wal.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (amount INTEGER)");
       wal.close();
-      await expectRefused("not a SQLite database in rollback-journal mode");
+      await expectRefused(
+        `~/other/ledger.db is not a snorlax ledger: it is not a SQLite database in rollback-journal mode, ${untouched}`
+      );
 
+      // No `snorlax refresh` advice here: a refresh would migrate this database into a ledger.
       await rm(join(other, "ledger.db"));
       const rollback = new DatabaseSync(join(other, "ledger.db"));
       rollback.exec("CREATE TABLE entries (amount INTEGER)");
       rollback.close();
-      await expectRefused("cannot read the ledger");
+      await expectRefused(`~/other/ledger.db is not a snorlax ledger: it has no meta table, ${untouched}`);
 
       // The refusals came before launchctl was asked anything: the installed service is untouched.
       expect(existsSync(plistPath)).toBe(true);
@@ -739,6 +745,43 @@ describe("install and uninstall", () => {
         ["print", `${domain}/${LABEL}`],
         ["bootstrap", domain, plistPath]
       ]);
+    });
+  });
+
+  it("refuses --data while a crashed write leaves the ledger unreadable, and a refresh clears the way", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const dataDir = dataDirOf(env.home);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+      // A writer killed inside its transaction leaves a hot journal, which a read-only connection cannot roll
+      // back. With synchronous = OFF the journal header is complete at once; otherwise it stays zeroed until the
+      // commit syncs it, and SQLite ignores the journal.
+      const crash = spawnSync(process.execPath, [
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite");
+         const db = new DatabaseSync(${JSON.stringify(join(dataDir, "ledger.db"))});
+         db.exec("PRAGMA synchronous = OFF; BEGIN IMMEDIATE; UPDATE meta SET device_name = 'crashed' WHERE id = 0");
+         process.kill(process.pid, "SIGKILL");`
+      ]);
+      expect(crash.signal).toBe("SIGKILL");
+      expect(existsSync(join(dataDir, "ledger.db-journal"))).toBe(true);
+
+      const before = await hashTree(dataDir);
+      const refused = run(env, ["uninstall", "--data", "--json"]);
+      expect(refused.status).toBe(1);
+      expect(await hashTree(dataDir)).toBe(before);
+      const failure = z.parse(failureSchema, json(refused.stdout)).error;
+      expect(failure.code).toBe("data-dir");
+      expect(failure.message).toBe(
+        "cannot tell whether ~/data/ledger.db is a snorlax ledger (cannot read the ledger ~/data/ledger.db: attempt " +
+          "to write a readonly database), so nothing was deleted and the LaunchAgent was left in place; run " +
+          "`snorlax refresh` once, then `snorlax uninstall --data` again"
+      );
+      expect(await readInvocations(env.record)).toEqual([]);
+
+      // The advice holds: refresh rolls the journal back, and the same uninstall then deletes the directory.
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+      expect(run(env, ["uninstall", "--data", "--json"]).status).toBe(0);
+      expect(existsSync(dataDir)).toBe(false);
     });
   });
 
