@@ -397,7 +397,7 @@ describe("failures", () => {
     };
     await expect(
       runRefresh({ platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE })
-    ).rejects.toMatchObject({ _tag: "SnapshotWriteFailed", message: /snapshot\.json/ });
+    ).rejects.toMatchObject({ _tag: "SnapshotWriteFailed", message: expect.stringMatching(/snapshot\.json/) });
   });
 
   it("counts a source that cannot be decoded per agent", async () => {

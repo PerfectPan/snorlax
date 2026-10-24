@@ -173,7 +173,7 @@ describe("a meta row this build cannot read", () => {
     } finally {
       db.close();
     }
-    await expect(open()).rejects.toMatchObject({ _tag: "LedgerUnreadable", message: /meta/ });
+    await expect(open()).rejects.toMatchObject({ _tag: "LedgerUnreadable", message: expect.stringMatching(/meta/) });
   });
 });
 
@@ -196,7 +196,7 @@ describe("a database from a newer build", () => {
     };
     await expect(readLedger(brokenPlatform, dataDir, Effect.succeed)).rejects.toMatchObject({
       _tag: "LedgerUnreadable",
-      message: /ledger\.db/
+      message: expect.stringMatching(/ledger\.db/)
     });
   });
 });
