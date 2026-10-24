@@ -281,6 +281,26 @@ describe("refresh and rebuild", () => {
     expect(z.parse(failureSchema, parseOneJsonObject(missing.stdout)).error.code).toBe("invalid-arguments");
     expect(missing.status).toBe(2);
   });
+
+  it("refresh and rebuild log their summary and command lines in the data directory (plan 3.9)", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-log-"));
+    try {
+      expect(run(["refresh"], fresh).status).toBe(0);
+      expect(run(["rebuild", "--days", "2"], fresh).status).toBe(0);
+      const events = (await readFile(join(fresh, "data", "logs", "snorlax.log"), "utf8"))
+        .trimEnd()
+        .split("\n")
+        .map((line) => line.replace(/^\S+ /, "").replace(/"durationMs":\d+/, '"durationMs":0'));
+      expect(events).toEqual([
+        'refresh {"records":0,"failures":0,"pushed":0,"pulled":0,"durationMs":0}',
+        'command {"name":"refresh","exitCode":0,"durationMs":0}',
+        'rebuild {"days":2,"records":0,"failures":0,"pushed":0,"pulled":0,"durationMs":0}',
+        'command {"name":"rebuild","exitCode":0,"durationMs":0}'
+      ]);
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ledger and snapshot failures", () => {
