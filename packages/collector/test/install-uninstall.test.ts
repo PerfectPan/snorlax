@@ -12,7 +12,7 @@ import * as plist from "plist";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
-import { CommandError } from "../src/modules/errors/errors.ts";
+import { DataDirNotDeletable } from "../src/capabilities/scheduler/scheduler.ts";
 import { resolvedDeletableDataDir } from "../src/capabilities/scheduler/launchd.ts";
 import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
@@ -773,7 +773,7 @@ describe("uninstall --data path guard", () => {
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")).rejects.toThrow(/refusing to delete/);
     await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(/must be absolute/);
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe("/tmp/home/snorlax");
-    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CommandError);
+    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(DataDirNotDeletable);
   });
 
   it("compares through realpath, so a symlinked spelling of the home directory is refused too", async () => {

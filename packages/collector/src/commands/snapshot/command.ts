@@ -27,7 +27,7 @@ const humanSummary = (snapshot: Snapshot): string => {
 /**
  * `snorlax snapshot` (plan 3.1): prints the current snapshot, wrapped as `SnapshotOutput`
  * (`{ schemaVersion, ok, snapshot }`) with `--json`. The snapshot is written by `refresh`, so a
- * fresh data directory has none yet and the command fails with `data-dir` without creating anything.
+ * fresh data directory has none yet and the command fails without creating anything.
  */
 export const snapshotCommand = Command.make("snapshot", {}, () =>
   Effect.gen(function* () {

@@ -4,12 +4,9 @@ import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
 import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
 import { layerTest as stdioLayerTest } from "effect/Stdio";
 
-import type { FailureCode } from "@rivus/snorlax-protocol";
-
 import { DataDir } from "../modules/data-dir/data-dir.ts";
 import { NodeFiles } from "../modules/data-dir/data-dir.ts";
 import { Doctor } from "../commands/doctor/service.ts";
-import { CommandError, UsageError } from "../modules/errors/errors.ts";
 import { Log } from "../modules/log/log.ts";
 import { Rebuild } from "../commands/rebuild/service.ts";
 import { Refresh } from "../commands/refresh/service.ts";
@@ -21,6 +18,7 @@ import { CommandOutput } from "../commands/output.ts";
 import { errorMessage } from "../core/error-message/error-message.ts";
 import { RuntimeInfo } from "../modules/version/version.ts";
 import { CliEnv } from "./env.ts";
+import { FAILURES, UNMAPPED, type FailureExit } from "./failures.ts";
 import { cliConsole, printFailureJson, printFailureMessage, printHuman, printPayloadJson } from "./output.ts";
 import { rootCommand } from "./root.ts";
 
@@ -139,6 +137,18 @@ export const runCli = (
     const buffered: { readonly out: string[]; readonly err: string[] } = { out: [], err: [] };
     const consoleImpl: Console.Console = cliConsole(home, buffered);
 
+    // A command failure or defect: the JSON envelope or the message on stderr. An exit-2 failure drops
+    // effect/cli's buffered rendering in both modes.
+    const renderFailure = ({ code, exit }: FailureExit, message: string): Outcome => {
+      failureCode = code;
+      if (fallbackJson) {
+        printFailureJson(env, home, code, message);
+      } else {
+        printFailureMessage(env, home, message);
+      }
+      return { exit, output: exit === 2 || fallbackJson ? "json" : "human" };
+    };
+
     const program = Effect.gen(function* () {
       yield* Command.runWith(rootCommand, { version: info.version, renderErrors: true })([...argv]);
       const output = yield* (yield* CommandOutput).take;
@@ -159,7 +169,7 @@ export const runCli = (
       return { exit: 0, output: "human" } satisfies Outcome;
     }).pipe(
       Effect.provideService(Console.Console, consoleImpl),
-      Effect.catchDefect((defect) => new CommandError({ code: "internal", message: errorMessage(defect) })),
+      Effect.catchDefect((defect) => Effect.succeed(renderFailure(UNMAPPED, errorMessage(defect)))),
       Effect.catch((error): Effect.Effect<Outcome> => {
         // Parse and usage errors arrive as ShowHelp: help text was already rendered through the
         // Console above (buffered when --json), the error details too when not suppressed.
@@ -174,24 +184,9 @@ export const runCli = (
           }
           return Effect.succeed({ exit: 2, output: "human" });
         }
-        if (error instanceof UsageError) {
-          failureCode = "invalid-arguments";
-          if (fallbackJson) {
-            printFailureJson(env, home, failureCode, error.message);
-          } else {
-            printFailureMessage(env, home, error.message);
-          }
-          return Effect.succeed({ exit: 2, output: "json" });
-        }
-        const code: FailureCode = error instanceof CommandError ? error.code : "internal";
-        failureCode = code;
-        const message = errorMessage(error);
-        if (fallbackJson) {
-          printFailureJson(env, home, code, message);
-        } else {
-          printFailureMessage(env, home, message);
-        }
-        return Effect.succeed({ exit: 1, output: fallbackJson ? "json" : "human" });
+        return Effect.succeed(
+          renderFailure(CliError.isCliError(error) ? UNMAPPED : FAILURES[error._tag], errorMessage(error))
+        );
       })
     );
 

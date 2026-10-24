@@ -2,9 +2,8 @@ import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 import { SnorlaxPlatform } from "../platform/platform.ts";
-import { Context, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
-import { CommandError } from "../errors/errors.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { NodeFiles, type NodeFileOps } from "./node-fs.ts";
 
@@ -29,6 +28,9 @@ export function resolveDataDir(platform: Pick<Platform, "env" | "home" | "os">):
   return join(dataHome, "snorlax");
 }
 
+/** The data directory or its `logs` subdirectory could not be created or given mode 0700. */
+export class DataDirCreateFailed extends Data.TaggedError("DataDirCreateFailed")<{ readonly message: string }> {}
+
 /**
  * Creates the directory (and parents) and the `logs` subdirectory (plan 3.9), and keeps the data
  * directory at mode 0700; existing wider modes are tightened. Only commands that write call this —
@@ -44,10 +46,7 @@ export async function ensureDataDir(
     await nodeFiles.chmod(path, DATA_DIR_MODE);
     await platform.fs.mkdir(join(path, "logs"));
   } catch (error) {
-    throw new CommandError({
-      code: "data-dir",
-      message: `cannot create the data directory ${path}: ${errorMessage(error)}`
-    });
+    throw new DataDirCreateFailed({ message: `cannot create the data directory ${path}: ${errorMessage(error)}` });
   }
 }
 
@@ -59,7 +58,7 @@ export class DataDir extends Context.Service<
   DataDir,
   {
     readonly path: string;
-    readonly ensure: Effect.Effect<void, CommandError>;
+    readonly ensure: Effect.Effect<void, DataDirCreateFailed>;
   }
 >()("snorlax/data-dir/DataDir") {
   static readonly live: Layer.Layer<DataDir, never, SnorlaxPlatform | NodeFiles> = Layer.effect(
@@ -70,11 +69,11 @@ export class DataDir extends Context.Service<
       const path = resolveDataDir(platform);
       return DataDir.of({
         path,
-        ensure: Effect.tryPromise({
-          try: () => ensureDataDir(platform, ops, path),
-          catch: (error) =>
-            error instanceof CommandError ? error : new CommandError({ code: "data-dir", message: errorMessage(error) })
-        })
+        ensure: Effect.promise(() => ensureDataDir(platform, ops, path)).pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof DataDirCreateFailed ? Effect.fail(defect) : Effect.die(defect)
+          )
+        )
       });
     })
   );

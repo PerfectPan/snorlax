@@ -1,11 +1,13 @@
 import { Command, Flag } from "effect/cli";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 
 import { Rebuild } from "./service.ts";
 import { REBUILD_MAX_DAYS, REBUILD_MIN_DAYS } from "./rebuild.ts";
-import { UsageError } from "../../modules/errors/errors.ts";
 import { JsonFlag } from "../flags.ts";
 import { CommandOutput } from "../output.ts";
+
+/** `--days` parsed as a whole number outside `REBUILD_MIN_DAYS`–`REBUILD_MAX_DAYS`. */
+class RebuildDaysOutOfRange extends Data.TaggedError("RebuildDaysOutOfRange")<{ readonly message: string }> {}
 
 const humanSummary = (days: number, records: number, failures: number): string =>
   `rebuilt the last ${days} days: ${records} records, ${failures} failures\nsync: not paired\n`;
@@ -22,7 +24,9 @@ export const rebuildCommand = Command.make(
     Effect.gen(function* () {
       const json = yield* JsonFlag;
       if (days < REBUILD_MIN_DAYS || days > REBUILD_MAX_DAYS) {
-        return yield* new UsageError({ message: `--days must be between ${REBUILD_MIN_DAYS} and ${REBUILD_MAX_DAYS}` });
+        return yield* new RebuildDaysOutOfRange({
+          message: `--days must be between ${REBUILD_MIN_DAYS} and ${REBUILD_MAX_DAYS}`
+        });
       }
       const result = yield* (yield* Rebuild).run(days);
       yield* (yield* CommandOutput).render({

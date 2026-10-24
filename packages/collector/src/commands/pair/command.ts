@@ -1,7 +1,8 @@
 import { Command } from "effect/cli";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 
-import { CommandError } from "../../modules/errors/errors.ts";
+/** This build has no pairing. */
+class PairNotImplemented extends Data.TaggedError("PairNotImplemented")<{ readonly message: string }> {}
 
 /**
  * Pairing arrives with Batch 7 (plan 3.4.2); the command is registered so that calling it returns
@@ -9,8 +10,7 @@ import { CommandError } from "../../modules/errors/errors.ts";
  */
 export const pairCommand = Command.make("pair", {}, () =>
   Effect.fail(
-    new CommandError({
-      code: "internal",
+    new PairNotImplemented({
       message: "snorlax pair is not implemented in this build; it arrives with Batch 7"
     })
   )

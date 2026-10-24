@@ -1,13 +1,13 @@
 import { Command } from "effect/cli";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 
-import { CommandError } from "../../modules/errors/errors.ts";
+/** This build has no pairing to remove. */
+class UnpairNotImplemented extends Data.TaggedError("UnpairNotImplemented")<{ readonly message: string }> {}
 
 /** Unpairing arrives with Batch 7 (plan 3.1). */
 export const unpairCommand = Command.make("unpair", {}, () =>
   Effect.fail(
-    new CommandError({
-      code: "internal",
+    new UnpairNotImplemented({
       message: "snorlax unpair is not implemented in this build; it arrives with Batch 7"
     })
   )

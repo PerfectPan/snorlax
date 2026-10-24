@@ -3,12 +3,11 @@ import { detectAgents, type Installation } from "@rivus/agent-kit/discovery";
 import type { CollectorPlatform } from "../../modules/platform/platform.ts";
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import type { DetectedAgent, Status } from "@rivus/snorlax-protocol";
-import { Context, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
-import { readConfig } from "../../modules/config/config.ts";
+import { ConfigInvalid, readConfig } from "../../modules/config/config.ts";
 import { DataDir } from "../../modules/data-dir/data-dir.ts";
-import { CommandError } from "../../modules/errors/errors.ts";
-import { readLedgerStatus } from "../../modules/ledger/ledger.ts";
+import { LedgerUnreadable, readLedgerStatus } from "../../modules/ledger/ledger.ts";
 import { RuntimeInfo } from "../../modules/version/version.ts";
 import { readSnapshotFile } from "../../modules/snapshot-file/snapshot-file.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
@@ -33,16 +32,19 @@ const toDetected = (installation: Installation): DetectedAgent => ({
   status: installation.status
 });
 
+/** A read behind the `status` payload failed outside what the config and ledger modules report (I/O, detection). */
+class StatusReadFailed extends Data.TaggedError("StatusReadFailed")<{ readonly message: string }> {}
+
 /**
  * Assembles the `status` payload (plan 3.1) from reads alone: config, ledger meta (opened read-only,
  * and only when the ledger file exists), the stored snapshot and stat-only agent detection. A missing
- * ledger or snapshot leaves the fields null; a corrupt config or ledger is a `data-dir` failure.
- * Nothing is created or written (plan 3.13).
+ * ledger or snapshot leaves the fields null; a corrupt config or ledger fails the command, and so does
+ * any other read that fails. Nothing is created or written (plan 3.13).
  */
 export class StatusReport extends Context.Service<
   StatusReport,
   {
-    readonly report: Effect.Effect<Status, CommandError>;
+    readonly report: Effect.Effect<Status, ConfigInvalid | LedgerUnreadable | StatusReadFailed>;
   }
 >()("snorlax/status/StatusReport") {
   static readonly live = Layer.effect(
@@ -78,7 +80,9 @@ export class StatusReport extends Context.Service<
             } satisfies Status;
           },
           catch: (error) =>
-            error instanceof CommandError ? error : new CommandError({ code: "data-dir", message: errorMessage(error) })
+            error instanceof ConfigInvalid || error instanceof LedgerUnreadable
+              ? error
+              : new StatusReadFailed({ message: errorMessage(error) })
         })
       });
     })

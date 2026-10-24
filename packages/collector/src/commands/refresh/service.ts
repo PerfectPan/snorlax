@@ -3,13 +3,41 @@ import type { RefreshResult } from "@rivus/snorlax-protocol";
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { Context, Effect, Layer } from "effect";
 
-import { DataDir } from "../../modules/data-dir/data-dir.ts";
-import { CommandError } from "../../modules/errors/errors.ts";
+import { ConfigInvalid } from "../../modules/config/config.ts";
+import { DataDir, type DataDirCreateFailed } from "../../modules/data-dir/data-dir.ts";
 import { Log, type Logger } from "../../modules/log/log.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
-import { errorMessage } from "../../core/error-message/error-message.ts";
-import { refreshPlatformOf } from "../../modules/ledger/ledger.ts";
+import {
+  LedgerBackupFailed,
+  LedgerLockHeld,
+  LedgerPlatformUnsupported,
+  LedgerSchemaTooNew,
+  LedgerUnreadable,
+  refreshPlatformOf
+} from "../../modules/ledger/ledger.ts";
+import { SnapshotWriteFailed } from "../../modules/snapshot-file/snapshot-file.ts";
 import { runRefresh } from "./refresh.ts";
+
+type RefreshFailure =
+  | LedgerLockHeld
+  | LedgerPlatformUnsupported
+  | LedgerUnreadable
+  | LedgerSchemaTooNew
+  | LedgerBackupFailed
+  | ConfigInvalid
+  | SnapshotWriteFailed;
+
+/** Keeps what the modules under `runRefresh` throw on purpose as typed failures; any other rejection is a defect. */
+const refreshFailure = (defect: unknown): Effect.Effect<never, RefreshFailure> =>
+  defect instanceof LedgerLockHeld ||
+  defect instanceof LedgerPlatformUnsupported ||
+  defect instanceof LedgerUnreadable ||
+  defect instanceof LedgerSchemaTooNew ||
+  defect instanceof LedgerBackupFailed ||
+  defect instanceof ConfigInvalid ||
+  defect instanceof SnapshotWriteFailed
+    ? Effect.fail(defect)
+    : Effect.die(defect);
 
 /**
  * One `snorlax refresh` (plan 3.4.1): the service prepares the data directory (creating it and its
@@ -20,7 +48,7 @@ import { runRefresh } from "./refresh.ts";
 export class Refresh extends Context.Service<
   Refresh,
   {
-    readonly run: Effect.Effect<RefreshResult, CommandError>;
+    readonly run: Effect.Effect<RefreshResult, DataDirCreateFailed | RefreshFailure>;
   }
 >()("snorlax/refresh/Refresh") {
   static readonly live = Layer.effect(
@@ -33,19 +61,15 @@ export class Refresh extends Context.Service<
       return Refresh.of({
         run: Effect.andThen(
           dataDir.ensure,
-          Effect.tryPromise({
-            try: async () =>
+          Effect.promise(
+            async () =>
               (
                 await runRefresh(
                   { platform: refreshPlatformOf(platform), dataDir: dataDir.path, log, timeZone },
                   undefined
                 )
-              ).result,
-            catch: (error) =>
-              error instanceof CommandError
-                ? error
-                : new CommandError({ code: "internal", message: errorMessage(error) })
-          })
+              ).result
+          ).pipe(Effect.catchDefect(refreshFailure))
         )
       });
     })

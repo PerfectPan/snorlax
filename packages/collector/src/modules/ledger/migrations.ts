@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
+import { Data } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 
@@ -169,12 +170,11 @@ export function runMigrations(
   }
 }
 
-export class MigrationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "MigrationError";
-  }
-}
+/** The database is on a newer schema version than this build knows; it is left as it is. */
+export class LedgerSchemaTooNew extends Data.TaggedError("LedgerSchemaTooNew")<{ readonly message: string }> {}
+
+/** The copy taken before a migration could not be written, so the migration did not run. */
+export class LedgerBackupFailed extends Data.TaggedError("LedgerBackupFailed")<{ readonly message: string }> {}
 
 /**
  * Opens the door for `openLedger`: reads `PRAGMA user_version`, refuses a database from a newer build, and
@@ -191,9 +191,9 @@ export async function prepareMigrations(
   const row = db.prepare("PRAGMA user_version").get();
   const from = Number(row?.user_version ?? 0);
   if (from > SCHEMA_VERSION) {
-    throw new MigrationError(
-      `${ledgerPath} was written by a newer snorlax (schema version ${from}; this build knows ${SCHEMA_VERSION})`
-    );
+    throw new LedgerSchemaTooNew({
+      message: `${ledgerPath} was written by a newer snorlax (schema version ${from}; this build knows ${SCHEMA_VERSION})`
+    });
   }
   if (from === SCHEMA_VERSION) {
     return { from, backup: undefined };
@@ -203,7 +203,9 @@ export async function prepareMigrations(
     try {
       backup = await backupLedger(fs, dataDir, ledgerPath, from);
     } catch (error) {
-      throw new MigrationError(`cannot back up ${ledgerPath} before migrating: ${errorMessage(error)}`);
+      throw new LedgerBackupFailed({
+        message: `cannot back up ${ledgerPath} before migrating: ${errorMessage(error)}`
+      });
     }
   }
   runMigrations(db, from);

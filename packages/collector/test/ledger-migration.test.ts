@@ -7,9 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 
-import { CommandError } from "../src/modules/errors/errors.ts";
 import { listBackups, SCHEMA_VERSION } from "../src/modules/ledger/migrations.ts";
-import { ledgerPath, openLedger } from "../src/modules/ledger/ledger.ts";
+import { ledgerPath, LedgerSchemaTooNew, openLedger } from "../src/modules/ledger/ledger.ts";
 
 /**
  * The ledger's forward-only migrations and backups (plan 3.3.2, 5.3): a fresh data directory creates the
@@ -184,7 +183,7 @@ describe("a meta row this build cannot read", () => {
     } finally {
       db.close();
     }
-    await expect(open()).rejects.toMatchObject({ code: "data-dir", message: /meta/ });
+    await expect(open()).rejects.toMatchObject({ _tag: "LedgerUnreadable", message: /meta/ });
   });
 });
 
@@ -192,7 +191,7 @@ describe("a database from a newer build", () => {
   it("refuses to open instead of downgrading", async () => {
     setUserVersion(SCHEMA_VERSION + 1);
     await expect(open()).rejects.toThrow(/newer snorlax/);
-    await expect(open()).rejects.toBeInstanceOf(CommandError);
+    await expect(open()).rejects.toBeInstanceOf(LedgerSchemaTooNew);
     expect(userVersion()).toBe(SCHEMA_VERSION + 1);
   });
 
@@ -206,7 +205,7 @@ describe("a database from a newer build", () => {
       }
     };
     await expect(openLedger(brokenPlatform, dataDir)).rejects.toMatchObject({
-      code: "data-dir",
+      _tag: "LedgerUnreadable",
       message: /ledger\.db/
     });
   });

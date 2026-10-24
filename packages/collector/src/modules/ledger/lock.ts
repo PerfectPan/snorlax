@@ -2,8 +2,8 @@ import { join } from "node:path";
 
 import { acquireProcessLock, type ProcessLock } from "@rivus/agent-kit-collab/process-lock";
 import type { Platform } from "@rivus/agent-kit/platform";
+import { Data } from "effect";
 
-import { CommandError } from "../errors/errors.ts";
 import type { CollectorPlatform } from "../platform/platform.ts";
 import type { PlatformSqlite } from "./sqlite.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
@@ -17,12 +17,20 @@ export type RefreshPlatform = Pick<Platform, "env" | "home" | "os" | "fs" | "clo
   readonly process: Platform["process"];
 };
 
-/** How long a refresh waits for the ledger lock before exiting with `locked` (plan 3.4.1 step 2). */
+/** How long a refresh waits for the ledger lock before giving up (plan 3.4.1 step 2). */
 export const LOCK_WAIT_MS = 60_000;
+
+/** The ledger lock could not be taken within `LOCK_WAIT_MS`: another snorlax process holds it. */
+export class LedgerLockHeld extends Data.TaggedError("LedgerLockHeld")<{ readonly message: string }> {}
+
+/** The platform lacks SQLite or a process-identity member the ledger and its lock need. */
+export class LedgerPlatformUnsupported extends Data.TaggedError("LedgerPlatformUnsupported")<{
+  readonly message: string;
+}> {}
 
 /**
  * Takes the ledger lock `<data>/ledger.lock` and runs `body` under it, releasing afterwards. Waiting past
- * `LOCK_WAIT_MS` exits with the `locked` failure code; the platform's SQLite gives the lock its exclusive
+ * `LOCK_WAIT_MS` fails with `LedgerLockHeld`; the platform's SQLite gives the lock its exclusive
  * mechanism, so the kernel releases it even if this process is killed.
  */
 export async function withLedgerLock<T>(
@@ -36,16 +44,15 @@ export async function withLedgerLock<T>(
   try {
     const acquired = await acquireProcessLock(platform, path, { wait: true, signal });
     if (!acquired.ok) {
-      throw new CommandError({ code: "locked", message: `another snorlax process holds ${path}` });
+      throw new LedgerLockHeld({ message: `another snorlax process holds ${path}` });
     }
     lock = acquired.value;
   } catch (error) {
-    if (error instanceof CommandError) {
+    if (error instanceof LedgerLockHeld || error instanceof LedgerPlatformUnsupported) {
       throw error;
     }
     if (signal.aborted) {
-      throw new CommandError({
-        code: "locked",
+      throw new LedgerLockHeld({
         message: `waited ${LOCK_WAIT_MS / 1000}s for the ledger lock ${path}: ${errorMessage(error)}`
       });
     }
@@ -65,12 +72,11 @@ export async function withLedgerLock<T>(
  */
 export function refreshPlatformOf(platform: CollectorPlatform): RefreshPlatform {
   if (platform.sqlite === undefined) {
-    throw new CommandError({ code: "internal", message: "this platform has no SQLite; the ledger cannot run here" });
+    throw new LedgerPlatformUnsupported({ message: "this platform has no SQLite; the ledger cannot run here" });
   }
   const sqlite: PlatformSqlite = platform.sqlite;
   const unavailable = (member: "self" | "identify" | "spawn") => (): never => {
-    throw new CommandError({
-      code: "internal",
+    throw new LedgerPlatformUnsupported({
       message: `this platform has no process.${member}; the ledger lock cannot run here`
     });
   };

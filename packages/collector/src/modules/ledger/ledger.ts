@@ -3,12 +3,12 @@ import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
+import { Data } from "effect";
 import * as z from "zod/mini";
 
 import type { BucketDelta, BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../../core/buckets/buckets.ts";
-import { CommandError } from "../errors/errors.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
-import { MigrationError, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
+import { LedgerBackupFailed, LedgerSchemaTooNew, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
 import type { PlatformSqlite, SqliteDatabase, SqliteValue } from "./sqlite.ts";
 
 /** The `meta` row; `device_id` is generated once, here, when the ledger is created. */
@@ -114,8 +114,11 @@ export interface Ledger {
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
 
+/** The ledger could not be opened, or holds a row or scan state this build cannot read. */
+export class LedgerUnreadable extends Data.TaggedError("LedgerUnreadable")<{ readonly message: string }> {}
+
 // The ledger rows are unknown data at the read boundary: every table is parsed through a schema, and a row
-// this build cannot read fails as `data-dir` naming the table (AGENTS.md, plan 3.6).
+// this build cannot read fails as `LedgerUnreadable` naming the table (AGENTS.md, plan 3.6).
 const metaRowSchema = z.object({
   device_id: z.string(),
   device_name: z.nullable(z.string()),
@@ -153,8 +156,7 @@ const remoteDeviceRowSchema = z.object({
 const parseRow = <S extends z.core.$ZodType>(path: string, table: string, schema: S, row: unknown): z.output<S> => {
   const parsed = z.safeParse(schema, row);
   if (!parsed.success) {
-    throw new CommandError({
-      code: "data-dir",
+    throw new LedgerUnreadable({
       message: `${path}: the ledger's ${table} table holds a row this build cannot read: ${z.prettifyError(parsed.error)}`
     });
   }
@@ -164,7 +166,7 @@ const parseRow = <S extends z.core.$ZodType>(path: string, table: string, schema
 const readMeta = (path: string, db: SqliteDatabase): LedgerMeta => {
   const row = db.prepare("SELECT * FROM meta WHERE id = 0").get();
   if (row === undefined) {
-    throw new CommandError({ code: "data-dir", message: "the ledger's meta row is missing; run snorlax doctor" });
+    throw new LedgerUnreadable({ message: "the ledger's meta row is missing; run snorlax doctor" });
   }
   const meta = parseRow(path, "meta", metaRowSchema, row);
   return {
@@ -215,15 +217,13 @@ const parseScanState = (path: string, raw: string): PersistedScanState => {
   try {
     json = JSON.parse(raw);
   } catch (error) {
-    throw new CommandError({
-      code: "data-dir",
+    throw new LedgerUnreadable({
       message: `${path} holds a scan state that is not JSON: ${errorMessage(error)}`
     });
   }
   const parsed = z.safeParse(scanStateSchema, json);
   if (!parsed.success) {
-    throw new CommandError({
-      code: "data-dir",
+    throw new LedgerUnreadable({
       message: `${path} holds a scan state this build cannot read: ${z.prettifyError(parsed.error)}`
     });
   }
@@ -244,7 +244,7 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
   try {
     db = platform.sqlite.open(path);
   } catch (error) {
-    throw new CommandError({ code: "data-dir", message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
+    throw new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
   }
   let meta: LedgerMeta;
   let scanState: PersistedScanState | undefined;
@@ -263,12 +263,14 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
     scanState = saved === undefined ? undefined : parseScanState(path, String(saved.state));
   } catch (error) {
     db.close();
-    if (error instanceof CommandError) {
+    if (
+      error instanceof LedgerUnreadable ||
+      error instanceof LedgerSchemaTooNew ||
+      error instanceof LedgerBackupFailed
+    ) {
       throw error;
     }
-    const detail =
-      error instanceof MigrationError ? error.message : `cannot open the ledger ${path}: ${errorMessage(error)}`;
-    throw new CommandError({ code: "data-dir", message: detail });
+    throw new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
   }
 
   return {
@@ -407,15 +409,21 @@ export async function readLedgerStatus(
     const meta = readMeta(path, db);
     return { deviceId: meta.deviceId, lastScanCompletedAt: meta.lastScanCompletedAt };
   } catch (error) {
-    throw error instanceof CommandError
+    throw error instanceof LedgerUnreadable
       ? error
-      : new CommandError({ code: "data-dir", message: `cannot read the ledger ${path}: ${errorMessage(error)}` });
+      : new LedgerUnreadable({ message: `cannot read the ledger ${path}: ${errorMessage(error)}` });
   } finally {
     db.close();
   }
 }
 
-export { SCHEMA_VERSION };
+export { LedgerBackupFailed, LedgerSchemaTooNew, SCHEMA_VERSION };
 // The ledger lock and the scan-and-commit step that refresh and rebuild share.
-export { refreshPlatformOf, withLedgerLock, type RefreshPlatform } from "./lock.ts";
+export {
+  LedgerLockHeld,
+  LedgerPlatformUnsupported,
+  refreshPlatformOf,
+  withLedgerLock,
+  type RefreshPlatform
+} from "./lock.ts";
 export { commitScan, type RefreshDeps, type RefreshOutcome, type ScanHooks } from "./scan-and-commit.ts";

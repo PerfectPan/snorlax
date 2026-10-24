@@ -1,7 +1,6 @@
 import { Command } from "effect/cli";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 
-import { UsageError } from "../modules/errors/errors.ts";
 import { JsonFlag } from "../commands/flags.ts";
 import { doctorCommand } from "../commands/doctor/command.ts";
 import { installCommand } from "../commands/install/command.ts";
@@ -12,6 +11,9 @@ import { snapshotCommand } from "../commands/snapshot/command.ts";
 import { statusCommand } from "../commands/status/command.ts";
 import { uninstallCommand } from "../commands/uninstall/command.ts";
 import { unpairCommand } from "../commands/unpair/command.ts";
+
+/** The command line names no command. */
+class UsageError extends Data.TaggedError("UsageError")<{ readonly message: string }> {}
 
 /**
  * The root command (plan 3.13): the global `--json` flag is an effect/cli Setting, so it is accepted

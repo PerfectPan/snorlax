@@ -1,10 +1,54 @@
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { Context, Effect, Layer } from "effect";
 
-import { DataDir } from "../../modules/data-dir/data-dir.ts";
-import { CommandError } from "../../modules/errors/errors.ts";
-import { errorMessage } from "../../core/error-message/error-message.ts";
-import { installLaunchAgent, uninstallLaunchAgent, type UninstallResult } from "./launchd.ts";
+import { DataDir, DataDirCreateFailed } from "../../modules/data-dir/data-dir.ts";
+import {
+  CollectorPathUnresolved,
+  DataDirDeleteFailed,
+  DataDirNotAbsolute,
+  DataDirNotDeletable,
+  ForeignServiceLoaded,
+  installLaunchAgent,
+  LaunchctlFailed,
+  PlistRemoveFailed,
+  PlistWriteFailed,
+  SchedulerOsOverrideInvalid,
+  SchedulerUnsupportedOs,
+  uninstallLaunchAgent,
+  UserIdUnavailable,
+  type UninstallResult
+} from "./launchd.ts";
+
+type ScheduleFailure =
+  | SchedulerOsOverrideInvalid
+  | SchedulerUnsupportedOs
+  | DataDirNotAbsolute
+  | DataDirNotDeletable
+  | DataDirDeleteFailed
+  | DataDirCreateFailed
+  | CollectorPathUnresolved
+  | UserIdUnavailable
+  | LaunchctlFailed
+  | ForeignServiceLoaded
+  | PlistWriteFailed
+  | PlistRemoveFailed;
+
+/** Keeps what `launchd.ts` throws on purpose as typed failures; any other rejection is a defect. */
+const scheduleFailure = (defect: unknown): Effect.Effect<never, ScheduleFailure> =>
+  defect instanceof SchedulerOsOverrideInvalid ||
+  defect instanceof SchedulerUnsupportedOs ||
+  defect instanceof DataDirNotAbsolute ||
+  defect instanceof DataDirNotDeletable ||
+  defect instanceof DataDirDeleteFailed ||
+  defect instanceof DataDirCreateFailed ||
+  defect instanceof CollectorPathUnresolved ||
+  defect instanceof UserIdUnavailable ||
+  defect instanceof LaunchctlFailed ||
+  defect instanceof ForeignServiceLoaded ||
+  defect instanceof PlistWriteFailed ||
+  defect instanceof PlistRemoveFailed
+    ? Effect.fail(defect)
+    : Effect.die(defect);
 
 /**
  * The LaunchAgent as a service, over the plain orchestration in `launchd.ts`; the real `launchctl`
@@ -17,8 +61,8 @@ import { installLaunchAgent, uninstallLaunchAgent, type UninstallResult } from "
 export class Schedule extends Context.Service<
   Schedule,
   {
-    readonly install: Effect.Effect<string, CommandError>;
-    readonly uninstall: (options: { readonly deleteData: boolean }) => Effect.Effect<UninstallResult, CommandError>;
+    readonly install: Effect.Effect<string, ScheduleFailure>;
+    readonly uninstall: (options: { readonly deleteData: boolean }) => Effect.Effect<UninstallResult, ScheduleFailure>;
   }
 >()("snorlax/schedule/Schedule") {
   static readonly live = Layer.effect(
@@ -26,19 +70,31 @@ export class Schedule extends Context.Service<
     Effect.gen(function* () {
       const platform = yield* SnorlaxPlatform;
       const dataDir = yield* DataDir;
-      const asCommandError = (error: unknown): CommandError =>
-        error instanceof CommandError ? error : new CommandError({ code: "internal", message: errorMessage(error) });
       return Schedule.of({
-        install: Effect.tryPromise({
-          try: () => installLaunchAgent(platform, dataDir.path, () => Effect.runPromise(dataDir.ensure)),
-          catch: asCommandError
-        }),
+        // `Effect.runPromise` rejects with the failure itself, so a `DataDirCreateFailed` from `prepare`
+        // reaches `scheduleFailure` as the same instance.
+        install: Effect.promise(() =>
+          installLaunchAgent(platform, dataDir.path, () => Effect.runPromise(dataDir.ensure))
+        ).pipe(Effect.catchDefect(scheduleFailure)),
         uninstall: (options) =>
-          Effect.tryPromise({
-            try: () => uninstallLaunchAgent(platform, dataDir.path, options),
-            catch: asCommandError
-          })
+          Effect.promise(() => uninstallLaunchAgent(platform, dataDir.path, options)).pipe(
+            Effect.catchDefect(scheduleFailure)
+          )
       });
     })
   );
 }
+
+export {
+  CollectorPathUnresolved,
+  DataDirDeleteFailed,
+  DataDirNotAbsolute,
+  DataDirNotDeletable,
+  ForeignServiceLoaded,
+  LaunchctlFailed,
+  PlistRemoveFailed,
+  PlistWriteFailed,
+  SchedulerOsOverrideInvalid,
+  SchedulerUnsupportedOs,
+  UserIdUnavailable
+};

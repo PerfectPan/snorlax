@@ -4,7 +4,6 @@ import { Context, Effect, Layer } from "effect";
 
 import { readConfig } from "../../modules/config/config.ts";
 import { DataDir, NodeFiles } from "../../modules/data-dir/data-dir.ts";
-import { CommandError } from "../../modules/errors/errors.ts";
 import { RuntimeInfo } from "../../modules/version/version.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { configCheck, dataDirCheck, doctorPayload, nodeVersionCheck, type ConfigObservation } from "./checks.ts";
@@ -19,7 +18,7 @@ import { configCheck, dataDirCheck, doctorPayload, nodeVersionCheck, type Config
 export class Doctor extends Context.Service<
   Doctor,
   {
-    readonly run: Effect.Effect<DoctorPayload, CommandError>;
+    readonly run: Effect.Effect<DoctorPayload>;
   }
 >()("snorlax/doctor/Doctor") {
   static readonly live = Layer.effect(
@@ -30,43 +29,40 @@ export class Doctor extends Context.Service<
       const ops = yield* NodeFiles;
       const info = yield* RuntimeInfo;
       return Doctor.of({
-        run: Effect.tryPromise({
-          try: async () => {
-            const stat = await platform.fs.stat(dataDir.path);
-            const observed =
-              stat === undefined
-                ? { path: dataDir.path, kind: "missing" as const, mode: undefined }
-                : {
-                    path: dataDir.path,
-                    kind:
-                      stat.kind === "dir"
-                        ? ("dir" as const)
-                        : stat.kind === "file"
-                          ? ("file" as const)
-                          : ("other" as const),
-                    mode: await ops.mode(dataDir.path)
-                  };
-            let config: ConfigObservation;
-            try {
-              await readConfig(platform, dataDir.path);
-              config = { ok: true };
-            } catch (error) {
-              config = { ok: false, message: errorMessage(error) };
-            }
-            const payload = doctorPayload([
-              nodeVersionCheck(info.nodeVersion),
-              dataDirCheck(observed),
-              configCheck(config)
-            ]);
-            return {
-              schemaVersion: 1,
-              ok: true,
-              healthy: payload.healthy,
-              checks: payload.checks
-            } satisfies DoctorPayload;
-          },
-          catch: (error) =>
-            error instanceof CommandError ? error : new CommandError({ code: "internal", message: errorMessage(error) })
+        // The config read is a check of its own; any other rejection is a defect.
+        run: Effect.promise(async () => {
+          const stat = await platform.fs.stat(dataDir.path);
+          const observed =
+            stat === undefined
+              ? { path: dataDir.path, kind: "missing" as const, mode: undefined }
+              : {
+                  path: dataDir.path,
+                  kind:
+                    stat.kind === "dir"
+                      ? ("dir" as const)
+                      : stat.kind === "file"
+                        ? ("file" as const)
+                        : ("other" as const),
+                  mode: await ops.mode(dataDir.path)
+                };
+          let config: ConfigObservation;
+          try {
+            await readConfig(platform, dataDir.path);
+            config = { ok: true };
+          } catch (error) {
+            config = { ok: false, message: errorMessage(error) };
+          }
+          const payload = doctorPayload([
+            nodeVersionCheck(info.nodeVersion),
+            dataDirCheck(observed),
+            configCheck(config)
+          ]);
+          return {
+            schemaVersion: 1,
+            ok: true,
+            healthy: payload.healthy,
+            checks: payload.checks
+          } satisfies DoctorPayload;
         })
       });
     })
