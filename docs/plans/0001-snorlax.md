@@ -1,10 +1,11 @@
 # Plan 0001: snorlax
 
-- Status: accepted (owner decisions recorded 2026-10-22). Milestone 1, local use on one Mac (Batches 0–4), is
-  executable now; Milestone 2 waits for agent-kit K1 and K2; Milestone 3 needs the owner's Cloudflare account (6.1)
+- Status: accepted (owner decisions recorded 2026-10-22 and 2026-10-23). Milestone 1: Batches 0–4 are merged;
+  Batch 4b (`effect/cli`, D12) is next. Milestone 2 waits for agent-kit K1 and K2; Milestone 3 needs the owner's
+  Cloudflare account (6.1)
 - Owner: PerfectPan
 - Reviewer: unconfirmed
-- Last updated: 2026-10-23
+- Last updated: 2026-10-24
 - Paired Spec: [docs/specs/0001-snorlax.md](../specs/0001-snorlax.md)
 
 ## Contents
@@ -116,6 +117,7 @@ this Mac
 | D9 | v1 app bundles one JS file and runs it with the Node already installed; Node SEA later | Node SEA from the start | Keeps the bundle around 2 MB and avoids hardened-runtime JIT entitlements until distribution needs them. |
 | D10 | New repository, not part of agent-presence | Grow agent-presence | Owner decision. Presence can later become an output of this collector (8.3). |
 | D11 | GPL-3.0-only | MIT | Repository convention for applications. |
+| D12 | The collector CLI is built on `effect/cli` (Effect 4); IO and orchestration are Effect services, pure rules stay plain TypeScript (3.13) | An own `node:util` `parseArgs` dispatcher; citty | Layers build a service only when a command uses it, so read-only commands such as `doctor` cause no side effects; the typed error channel ties every failure to a `FailureCode`; test layers and `TestClock` cover the injected-clock rule; agent-kit already ships Effect 4 entries (`PlatformService`, `NodePlatformLive`). `effect/cli` is marked unstable, so `effect` is pinned to the exact version agent-kit's peer names and both are upgraded together. Owner decision. |
 
 ## 3. Detailed design
 
@@ -130,9 +132,10 @@ this Mac
 | `snorlax rebuild --days <n>` | owner, after a pricing change or for repair | 1 ≤ n ≤ 30: zeroes the last n days of local buckets, rescans them and marks them for upload | `RefreshResult` |
 | `snorlax doctor` | app diagnostics, terminal | checks Node version, data directory permissions, keychain access, backend reachability, scheduling | `Doctor` |
 | `snorlax install` / `uninstall` | Linux; macOS without the app | writes or removes the systemd user timer or `~/Library/LaunchAgents` plist; `uninstall --data` also deletes the data directory and keychain item | `Ok` |
-| `snorlax snapshot` | terminal | prints the current snapshot | `Snapshot` |
+| `snorlax snapshot` | terminal | prints the current snapshot | `SnapshotOutput`: `{ schemaVersion, ok, snapshot }` |
 
-Argument parsing uses `node:util` `parseArgs`. There is no interactive prompt in any command.
+Commands are defined with `effect/cli` (D12, 3.13); Batches 1–3 shipped on `node:util` `parseArgs` and Batch 4b
+moves them. There is no interactive prompt in any command.
 
 ### 3.2 Interfaces
 
@@ -476,14 +479,49 @@ spellings.
 - Request bodies over 1 MB are rejected with 413. A push validates every row with the protocol schema before any
   write.
 
+### 3.13 Collector code structure
+
+```text
+packages/collector/src/
+  cli/        framework: the root command, the global `--json` flag, the output envelope (one JSON object on
+              stdout with `schemaVersion` and `ok`), FailureCode -> exit code 0/1/2, redaction of all output,
+              the command log line, lazy loading of command modules; `bin.ts` runs it with
+              `NodeRuntime.runMain` and the Node layers
+  commands/   one module per command: flags with `effect/cli`, a handler that calls services and returns the
+              protocol payload and a human rendering; nothing else
+  <feature>/  business modules: data-dir, config, log, ledger, scan, buckets, snapshot, refresh, rebuild,
+              doctor, status, schedule (sync, keychain, pair in M3)
+  errors.ts   tagged errors whose codes are the protocol `FailureCode`
+```
+
+- Imports go one way: `cli` → `commands` → feature modules. Feature modules never import `cli/` or `commands/`.
+- IO and orchestration in feature modules are `Context.Service` + `Layer`. Pure rules (bucket accumulation, the
+  split by model, snapshot windows, doctor verdicts) are plain functions with no Effect types.
+- Building a layer has no side effects; work happens when a service method runs. `status`, `doctor` and
+  `snapshot` never create or change files: `doctor` reports a missing directory, a wrong mode or a data directory
+  that is a file as failed checks in a `Doctor` payload, and repairs nothing.
+- Errors: feature modules fail with the tagged errors in `errors.ts`; only `cli/` maps them to exit codes and the
+  failure shape. The protocol's `FailureCode` is the type of every error code.
+- agent-kit calls take the platform from `PlatformService` (`NodePlatformLive` in `bin.ts`, a memory platform in
+  tests). Promise or async-iterable kit APIs (`scanUsage`) are wrapped once, in the module that uses them.
+- Output: help, usage errors and version use `effect/cli`'s `CliOutput.defaultFormatter`; command failures are
+  rendered by `cli/` (`renderErrors: false`) so that `--json` keeps exactly one object on stdout. Human renderings
+  are plain text; color comes from `node:util` `styleText` against the destination stream (so `NO_COLOR` and
+  non-TTY output stay plain), and column alignment uses `CliOutput.displayWidth`.
+- Startup: command modules load lazily, so a run loads only its command. The PR that introduces `effect/cli`
+  reports the median of 20 cold runs of `snorlax status --json` (temporary `HOME`) before and after.
+
 ## 4. Rollout and stability
 
 ### 4.1 Gates and rollout stages
 
 1. Batch 0 results recorded in section 7 (signing path, scan numbers).
-2. M1 (Batches 1–4): the owner uses the app on one Mac for three days; token totals match
-   `agent-presence usage --json` for the same windows, or each difference is explained.
-3. M2 (Batch 5): cost totals match `agent-presence usage --json`.
+2. M1 (Batches 1–4b): the owner uses the app on one Mac for three days. Token totals match ccusage
+   (`ccusage claude daily` plus `ccusage codex daily`, same time zone) for every day that has ended; today may be
+   lower by the last requests of sessions still running, which agent-kit reports once their file has been quiet
+   for 30 minutes.
+3. M2 (Batch 5): cost totals match ccusage for days that have ended, or each difference is explained (pricing table
+   version, agent-logged cost).
 4. M3 (Batches 6–8): the owner deploys the Worker, pairs two Macs and one Linux machine, and runs 5.4.
 
 ### 4.2 Signals
@@ -526,7 +564,7 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 
 | Milestone | Result | Batches |
 | --- | --- | --- |
-| M1 Local | On one Mac, the menu bar app and the desktop widget show this machine's tokens, requests and sessions for today, the last 7 and the last 30 days, refreshed every 5 minutes. Cost shows the amounts agents logged themselves; other requests are marked unpriced. | 0–4 |
+| M1 Local | On one Mac, the menu bar app and the desktop widget show this machine's tokens, requests and sessions for today, the last 7 and the last 30 days, refreshed every 5 minutes. Cost shows the amounts agents logged themselves; other requests are marked unpriced. | 0–4b |
 | M2 Pricing | Every request whose model is in the pricing table is priced. | 5 |
 | M3 Cross-device | Several Macs and Linux machines show the same totals through the owner's Worker. | 6–8 |
 
@@ -550,6 +588,7 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 - Every batch PR updates 6.8 Progress: status, decisions taken within this plan's limits, open problems. 6.8 is the
   handoff to the next session or agent; there is no separate handoff file.
 - Steps marked "owner" are prepared in the PR (exact commands) and run by the owner.
+- Collector code follows 3.13. Batches 1–3 predate it; Batch 4b moves them.
 - When a batch needs a decision this plan does not make, stop that batch, add the question to section 7, and
   continue with a batch that does not depend on it.
 
@@ -563,7 +602,7 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 | R4, S5 | Batch 2 `refresh.test.ts` | M1 |
 | R5, R8, S10 | Batch 2 `snapshot.test.ts` | M1 |
 | R12, S13 | Batch 4 `SnorlaxKitTests` (snapshot copy and reload call) and the owner's M1 check | M1 |
-| R13 | Batch 1 `status-doctor.test.ts` (backend checks added in Batch 7) | M1 |
+| R13 | Batch 1 `status-doctor.test.ts`; Batch 4b makes `doctor` report data-directory problems without changing files (backend checks added in Batch 7) | M1 |
 | S12 | Batch 2 `buckets.test.ts` (agent-logged cost) | M1 |
 | R9, S11 | Batch 5 `buckets.test.ts` (table prices, unpriced models) | M2 |
 | R10, S15 | Batch 6 `protocol.test.ts` (strict HTTP schemas) and Batch 7 `sync.test.ts` | M3 |
@@ -635,8 +674,33 @@ Each batch leaves `pnpm run check` green.
   bundle.
 - Tests: `SnorlaxKitTests` (decode protocol fixtures, formatting, day windows, App Group copy and reload call
   through a protocol seam); CI regeneration check.
-- Exit: `xcodebuild test` passes in CI. M1 acceptance (owner): the app runs on the owner's Mac for three days;
-  token totals match `agent-presence usage --json` for the same windows, or each difference is explained in 6.8.
+- Exit: `xcodebuild test` passes in CI. M1 acceptance is in 4.1 step 2.
+
+#### Batch 4b (M1): collector on `effect/cli`, and review leftovers
+
+- Files: `packages/collector/**`; `packages/protocol/**` for the `snapshot` output wrapper (with its JSON Schema,
+  fixtures and generated Swift types); `pnpm-workspace.yaml` (catalog: `effect` and `@effect/platform-node` at the
+  exact version agent-kit's `peerDependencies.effect` names).
+- Change: move the collector to the structure of 3.13 on `effect/cli` (D12). CLI behavior stays the same except
+  for these fixes left by the Batch 1–3 reviews:
+  - `packages/collector/package.json` lists runtime `dependencies` that `dist/snorlax.mjs` already inlines; on
+    pack, `@rivus/snorlax-protocol` (`workspace:*`, private) becomes `0.0.0`, so `npm i -g @rivus/snorlax` fails
+    with E404. Move them to `devDependencies`; the published manifest has no `dependencies`.
+  - `doctor` reports a missing data directory, a wrong mode, or a data directory that is a file as failed checks
+    and changes nothing; `status` and `snapshot` create no files.
+  - Every output, human text included, is redacted in `cli/`; error codes are typed as `FailureCode`; business
+    modules no longer import from `cli/`.
+  - `snapshot --json` prints `{ schemaVersion, ok, snapshot }` (3.1).
+  - Issue #11: the 30-day group bound for buckets after today, the remaining row coercions, the
+    `readLedgerStatus` open failure code, SQLite busy handling between `status` and a committing refresh, and the
+    `ledger-lock` test helpers.
+  - Issue #13: a snorlax marker before `uninstall --data` deletes anything, and `doctor` checking the scheduled job
+    and its Node path.
+- Tests: existing suites keep their behavior; a test per listed fix; the hand-written shape guard in
+  `test/cli.test.ts` replaced by a zod schema.
+- Exit: `pnpm run check` passes; `pnpm --filter @rivus/snorlax pack` shows no `dependencies`; the PR reports the
+  median of 20 cold runs of `snorlax status --json` before and after (3.13). It may ship as two PRs: the move to
+  `effect/cli`, then the fixes.
 
 #### Batch 5 (M2): pricing
 
@@ -644,7 +708,7 @@ Each batch leaves `pnpm run check` green.
 - Change: replace `splitByModel` with the kit's `portionsOf`; load the kit's pricing table (K1) and record
   `pricing_version`; `status` reports `pricingChanged` and suggests `snorlax rebuild --days 30` (3.7).
 - Tests: `buckets.test.ts` (S11 with a table, S12 unchanged, multiplier and 1-hour cache writes through the kit).
-- Exit: tests pass; M2 acceptance (owner): cost totals match `agent-presence usage --json` for the same windows.
+- Exit: tests pass; M2 acceptance is in 4.1 step 3.
 
 #### Batch 6 (M3): Worker
 
@@ -684,8 +748,8 @@ Each batch leaves `pnpm run check` green.
 | 2, 5, 7 | `pnpm --filter @rivus/snorlax run test` | the batch's scenarios pass |
 | 4, 8 | `xcodebuild -scheme Snorlax test` (CI `macos`) | pass; regeneration leaves no diff |
 | 6 | `pnpm --filter @rivus/snorlax-worker run test`; `wrangler dev` smoke | pass |
-| M1 | owner, three days on one Mac | token totals match `agent-presence usage --json` or differences explained |
-| M2 | owner | cost totals match `agent-presence usage --json` |
+| M1 | owner, three days on one Mac | token totals match ccusage for every finished day (4.1 step 2) |
+| M2 | owner | cost totals match ccusage for finished days, or differences explained |
 | M3 | owner, 5.4 | converged totals on all devices |
 
 ### 6.6 Rollback per batch
@@ -697,7 +761,7 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 
 | Work | Who |
 | --- | --- |
-| Batches 0–8 code, tests, docs, PRs | implementing agent |
+| Batches 0–8 (including 4b) code, tests, docs, PRs | implementing agent |
 | S2 run on real logs, M1/M2/M3 acceptance, deploys, signing, npm Trusted Publishing, branch protection, merges | owner |
 | K1, K2 in agent-kit | agent-kit maintainer |
 
@@ -709,8 +773,9 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | 0 S2 | merged | #6 | Incremental scan uses `since` = clock now − 2 h (3.4.1); full scan uses `since` 0 and no state. `RootMissing` counts as a source failure; every other scan failure counts as a decode failure, because the scan stream does not label a listing `ReadFailed` apart from a decode `ReadFailed`. | Owner paste of `node scripts/measure-scan.ts` is not in section 7 yet, so the refresh interval stays 300 s. |
 | 1 | merged | #4 | `invalid-arguments` added as the failure code for exit 2 (the plan lists codes only for runtime failures); later-batch commands (`refresh`, `rebuild`, `pair`, `unpair`, `install`, `uninstall`) are registered as `internal` stubs instead of omitted; `doctor` checks `config.json` in addition to node-version and data-dir (all local, keychain/backend/scheduling wait); status device id and scan/sync fields come from `snapshot.json` until the ledger exists (Batch 2 replaces the source, not the output); protocol `PairResult`/`Doctor` field sets are provisional pending Batches 4/7 review; `minimumReleaseAgeExclude` in pnpm-workspace.yaml for the owner's agent-kit 0.20.0 (published the same day the catalog pinned it) | Bucket and output schemas drop unknown keys on parse (forward compatibility, plan 3.7); the strict unknown-key rejection required for HTTP bodies (3.2.3) lands with Batch 6's schemas; agent-kit 0.20.0 pinned via catalog — remember to drop the exclude entry after it ages past `minimumReleaseAge` |
 | 2 | merged | #7 | Rebuild runs its zeroing and its rescan as one transaction (zeroed buckets, `sessions_seen` deletes, scan, bucket writes, `scan_state`, `last_scan_completed_at` all commit together), not the plan's "one transaction, then steps 3–8": a crash between them would re-read the window over buckets that were no longer zeroed and double count. `RefreshResult.sync` is `{ok:false, pushed:0, pulled:0}` while unpaired (the "not paired" report of Batch 2; snapshot and `status` carry `sync.state: "unpaired"`). `failuresByAgent` counts every scan failure except `RootMissing` — an agent that is not installed is detection, not a decode failure, unlike the Batch 0 measure script, which counts every failure. `meta.device_name` stays NULL until `pair` owns it (Batch 7); the snapshot's device name comes from `config.json`. A snapshot write failure fails the command (exit 1, `data-dir`) after the ledger commit; the scan stays and the next refresh rewrites the snapshot. Rebuild's window start is hour-aligned rolling `now − n×24 h`, keeping bucket keys whole. Backups keep the latest two by version. `CollectorPlatform` gained optional `sqlite` and process-identity members; the refresh command widens the platform for the lock, whose absent identity members throw (the kit treats a throwing `self` as "no identity"). Test fixtures pin mtimes one hour before the scan clock so the kit decodes sources as `final` (an unpinned mtime delays Claude Code's open-request reporting past the 30-minute quiet window). S2's proof counts bytes read through the platform: an unchanged source is touched by at most the kit's one-byte cursor probe. Month-of-history fixture (9,300 records, five agents): full refresh 118 ms, incremental 29 ms, scan state 141 KB. The ledger opens under the ledger lock — migration, backup, the meta write and the meta/scan-state read all run inside it — so overlapping runs queue on the lock instead of the second reading the first's pre-commit state, and a run never fails with SQLITE_BUSY while another scans. A split record's requests are distributed across its portions: a portion naming its own `modelCalls` keeps it; the calls left over, never below zero, go to the token-largest portion without its own count, other missing portions count 0, and known counts above the record's leave the missing portions at 0; a record without `modelCalls` counts each portion by its own count or 1. | `RefreshResult.sync` cannot distinguish "unpaired" from "failed" (`ok:false` for both); Batch 7 may want a state field there (protocol change). `status` reads the device id and last scan from the ledger but sync and failures from the snapshot until Batch 7 owns them in the ledger. |
-| 3 | in review | #9 | macOS LaunchAgent only. `install` writes `~/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist` with Label, ProgramArguments = absolute `process.execPath` + absolute running `snorlax.mjs` + `refresh`, StartInterval 300, RunAtLoad, and StandardOutPath/StandardErrorPath at `/dev/null` — the refresh summary already goes to the rotating `logs/snorlax.log` (3.9), and an unrotated launchd redirect file would only grow. A non-empty `SNORLAX_HOME` is copied into the plist's EnvironmentVariables so the agent uses that data directory. Before any change, `launchctl print gui/<uid>/<label>` must name the loaded service's `path`; the CLI refuses (exit 1, `internal`, no file touched) unless that path is its own plist — Snorlax.app's Launch at login and this agent share one label and are mutually exclusive (3.11), and a print that names no path is refused rather than guessed. Load is `launchctl bootstrap gui/<uid> <plist>`; a service already loaded under the CLI's own plist is `bootout` by service target first, so install can be repeated and a hand-deleted plist does not block uninstall; a failed `bootstrap` removes the plist it just wrote. `SNORLAX_LAUNCHCTL` overrides the launchctl binary (default `/bin/launchctl`); tests point it at a stub under a temporary HOME whose `bootstrap` fails like launchctl's while a service is loaded. `SNORLAX_OS` (`darwin`, `linux`, `win32`) selects the scheduler instead of `platform.os` so the bundled CLI can run this path on the Linux CI job; it is not copied into the plist. Linux and other systems exit 1 with code `internal` and a message that names Batch 8, because plan 3.2.1 has no unsupported-platform code and the protocol FailureCode union is outside this batch. `uninstall --data` removes only the entries snorlax writes — `ledger.db` with its SQLite sidecars, `ledger.db.bak-v*`, `ledger.lock` and its `.holder`, `config.json`, `snapshot.json` and crashed `.<hex>.tmp` atomic-write temps, `node-path`, `logs/` — then removes the directory itself only when empty, listing anything left in the output with exit 0, after `removeKeychainItem()`, which is a no-op until Batch 7. Relative data directories are refused; so are `/`, the home directory, and its ancestors, compared through `realpath`. The S14 test hashes all six agent directories around install, a real `refresh` (exit 0, `records` > 0), and uninstall, and HOME's top level gains nothing but `Library/` and the data directory. The install test parses that plist with the `plist` package (catalog devDependency, 5.0.0) and a zod schema. | `doctor` does not check scheduling yet, and the plist's Node path is `process.execPath`, which carries the installed version (nvm, Homebrew): upgrading or removing that Node silently stops the timer. Keychain removal waits for Batch 7. systemd waits for Batch 8. `launchctl print` treats every non-zero exit as not loaded. An in-flight refresh is not awaited after bootout before `uninstall --data` deletes the directory. |
+| 3 | merged | #9 | macOS LaunchAgent only. `install` writes `~/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist` with Label, ProgramArguments = absolute `process.execPath` + absolute running `snorlax.mjs` + `refresh`, StartInterval 300, RunAtLoad, and StandardOutPath/StandardErrorPath at `/dev/null` — the refresh summary already goes to the rotating `logs/snorlax.log` (3.9), and an unrotated launchd redirect file would only grow. A non-empty `SNORLAX_HOME` is copied into the plist's EnvironmentVariables so the agent uses that data directory. Before any change, `launchctl print gui/<uid>/<label>` must name the loaded service's `path`; the CLI refuses (exit 1, `internal`, no file touched) unless that path is its own plist — Snorlax.app's Launch at login and this agent share one label and are mutually exclusive (3.11), and a print that names no path is refused rather than guessed. Load is `launchctl bootstrap gui/<uid> <plist>`; a service already loaded under the CLI's own plist is `bootout` by service target first, so install can be repeated and a hand-deleted plist does not block uninstall; a failed `bootstrap` removes the plist it just wrote. `SNORLAX_LAUNCHCTL` overrides the launchctl binary (default `/bin/launchctl`); tests point it at a stub under a temporary HOME whose `bootstrap` fails like launchctl's while a service is loaded. `SNORLAX_OS` (`darwin`, `linux`, `win32`) selects the scheduler instead of `platform.os` so the bundled CLI can run this path on the Linux CI job; it is not copied into the plist. Linux and other systems exit 1 with code `internal` and a message that names Batch 8, because plan 3.2.1 has no unsupported-platform code and the protocol FailureCode union is outside this batch. `uninstall --data` removes only the entries snorlax writes — `ledger.db` with its SQLite sidecars, `ledger.db.bak-v*`, `ledger.lock` and its `.holder`, `config.json`, `snapshot.json` and crashed `.<hex>.tmp` atomic-write temps, `node-path`, `logs/` — then removes the directory itself only when empty, listing anything left in the output with exit 0, after `removeKeychainItem()`, which is a no-op until Batch 7. Relative data directories are refused; so are `/`, the home directory, and its ancestors, compared through `realpath`. The S14 test hashes all six agent directories around install, a real `refresh` (exit 0, `records` > 0), and uninstall, and HOME's top level gains nothing but `Library/` and the data directory. The install test parses that plist with the `plist` package (catalog devDependency, 5.0.0) and a zod schema. | `doctor` does not check scheduling yet, and the plist's Node path is `process.execPath`, which carries the installed version (nvm, Homebrew): upgrading or removing that Node silently stops the timer. Keychain removal waits for Batch 7. systemd waits for Batch 8. `launchctl print` treats every non-zero exit as not loaded. An in-flight refresh is not awaited after bootout before `uninstall --data` deletes the directory. |
 | 4 | merged | #8 | S1 owner run is still pending, so the widget keeps the App Group and does not add the home-relative read entitlement. quicktype 26.0.0 (catalog) reads `schema/*.json`; the generator shares window totals with `$ref` and sets JSON Schema titles so Swift names stay stable, and date-times stay `String`. Token short form is 1000-based K/M/B/T (`812345678` → `812M`); cost is `$` with two fraction digits (`312.4` → `$312.40`); the review pass below replaced that suffix: a fully unpriced window reads `unpriced`, a partially priced one `≥ $x.xx`. Device name is shown from `snorlax status` and is read-only because no command changes it. `refresh` decodes the failure shape; Batch 2 has landed, so refresh scans real logs. `SMAppService.register()` runs only from the Settings toggle. Node discovery writes `<data>/node-path` from `/bin/zsh -lc 'command -v node'` when the saved Node is missing or older than 22.13, runs after the snapshot loads, and reads the path from the last `/`-leading output line. The compiled launcher execs the bundled collector. The Xcode build phase runs `pnpm --filter @rivus/snorlax run build` and copies `dist/snorlax.mjs`; user script sandboxing is off so that phase can run pnpm. A newer snapshot is not copied; the widget keeps the last accepted copy. A review pass replaced the `/bin/sh` launcher with a compiled `SnorlaxLauncher` tool target embedded at `Contents/Helpers/snorlax` with Code Sign On Copy — an unsigned subcomponent failed every signed build — and CI gained an ad-hoc signed build verified with `codesign --verify --deep --strict`. An unchanged snapshot (same `generatedAt`) is not copied again and does not reload widget timelines. The popover names an unnamed local device `This Mac` and an unnamed remote by the first 8 characters of its id, hides Devices when this Mac is the only device, drops rows with no usage today, plots the 30-day chart on real dates, and shows `unpriced` for fully unpriced windows and `≥ $x.xx` for partially priced ones. The widget distinguishes a missing snapshot, an unavailable container, and a newer snapshot, captions the snapshot with `as of`, and shows `—` for Today when the snapshot's day in the snapshot's zone has passed. | App Group container, `SMAppService` registration, and the widget gallery still need the owner's Personal Team (section 7). Signing-disabled tests do not answer them. Changing the device name has no CLI command. Batch 2 has landed, so `snorlax refresh` fills a snapshot by scanning this Mac's logs. Pairing controls are Batch 8. The App Group container is system-protected: a CLI cannot delete `snapshot.json` inside it, so uninstall needs the app to delete its copy or prompt the user (R14). |
+| 4b | not started | | | |
 | 5 | waiting for agent-kit K1, K2 | | | |
 | 6 | not started | | | |
 | 7 | not started | | | |
@@ -720,13 +785,14 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 
 | Item | Type | Impact | Owner | Next step |
 | --- | --- | --- | --- | --- |
-| App Group or `SMAppService` unusable with free signing | risk | widget or scheduling fails | owner | Batch 0 S1; fallbacks in 3.11; a Developer ID if both fail |
+| App Group or `SMAppService` unusable with free signing | resolved | — | owner | S1 confirmed both work with a free Personal Team; a Developer ID is needed only to hand a build to another Mac without building there |
 | Agents change their log formats | risk | usage under-counted | maintainer | decoders live in agent-kit; `failuresByAgent` surfaces it |
 | D1 free limits exceeded | risk | writes fail until 00:00 UTC | owner | 8.2 estimate; dirty buckets wait for the next day |
 | Node path changes (version managers) | risk | collection stops | maintainer | app rediscovers Node; `doctor`; Node SEA later |
 | Logs older than 30 days are gone | constraint | `rebuild` beyond 30 days would lose usage | — | `rebuild` capped at 30 |
 | Snorlax is a trademark | risk | rename request | owner | original artwork, disclaimer in README |
-| S1 results | pending owner run | signing path | owner | Local `xcodegen generate` and signing-disabled `xcodebuild` succeed on Xcode 27. The bundle contains the helper, the LaunchAgents plist, and the widget. The helper writes `spike-run.json` under a temporary HOME when `node-path` names an executable. The binary is linker-signed only (no team, no entitlements); the App Group id expanded with an empty prefix. Not run: App Group container, `SMAppService` registration, widget gallery. Owner steps are in `apps/macos/README.md`. The second-Mac install is checked in Batch 8. |
+| S1 results | resolved | signing path | owner | Owner run on 2026-10-23 with a free Personal Team (Xcode 27.1): the App Group container is available as `<TeamID>.io.github.perfectpan.snorlax`; the widget appears in the gallery and shows the snapshot; `SMAppService` registration is enabled (`launchctl print` shows the job submitted by smd, 129 runs, last exit code 0, every 300 s). A signed build needs the launcher as a compiled helper (Batch 4 fix). No provisioning profile was generated, so a bundle-id collision with a second Apple ID is checked in Batch 8 |
+| Second Mac under another Apple ID | open | bundle id may already be registered to the first team | owner | Batch 8: build on the second Mac; if Xcode rejects the bundle id, make the prefix configurable in `project.yml` |
 | S2 results | pending owner run | refresh interval and performance target | owner | On each machine, run `node scripts/measure-scan.ts`. It reads local agent homes (full: `since` 0 and no state; incremental: the saved state and `since` = now − 2 h) and prints one JSON object of counts only. Paste that JSON here. The refresh interval stays 300 s until the numbers are recorded. |
 | Worker reachability | open | domain | owner | record here after Batch 6 |
 | K1, K2 in agent-kit | follow-up | M2 blocked | agent-kit maintainer | K2: agent-kit#190; K1: issue not opened yet |
