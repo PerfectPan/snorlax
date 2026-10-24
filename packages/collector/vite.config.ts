@@ -14,6 +14,9 @@ export default defineConfig({
   lint: { ...lint, ignorePatterns: ["node_modules/**", "dist/**"] },
   build: {
     target: "node22.13",
+    // The bundle stays readable and unminified (plan 2.4 D9 keeps a debuggable single file), but
+    // rolldown drops the inlined dependencies' doc comments — about half the bytes — while keeping
+    // legal ones. minify would reformat the whole file into long lines; comments alone do not.
     minify: false,
     outDir: "dist",
     lib: {
@@ -31,7 +34,10 @@ export default defineConfig({
           }
         }
       ],
-      output: { banner: "#!/usr/bin/env node" }
+      output: {
+        banner: "#!/usr/bin/env node",
+        comments: { legal: true, annotation: false, jsdoc: false }
+      }
     }
   }
 });

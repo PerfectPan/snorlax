@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { snapshotSchema, type Snapshot } from "@rivus/snorlax-protocol";
+import { snapshotOutputSchema, snapshotSchema, type Snapshot } from "@rivus/snorlax-protocol";
 import * as z from "zod/mini";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -532,9 +532,12 @@ describe("bundled CLI end to end", () => {
 
       const printed = run(["snapshot", "--json"]);
       expect(printed.status).toBe(0);
-      const parsed = z.safeParse(snapshotSchema, JSON.parse(printed.stdout));
+      // The command wraps the snapshot in SnapshotOutput (plan 3.1).
+      const parsed = z.safeParse(snapshotOutputSchema, JSON.parse(printed.stdout));
       expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
-      expect(parsed.success && parsed.data.totals.last30d.requests).toBe(3);
+      const parsedSnapshot = parsed.success && z.safeParse(snapshotSchema, parsed.data.snapshot);
+      expect(parsedSnapshot && parsedSnapshot.success ? "valid" : "invalid").toBe("valid");
+      expect(parsed.success && parsed.data.snapshot.totals.last30d.requests).toBe(3);
 
       const status = run(["status", "--json"]);
       expect(status.status).toBe(0);

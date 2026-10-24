@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Platform } from "@rivus/agent-kit/platform";
 import * as z from "zod/mini";
 
-import { CliError } from "../cli/errors.ts";
+import { CommandError } from "../errors.ts";
 import { errorMessage } from "../util/error-message.ts";
 import { readTextFile } from "../util/read-text-file.ts";
 
@@ -16,11 +16,11 @@ export const configSchema = z.object({
   deviceName: z.optional(z.string().check(z.minLength(1))),
   backendUrl: z.optional(z.string().check(z.minLength(1)))
 });
-export type Config = z.output<typeof configSchema>;
+export type ConfigValue = z.output<typeof configSchema>;
 
 export const configFilePath = (dataDir: string): string => join(dataDir, "config.json");
 
-export async function readConfig(platform: Pick<Platform, "fs">, dataDir: string): Promise<Config> {
+export async function readConfig(platform: Pick<Platform, "fs">, dataDir: string): Promise<ConfigValue> {
   const path = configFilePath(dataDir);
   const text = await readTextFile(platform, path);
   if (text === undefined) {
@@ -30,11 +30,14 @@ export async function readConfig(platform: Pick<Platform, "fs">, dataDir: string
   try {
     json = JSON.parse(text);
   } catch (error) {
-    throw new CliError("data-dir", `${path} is not valid JSON: ${errorMessage(error)}`);
+    throw new CommandError({ code: "data-dir", message: `${path} is not valid JSON: ${errorMessage(error)}` });
   }
   const parsed = z.safeParse(configSchema, json);
   if (!parsed.success) {
-    throw new CliError("data-dir", `${path} does not match the expected shape: ${z.prettifyError(parsed.error)}`);
+    throw new CommandError({
+      code: "data-dir",
+      message: `${path} does not match the expected shape: ${z.prettifyError(parsed.error)}`
+    });
   }
   return parsed.data;
 }

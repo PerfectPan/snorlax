@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -12,7 +12,7 @@ import * as plist from "plist";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
-import { CliError } from "../src/cli/errors.ts";
+import { CommandError } from "../src/errors.ts";
 import { resolvedDeletableDataDir } from "../src/schedule/launchd.ts";
 import { renderLaunchAgentPlist } from "../src/schedule/plist.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
@@ -300,7 +300,13 @@ describe("install and uninstall", () => {
       const again = run(env, ["install"]);
       expect(again.status).toBe(0);
       expect(again.stderr).toBe("");
-      expect(again.stdout).toBe(`LaunchAgent installed at ${plistPath}\n`);
+      // Human output is redacted in cli/, so the plist path is spelled relative to the home.
+      expect(again.stdout).toBe(
+        `LaunchAgent installed at ${relative(env.home, plistPath)
+          .split(sep)
+          .join("/")
+          .replace(/^Library/, "~/Library")}\n`
+      );
       await decodePlist(plistPath);
 
       expect(await readInvocations(env.record)).toEqual([
@@ -370,6 +376,90 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("uninstall on an empty home builds nothing: no data directory appears", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const removed = run(env, ["uninstall", "--json"]);
+      expect(removed.status).toBe(0);
+      expect(removed.stdout).toBe('{"schemaVersion":1,"ok":true}\n');
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
+    });
+  });
+
+  it("a refused install prepares nothing: the data directory is only built after the ownership check", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const appPlist =
+        "/Applications/Snorlax.app/Contents/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+      await writeFile(env.loaded, appPlist, "utf8");
+
+      const installed = run(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      expect(existsSync(plistPathOf(env.home))).toBe(false);
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
+    });
+  });
+
+  it("keeps the kernel's signal semantics: SIGTERM and SIGINT end the process by signal", async () => {
+    await withInstallHome("darwin", async (env) => {
+      // A launchctl stub whose `print` reports no loaded service and whose `bootstrap` sleeps until
+      // orphaned, so `install` hangs inside launchctl and can be interrupted deterministically.
+      const stub = join(env.home, "launchctl-hang.mjs");
+      await writeFile(
+        stub,
+        [
+          `#!${process.execPath}`,
+          "const [command] = process.argv.slice(2);",
+          'if (command === "print") process.exit(1);',
+          'if (command === "bootstrap") {',
+          "  const orphan = setInterval(() => {",
+          "    if (process.ppid === 1) process.exit(9);",
+          "  }, 100);",
+          "  setTimeout(() => {",
+          "    clearInterval(orphan);",
+          "    process.exit(0);",
+          "  }, 30_000);",
+          "} else {",
+          "  process.exit(2);",
+          "}",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+      await chmod(stub, 0o755);
+
+      const runInterrupted = (signal: NodeJS.Signals): Promise<{ readonly name: string; readonly stdout: string }> =>
+        new Promise((resolve) => {
+          const child = spawn(process.execPath, [bundle, "install", "--json"], {
+            env: {
+              HOME: env.home,
+              SNORLAX_HOME: dataDirOf(env.home),
+              SNORLAX_LAUNCHCTL: stub,
+              SNORLAX_OS: "darwin",
+              PATH: "/usr/bin:/bin"
+            },
+            stdio: ["ignore", "pipe", "pipe"]
+          });
+          let stdout = "";
+          child.stdout.on("data", (chunk: Buffer) => {
+            stdout += String(chunk);
+          });
+          // No timing assertion: the signal lands whenever the child is up, and the exit event waits.
+          const timer = setTimeout(() => child.kill(signal), 500);
+          child.on("exit", (code, name) => {
+            clearTimeout(timer);
+            void code;
+            resolve({ name: name ?? "", stdout });
+          });
+        });
+
+      const term = await runInterrupted("SIGTERM");
+      expect(term.name).toBe("SIGTERM");
+      expect(term.stdout).toBe("");
+      const interrupt = await runInterrupted("SIGINT");
+      expect(interrupt.name).toBe("SIGINT");
+      expect(interrupt.stdout).toBe("");
+    });
+  });
+
   it("refuses to install or uninstall while Snorlax.app's Launch at login owns the loaded service", async () => {
     await withInstallHome("darwin", async (env) => {
       const appPlist =
@@ -387,7 +477,9 @@ describe("install and uninstall", () => {
       expect(removed.status).toBe(1);
       expect(z.parse(failureSchema, json(removed.stdout)).error.code).toBe("internal");
       // Nothing was touched: no plist, no data deletion, no launchctl call beyond the two prints.
-      expect(existsSync(dataDirOf(env.home))).toBe(true);
+      // Neither command prepares the data directory (install only after the ownership check, uninstall
+      // never), so the empty home stays empty.
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
       expect(await readInvocations(env.record)).toEqual([
         ["print", `gui/${uid()}/${LABEL}`],
         ["print", `gui/${uid()}/${LABEL}`]
@@ -558,9 +650,10 @@ describe("install and uninstall", () => {
 
       const removed = run(env, ["uninstall", "--data"]);
       expect(removed.status).toBe(0);
+      // Human output is redacted in cli/, so the data directory is spelled relative to the home.
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
-          `the data directory ${dataDir} is kept; entries snorlax did not write remain: Documents, photo.jpg\n`
+          "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n"
       );
       expect(existsSync(join(dataDir, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
@@ -624,12 +717,13 @@ describe("install and uninstall", () => {
       expect(installFailure.error.code).toBe("internal");
       expect(installFailure.error.message).toContain("Batch 8");
       expect(existsSync(plistPathOf(env.home))).toBe(false);
-      expect(existsSync(dataDirOf(env.home))).toBe(true);
+      // The refusal happens in the scheduler before any preparation, so nothing was created either.
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
 
       const removed = run(env, ["uninstall", "--data", "--json"]);
       expect(removed.status).toBe(1);
       expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain("Batch 8");
-      expect(existsSync(dataDirOf(env.home))).toBe(true);
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
       expect(await readInvocations(env.record)).toEqual([]);
     });
   });
@@ -679,7 +773,7 @@ describe("uninstall --data path guard", () => {
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")).rejects.toThrow(/refusing to delete/);
     await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(/must be absolute/);
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe("/tmp/home/snorlax");
-    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CliError);
+    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CommandError);
   });
 
   it("compares through realpath, so a symlinked spelling of the home directory is refused too", async () => {

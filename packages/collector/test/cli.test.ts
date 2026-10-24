@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as z from "zod/mini";
-import { failureSchema, statusSchema } from "@rivus/snorlax-protocol";
+import { failureSchema, refreshResultSchema, snapshotOutputSchema, statusSchema } from "@rivus/snorlax-protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { makeSnapshot } from "./sample.ts";
@@ -24,12 +24,17 @@ const run = (args: readonly string[], home: string) =>
     env: { HOME: home, SNORLAX_HOME: join(home, "data"), PATH: "/usr/bin:/bin" }
   });
 
-const parseOneJsonObject = (stdout: string): Record<string, unknown> => {
-  const document: unknown = JSON.parse(stdout);
-  if (typeof document !== "object" || document === null || Array.isArray(document)) {
+/** One JSON object and nothing else: a plain-object record, parsed at the boundary with a schema. */
+const jsonObjectSchema = z.record(z.string(), z.unknown());
+
+const parseOneJsonObject = (stdout: string): z.output<typeof jsonObjectSchema> => {
+  let document: unknown;
+  try {
+    document = JSON.parse(stdout);
+  } catch {
     throw new Error(`stdout is not one JSON object: ${stdout}`);
   }
-  return document as Record<string, unknown>;
+  return z.parse(jsonObjectSchema, document);
 };
 
 let home: string;
@@ -98,18 +103,93 @@ describe("calling convention (plan 3.2.1)", () => {
     expect(run(["status", "--json"], home).status).toBe(0);
     expect(run(["status", "--json"], home).status).toBe(0);
   });
+
+  it("redacts effect/cli's own human rendering: an error quoting the command line hides the home", () => {
+    const result = run(["status", join(home, "secret-project")], home);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("~/secret-project");
+    expect(result.stderr).not.toContain(home);
+  });
+
+  it("the output mode follows the parsed --json value, however it was spelled", () => {
+    // effect/cli parses a boolean literal after the flag as its value and knows --no-json; the
+    // handler sees exactly that value, so these all print human text and exit 0.
+    for (const args of [
+      ["status", "--json", "false"],
+      ["status", "--json", "no"],
+      ["status", "--json", "0"],
+      ["status", "--no-json", "--json"],
+      ["status", "--json=false"]
+    ]) {
+      const result = run(args, home);
+      expect(result.status).toBe(0);
+      expect(result.stdout.startsWith("{")).toBe(false);
+      expect(result.stdout).toContain("snorlax");
+    }
+    // --json=true and a bare --json parse to true; effect/cli keeps the first value when the flag is
+    // spelled both ways, so --json --no-json stays JSON too.
+    for (const args of [
+      ["status", "--json"],
+      ["status", "--json=true"],
+      ["status", "--json", "--no-json"]
+    ]) {
+      const result = run(args, home);
+      expect(result.status).toBe(0);
+      expect(parseOneJsonObject(result.stdout).ok).toBe(true);
+    }
+  });
+
+  it("a --json behind -- is a positional: parse error, human rendering, exit 2", () => {
+    const result = run(["status", "--", "--json"], home);
+    expect(result.status).toBe(2);
+    expect(result.stdout.startsWith("{")).toBe(false);
+    expect(result.stderr).toContain("Unexpected");
+  });
+});
+
+describe("built-in flags", () => {
+  it("--help, -h, --version and -v exit 0 in human mode with output on stdout", () => {
+    for (const flag of ["--help", "-h", "--version", "-v"]) {
+      const result = run([flag], home);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).not.toBe("");
+    }
+  });
+
+  it("help and version combined with --json print one invalid-arguments object and exit 2", () => {
+    for (const args of [
+      ["status", "--help", "--json"],
+      ["--version", "--json"]
+    ]) {
+      const result = run(args, home);
+      const failure = z.parse(failureSchema, parseOneJsonObject(result.stdout));
+      expect(failure.error.code).toBe("invalid-arguments");
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(2);
+    }
+  });
+
+  it("--wizard is not a flag: an unknown option, exit 2, no interactive prompt", () => {
+    const result = run(["--wizard", "--json"], home);
+    expect(z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code).toBe("invalid-arguments");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(result.status).toBe(2);
+  });
 });
 
 describe("data directory", () => {
-  it("is created with mode 0700 by the first command", async () => {
-    run(["status", "--json"], home);
-    const mode = (await stat(join(home, "data"))).mode & 0o777;
-    expect(mode.toString(8)).toBe("700");
-  });
-
-  it("never touches directories outside it: the temp HOME holds only the data directory", async () => {
-    run(["status", "--json"], home);
-    expect(await readdir(home)).toEqual(["data"]);
+  it("is not created by read-only commands: status leaves the fresh home empty (plan 3.13)", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-readonly-"));
+    try {
+      expect(run(["status", "--json"], fresh).status).toBe(0);
+      expect(run(["doctor", "--json"], fresh).status).toBe(0);
+      expect(run(["snapshot", "--json"], fresh).status).toBe(1);
+      expect(await readdir(fresh)).toEqual([]);
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
   });
 });
 
@@ -120,12 +200,15 @@ describe("snapshot command", () => {
     expect(result.status).toBe(1);
   });
 
-  it("prints a stored snapshot and feeds status's sync fields from it", async () => {
+  it("prints the snapshot wrapped as SnapshotOutput and feeds status's sync fields from it", async () => {
+    await mkdir(join(home, "data"), { recursive: true });
     await writeFile(join(home, "data", "snapshot.json"), `${JSON.stringify(makeSnapshot())}\n`, "utf8");
 
     const printed = run(["snapshot", "--json"], home);
     expect(printed.status).toBe(0);
-    expect(JSON.parse(printed.stdout).generatedAt).toBe("2026-10-22T12:00:00.000Z");
+    const output = z.parse(snapshotOutputSchema, parseOneJsonObject(printed.stdout));
+    expect(output.ok).toBe(true);
+    expect(output.snapshot.generatedAt).toBe("2026-10-22T12:00:00.000Z");
 
     // Sync state and decode failures come from the snapshot (the last refresh's); the device id and last
     // scan come from the ledger (plan 6.8, Batch 2), and no ledger exists in this home yet.
@@ -165,16 +248,25 @@ describe("refresh and rebuild", () => {
       env: { HOME: refreshHome, SNORLAX_HOME: join(refreshHome, "data"), PATH: "/usr/bin:/bin" }
     });
 
+  it("creates the data directory with mode 0700 on the first writing command", async () => {
+    const refreshed = runRefreshHome(["refresh", "--json"]);
+    expect(refreshed.stderr).toBe("");
+    expect(refreshed.status).toBe(0);
+    const mode = (await stat(join(refreshHome, "data"))).mode & 0o777;
+    expect(mode.toString(8)).toBe("700");
+  });
+
   it("refresh prints the RefreshResult shape and writes a snapshot the snapshot command prints", () => {
     const refreshed = runRefreshHome(["refresh", "--json"]);
     expect(refreshed.stderr).toBe("");
     expect(refreshed.status).toBe(0);
-    const result: unknown = JSON.parse(refreshed.stdout);
+    const result = z.parse(refreshResultSchema, parseOneJsonObject(refreshed.stdout));
     expect(result).toMatchObject({ ok: true, records: 0, failures: 0, sync: { ok: false, pushed: 0, pulled: 0 } });
 
     const printed = runRefreshHome(["snapshot", "--json"]);
     expect(printed.status).toBe(0);
-    expect(JSON.parse(printed.stdout).totals.last30d.requests).toBe(0);
+    const output = z.parse(snapshotOutputSchema, parseOneJsonObject(printed.stdout));
+    expect(output.snapshot.totals.last30d.requests).toBe(0);
   });
 
   it("rebuild accepts 1-30 days and rejects anything else with exit 2", () => {

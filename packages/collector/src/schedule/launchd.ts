@@ -3,7 +3,7 @@ import process from "node:process";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 
-import { CliError } from "../cli/errors.ts";
+import { CommandError } from "../errors.ts";
 import { errorMessage } from "../util/error-message.ts";
 import { removeKeychainItem } from "./keychain.ts";
 import { LAUNCH_AGENT_LABEL, launchAgentPlistPath, renderLaunchAgentPlist, type LaunchAgentSpec } from "./plist.ts";
@@ -44,7 +44,7 @@ const schedulerOs = (platform: Pick<Platform, "env" | "os">): Platform["os"] => 
   if (override === "darwin" || override === "linux" || override === "win32") {
     return override;
   }
-  throw new CliError("internal", "SNORLAX_OS must be darwin, linux, or win32");
+  throw new CommandError({ code: "internal", message: "SNORLAX_OS must be darwin, linux, or win32" });
 };
 
 const requireLaunchd = (platform: Pick<Platform, "env" | "os">, command: "install" | "uninstall"): void => {
@@ -52,10 +52,10 @@ const requireLaunchd = (platform: Pick<Platform, "env" | "os">, command: "instal
   if (os === "darwin") {
     return;
   }
-  throw new CliError(
-    "internal",
-    `snorlax ${command} schedules a LaunchAgent on macOS in this build; ${os} support arrives with Batch 8 (systemd user timer)`
-  );
+  throw new CommandError({
+    code: "internal",
+    message: `snorlax ${command} schedules a LaunchAgent on macOS in this build; ${os} support arrives with Batch 8 (systemd user timer)`
+  });
 };
 
 const launchctlBinary = (platform: Pick<Platform, "env">): string => {
@@ -68,7 +68,7 @@ const launchctlBinary = (platform: Pick<Platform, "env">): string => {
 
 const requireAbsolute = (dataDir: string): void => {
   if (!isAbsolute(dataDir)) {
-    throw new CliError("data-dir", `the data directory must be absolute, got ${dataDir}`);
+    throw new CommandError({ code: "data-dir", message: `the data directory must be absolute, got ${dataDir}` });
   }
 };
 
@@ -87,7 +87,7 @@ export async function resolvedDeletableDataDir(
   requireAbsolute(dataDir);
   const resolved = resolve(dataDir);
   if (resolved === resolve(home) || resolved === "/") {
-    throw new CliError("data-dir", `refusing to delete the data directory ${dataDir}`);
+    throw new CommandError({ code: "data-dir", message: `refusing to delete the data directory ${dataDir}` });
   }
   const dataReal = await fs.realpath(resolved);
   const homeReal = await fs.realpath(home);
@@ -95,7 +95,7 @@ export async function resolvedDeletableDataDir(
     dataReal !== undefined &&
     (dataReal === "/" || dataReal === homeReal || (homeReal !== undefined && homeReal.startsWith(`${dataReal}/`)))
   ) {
-    throw new CliError("data-dir", `refusing to delete the data directory ${dataDir}`);
+    throw new CommandError({ code: "data-dir", message: `refusing to delete the data directory ${dataDir}` });
   }
   return resolved;
 }
@@ -104,12 +104,12 @@ export async function resolvedDeletableDataDir(
 export function runningCollectorPaths(): Pick<LaunchAgentSpec, "nodePath" | "cliPath"> {
   const entry = process.argv[1];
   if (entry === undefined || entry === "") {
-    throw new CliError("internal", "cannot resolve the running snorlax CLI path");
+    throw new CommandError({ code: "internal", message: "cannot resolve the running snorlax CLI path" });
   }
   const nodePath = process.execPath;
   const cliPath = resolve(entry);
   if (!isAbsolute(nodePath) || !isAbsolute(cliPath)) {
-    throw new CliError("internal", "the Node and CLI paths in the LaunchAgent must be absolute");
+    throw new CommandError({ code: "internal", message: "the Node and CLI paths in the LaunchAgent must be absolute" });
   }
   return { nodePath, cliPath };
 }
@@ -117,7 +117,7 @@ export function runningCollectorPaths(): Pick<LaunchAgentSpec, "nodePath" | "cli
 const currentUid = (): number => {
   const uid = process.getuid?.();
   if (uid === undefined) {
-    throw new CliError("internal", "launchd install needs a numeric user id");
+    throw new CommandError({ code: "internal", message: "launchd install needs a numeric user id" });
   }
   return uid;
 };
@@ -185,7 +185,7 @@ const removeDirKeepingLeftovers = async (
   } catch (error) {
     const entries = await listOrNothing(fs, dir);
     if (entries.length === 0) {
-      throw new CliError("data-dir", `cannot delete ${dir}: ${errorMessage(error)}`);
+      throw new CommandError({ code: "data-dir", message: `cannot delete ${dir}: ${errorMessage(error)}` });
     }
     return entries.map((entry) => name(entry.name));
   }
@@ -226,19 +226,25 @@ const runLaunchctl = async (platform: SchedulerPlatform, args: readonly string[]
   try {
     result = await platform.process.run(command, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
   } catch (error) {
-    throw new CliError("internal", `cannot run launchctl (${command}): ${errorMessage(error)}`);
+    throw new CommandError({ code: "internal", message: `cannot run launchctl (${command}): ${errorMessage(error)}` });
   }
   if (result.timedOut || result.signal !== null) {
     const reason = result.timedOut ? "timeout" : result.signal;
-    throw new CliError("internal", `launchctl ${args[0] ?? "command"} did not finish (${reason})`);
+    throw new CommandError({
+      code: "internal",
+      message: `launchctl ${args[0] ?? "command"} did not finish (${reason})`
+    });
   }
   return result;
 };
 
-const launchctlFailure = (result: LaunchctlResult, action: string): CliError => {
+const launchctlFailure = (result: LaunchctlResult, action: string): CommandError => {
   const detail = (result.stderr !== "" ? result.stderr : result.stdout).trim();
   const suffix = detail === "" ? "" : `: ${detail}`;
-  return new CliError("internal", `launchctl ${action} failed (exit ${result.code ?? "unknown"})${suffix}`);
+  return new CommandError({
+    code: "internal",
+    message: `launchctl ${action} failed (exit ${result.code ?? "unknown"})${suffix}`
+  });
 };
 
 /**
@@ -300,7 +306,7 @@ const refuseForeignService = (loaded: LoadedService, plistPath: string, target: 
       : `launchctl print names no plist for the loaded ${LAUNCH_AGENT_LABEL} agent, so its owner cannot be ` +
         `confirmed; check Launch at login in Snorlax's Settings and turn it off, or inspect the service ` +
         `with \`launchctl print ${target}\``;
-  throw new CliError("internal", `refusing to change the LaunchAgent: ${detail}`);
+  throw new CommandError({ code: "internal", message: `refusing to change the LaunchAgent: ${detail}` });
 };
 
 const bootout = async (platform: SchedulerPlatform, target: string): Promise<void> => {
@@ -325,7 +331,15 @@ const snorlaxHomeOverride = (platform: Pick<Platform, "env">): string | undefine
   return value;
 };
 
-export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: string): Promise<string> {
+/**
+ * Registers and loads the agent. `prepare`, when given, runs after the ownership check has accepted
+ * the loaded service — a refused install must build nothing — and before the first write.
+ */
+export async function installLaunchAgent(
+  platform: SchedulerPlatform,
+  dataDir: string,
+  prepare?: () => Promise<void>
+): Promise<string> {
   requireLaunchd(platform, "install");
   requireAbsolute(dataDir);
   const plistPath = launchAgentPlistPath(platform.home);
@@ -334,6 +348,9 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
   // Ownership comes before any write: a foreign or unattributable service is never replaced.
   const loaded = await loadedService(platform, target);
   refuseForeignService(loaded, plistPath, target);
+  if (prepare !== undefined) {
+    await prepare();
+  }
   const plist = renderLaunchAgentPlist({
     ...runningCollectorPaths(),
     dataDir,
@@ -343,10 +360,10 @@ export async function installLaunchAgent(platform: SchedulerPlatform, dataDir: s
     await platform.fs.mkdir(join(platform.home, "Library", "LaunchAgents"));
     await platform.fs.writeAtomic(plistPath, plist, { mode: PLIST_MODE });
   } catch (error) {
-    if (error instanceof CliError) {
+    if (error instanceof CommandError) {
       throw error;
     }
-    throw new CliError("internal", `cannot write ${plistPath}: ${errorMessage(error)}`);
+    throw new CommandError({ code: "internal", message: `cannot write ${plistPath}: ${errorMessage(error)}` });
   }
   // bootstrap rejects a service that is already loaded, so a repeat install boots out first — by service
   // target, so a hand-deleted plist cannot block the bootout.
@@ -396,7 +413,7 @@ export async function uninstallLaunchAgent(
   try {
     await platform.fs.remove(plistPath);
   } catch (error) {
-    throw new CliError("internal", `cannot remove ${plistPath}: ${errorMessage(error)}`);
+    throw new CommandError({ code: "internal", message: `cannot remove ${plistPath}: ${errorMessage(error)}` });
   }
   if (dataDirToDelete === undefined) {
     return { dataLeftovers: [] };
@@ -405,9 +422,12 @@ export async function uninstallLaunchAgent(
   try {
     return { dataLeftovers: await deleteKnownDataEntries(platform.fs, dataDirToDelete) };
   } catch (error) {
-    if (error instanceof CliError) {
+    if (error instanceof CommandError) {
       throw error;
     }
-    throw new CliError("data-dir", `cannot delete the data directory ${dataDirToDelete}: ${errorMessage(error)}`);
+    throw new CommandError({
+      code: "data-dir",
+      message: `cannot delete the data directory ${dataDirToDelete}: ${errorMessage(error)}`
+    });
   }
 }

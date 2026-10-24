@@ -219,6 +219,25 @@ public struct RefreshSync: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - SnapshotOutput
+public struct SnapshotOutput: Codable, Equatable, Sendable {
+    public let ok: Bool
+    public let schemaVersion: Double
+    public let snapshot: Snapshot
+
+    public enum CodingKeys: String, CodingKey {
+        case ok = "ok"
+        case schemaVersion = "schemaVersion"
+        case snapshot = "snapshot"
+    }
+
+    public init(ok: Bool, schemaVersion: Double, snapshot: Snapshot) {
+        self.ok = ok
+        self.schemaVersion = schemaVersion
+        self.snapshot = snapshot
+    }
+}
+
 // MARK: - Snapshot
 public struct Snapshot: Codable, Equatable, Sendable {
     public let byAgent: [ByAgent]
