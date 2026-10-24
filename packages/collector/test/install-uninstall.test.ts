@@ -1,4 +1,3 @@
-import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,7 +5,6 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 
 import { doctorSchema, failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
 import * as plist from "plist";
@@ -17,6 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { launchAgentNodePath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
+import { bundle, runBundle, spawnBundle } from "./fixtures/bundle.ts";
 
 /**
  * `install` / `uninstall` against the built bundle under a temporary HOME. `SNORLAX_LAUNCHCTL`
@@ -25,7 +24,6 @@ import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/ag
  * behavior where the tests depend on it: `bootstrap` fails (exit 5) while a service is loaded, so
  * a repeat install has to boot out first, and `print` reports the loaded service's plist path.
  */
-const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 const LABEL = "io.github.perfectpan.snorlax.refresh";
 
 const plistFields = {
@@ -73,15 +71,11 @@ interface InstallEnv {
 }
 
 const run = (env: InstallEnv, args: readonly string[], overrides?: { readonly snorlaxHome?: string }) =>
-  spawnSync(process.execPath, [bundle, ...args], {
-    encoding: "utf8",
-    env: {
-      HOME: env.home,
-      SNORLAX_HOME: overrides?.snorlaxHome ?? dataDirOf(env.home),
-      SNORLAX_LAUNCHCTL: env.launchctl,
-      SNORLAX_OS: env.os,
-      PATH: "/usr/bin:/bin"
-    }
+  runBundle(args, {
+    home: env.home,
+    dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
+    launchctl: env.launchctl,
+    os: env.os
   });
 
 const writeStub = async (dir: string): Promise<string> => {
@@ -132,9 +126,6 @@ const writeStub = async (dir: string): Promise<string> => {
 };
 
 const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) => Promise<void>): Promise<void> => {
-  if (!existsSync(bundle)) {
-    throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
-  }
   const home = await mkdtemp(join(tmpdir(), "snorlax-install-"));
   const stubDir = await mkdtemp(join(tmpdir(), "snorlax-launchctl-"));
   try {
@@ -429,16 +420,7 @@ describe("install and uninstall", () => {
 
       const runInterrupted = (signal: NodeJS.Signals): Promise<{ readonly name: string; readonly stdout: string }> =>
         new Promise((resolve) => {
-          const child = spawn(process.execPath, [bundle, "install", "--json"], {
-            env: {
-              HOME: env.home,
-              SNORLAX_HOME: dataDirOf(env.home),
-              SNORLAX_LAUNCHCTL: stub,
-              SNORLAX_OS: "darwin",
-              PATH: "/usr/bin:/bin"
-            },
-            stdio: ["ignore", "pipe", "pipe"]
-          });
+          const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: stub, os: "darwin" });
           let stdout = "";
           child.stdout.on("data", (chunk: Buffer) => {
             stdout += String(chunk);

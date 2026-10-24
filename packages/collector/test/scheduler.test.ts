@@ -1,10 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 import type { Platform } from "@rivus/agent-kit/platform";
@@ -19,6 +17,7 @@ import { Scheduler, type JobInspection } from "../src/capabilities/scheduler/sch
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
+import { runBundle } from "./fixtures/bundle.ts";
 import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { readLedger } from "./fixtures/flows.ts";
 import { fakeScheduler, type SchedulerCall } from "./fixtures/scheduler.ts";
@@ -36,7 +35,6 @@ const DATA_DIR = `${HOME}/snorlax-data`;
 const JOB_FILE = `${HOME}/Library/LaunchAgents/fake.plist`;
 const LAUNCHCTL = "/stub/launchctl";
 const PLIST = `${HOME}/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist`;
-const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 
 type MemoryPlatform = ReturnType<typeof createMemoryPlatform>;
 
@@ -174,22 +172,13 @@ describe("the system's scheduler", () => {
       // A failing stub, so even a wrong pick never reaches the real launchctl.
       const launchctl = join(home, "launchctl");
       await writeFile(launchctl, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      const runBundle = (args: readonly string[]) => {
-        const result = spawnSync(process.execPath, [bundle, ...args], {
-          encoding: "utf8",
-          env: {
-            HOME: home,
-            SNORLAX_HOME: dataDir,
-            SNORLAX_OS: "bogus",
-            SNORLAX_LAUNCHCTL: launchctl,
-            PATH: "/usr/bin:/bin"
-          }
-        });
+      const runBogus = (args: readonly string[]) => {
+        const result = runBundle(args, { home, dataDir, launchctl, os: "bogus" });
         return { exitCode: result.status, stdout: result.stdout };
       };
-      expect(runBundle(["status", "--json"]).exitCode).toBe(0);
+      expect(runBogus(["status", "--json"]).exitCode).toBe(0);
       for (const command of ["install", "uninstall"]) {
-        const failed = runBundle([command, "--json"]);
+        const failed = runBogus([command, "--json"]);
         expect(failed.exitCode).toBe(1);
         expect(failureOf(failed.stdout)).toEqual({
           code: "internal",

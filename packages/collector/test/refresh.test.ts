@@ -1,9 +1,6 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { snapshotOutputSchema, snapshotSchema, type Snapshot } from "@rivus/snorlax-protocol";
 import * as z from "zod/mini";
@@ -15,6 +12,7 @@ import { createLogger, type Logger } from "../src/modules/log/log.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
 import { nodeFileOps } from "../src/modules/platform/platform.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
+import { runBundle } from "./fixtures/bundle.ts";
 import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
@@ -476,17 +474,8 @@ describe("a month of history", () => {
 
 describe("bundled CLI end to end", () => {
   it("refresh, snapshot and status answer over generated fixtures under a temporary HOME", async () => {
-    const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
-    if (!existsSync(bundle)) {
-      throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
-    }
-
     const home = await mkdtemp(join(tmpdir(), "snorlax-e2e-"));
-    const run = (args: readonly string[]) =>
-      spawnSync(process.execPath, [bundle, ...args], {
-        encoding: "utf8",
-        env: { HOME: home, SNORLAX_HOME: join(home, "data"), PATH: "/usr/bin:/bin" }
-      });
+    const run = (args: readonly string[]) => runBundle(args, { home });
     try {
       const at = Date.now() - 3_600_000;
       await writeClaudeSession(home, {

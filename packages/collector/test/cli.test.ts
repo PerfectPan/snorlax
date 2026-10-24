@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +8,7 @@ import * as z from "zod/mini";
 import { failureSchema, refreshResultSchema, snapshotOutputSchema, statusSchema } from "@rivus/snorlax-protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
+import { runBundle } from "./fixtures/bundle.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
@@ -17,20 +16,10 @@ import { makeSnapshot } from "./sample.ts";
  * `SNORLAX_HOME` so no real agent directory is ever touched. The bundle is built before tests run
  * (`pnpm run check` orders build before test); a bare `pnpm test` needs `pnpm run build` first.
  */
-const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 
-// `doctor` asks launchd about the scheduled job on macOS; a launchctl path that does not exist keeps the real
-// launchctl out of the tests and creates no stub file in the home whose emptiness they assert.
-const run = (args: readonly string[], home: string) =>
-  spawnSync(process.execPath, [bundle, ...args], {
-    encoding: "utf8",
-    env: {
-      HOME: home,
-      SNORLAX_HOME: join(home, "data"),
-      SNORLAX_LAUNCHCTL: join(home, "no-launchctl"),
-      PATH: "/usr/bin:/bin"
-    }
-  });
+// `doctor` asks launchd about the scheduled job on macOS; the helper's default launchctl path does not exist,
+// which keeps the real launchctl out of the tests and creates no stub file in the home whose emptiness they assert.
+const run = (args: readonly string[], home: string) => runBundle(args, { home });
 
 /** One JSON object and nothing else: a plain-object record, parsed at the boundary with a schema. */
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -48,9 +37,6 @@ const parseOneJsonObject = (stdout: string): z.output<typeof jsonObjectSchema> =
 let home: string;
 
 beforeAll(async () => {
-  if (!existsSync(bundle)) {
-    throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
-  }
   home = await mkdtemp(join(tmpdir(), "snorlax-cli-"));
 });
 
@@ -250,11 +236,7 @@ describe("refresh and rebuild", () => {
     await rm(refreshHome, { recursive: true, force: true });
   });
 
-  const runRefreshHome = (args: readonly string[]) =>
-    spawnSync(process.execPath, [bundle, ...args], {
-      encoding: "utf8",
-      env: { HOME: refreshHome, SNORLAX_HOME: join(refreshHome, "data"), PATH: "/usr/bin:/bin" }
-    });
+  const runRefreshHome = (args: readonly string[]) => runBundle(args, { home: refreshHome });
 
   it("creates the data directory with mode 0700 on the first writing command", async () => {
     const refreshed = runRefreshHome(["refresh", "--json"]);
