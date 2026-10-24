@@ -2,7 +2,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { Data, Effect, type Context } from "effect";
+import { Cause, Data, Duration, Effect, type Context } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
@@ -51,6 +51,12 @@ export class PlistWriteFailed extends Data.TaggedError("PlistWriteFailed")<{ rea
 export class PlistRemoveFailed extends Data.TaggedError("PlistRemoveFailed")<{ readonly message: string }> {}
 
 const LAUNCHCTL_TIMEOUT_MS = 15_000;
+/**
+ * How long an interrupted run waits for its stopped `launchctl` child to exit. The kit sends SIGKILL 2 s after
+ * SIGTERM, so the child is normally gone well before this; the limit keeps a child that never exits from holding
+ * the interrupted run open.
+ */
+const CHILD_EXIT_LIMIT = Duration.seconds(5);
 const PLIST_MODE = 0o644;
 const DEFAULT_LAUNCHCTL = "/bin/launchctl";
 
@@ -97,15 +103,33 @@ const currentUid: Effect.Effect<number, UserIdUnavailable> = Effect.suspend(() =
 
 const guiDomain = (uid: number): string => `gui/${uid}`;
 
-/** An interrupted run stops the `launchctl` child through the signal instead of leaving it running. */
+/**
+ * An interrupted run stops the `launchctl` child and waits, up to `CHILD_EXIT_LIMIT` on the Effect clock, until it
+ * has exited — the kit settles `run` only after the child has closed — so whatever the interrupted run reads from
+ * launchd next is no longer changing under it.
+ */
 const runLaunchctl = (
   platform: SchedulerPlatform,
   args: readonly string[]
 ): Effect.Effect<LaunchctlResult, LaunchctlFailed> => {
   const command = launchctlBinary(platform);
-  return Effect.tryPromise({
-    try: (signal) => platform.process.run(command, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, signal }),
-    catch: (error) => new LaunchctlFailed({ message: `cannot run launchctl (${command}): ${errorMessage(error)}` })
+  return Effect.callback<LaunchctlResult, LaunchctlFailed>((resume) => {
+    const controller = new AbortController();
+    const running = Promise.resolve().then(() =>
+      platform.process.run(command, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, signal: controller.signal })
+    );
+    void running.then(
+      (result) => resume(Effect.succeed(result)),
+      (error: unknown) =>
+        resume(
+          Effect.fail(new LaunchctlFailed({ message: `cannot run launchctl (${command}): ${errorMessage(error)}` }))
+        )
+    );
+    return Effect.sync(() => controller.abort()).pipe(
+      Effect.andThen(Effect.ignore(Effect.tryPromise(() => running))),
+      Effect.timeoutOption(CHILD_EXIT_LIMIT),
+      Effect.asVoid
+    );
   }).pipe(
     Effect.flatMap((result) => {
       if (result.timedOut || result.signal !== null) {
@@ -198,6 +222,16 @@ const bootout = (platform: SchedulerPlatform, target: string): Effect.Effect<voi
     result.code === 0 ? Effect.void : Effect.fail(launchctlFailure(result, "bootout"))
   );
 
+/** Boots out the service when launchd runs it from `plistPath`. */
+const bootoutIfLoadedFrom = (
+  platform: SchedulerPlatform,
+  target: string,
+  plistPath: string
+): Effect.Effect<void, LaunchctlFailed> =>
+  Effect.flatMap(loadedService(platform, target), (loaded) =>
+    loaded.state === "loaded" && loaded.path === plistPath ? bootout(platform, target) : Effect.void
+  );
+
 const bootstrap = (
   platform: SchedulerPlatform,
   domain: string,
@@ -272,9 +306,19 @@ export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.S
           yield* bootout(platform, target);
         }
         yield* bootstrap(platform, domain, plistPath).pipe(
-          // A failed or interrupted install must not leave an installed-looking plist for the next login. The
-          // removal's own failure is dropped: the command reports the bootstrap failure, not the cleanup.
-          Effect.onError(() => Effect.ignore(Effect.tryPromise(() => platform.fs.remove(plistPath))))
+          // A failed or interrupted install must not leave an installed-looking plist for the next login. An
+          // interrupted bootstrap may still have loaded the service before its child stopped; runLaunchctl has
+          // waited for that child to exit, so a service launchd now runs from this plist is booted out before the
+          // plist goes. The cleanup runs uninterruptibly, every launchctl in it is bounded, and its own failures are
+          // dropped: the command reports the bootstrap failure or the interruption, not the cleanup.
+          Effect.onError((cause) =>
+            Effect.andThen(
+              Cause.hasInterrupts(cause)
+                ? Effect.ignore(bootoutIfLoadedFrom(platform, target, plistPath))
+                : Effect.void,
+              Effect.ignore(Effect.tryPromise(() => platform.fs.remove(plistPath)))
+            )
+          )
         );
         return plistPath;
       }),

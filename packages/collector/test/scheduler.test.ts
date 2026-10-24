@@ -8,7 +8,8 @@ import { createNodePlatform } from "@rivus/agent-kit/node";
 import type { Platform } from "@rivus/agent-kit/platform";
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
 import { failureSchema } from "@rivus/snorlax-protocol";
-import { Effect, Fiber, Layer } from "effect";
+import { Duration, Effect, Fiber, Layer } from "effect";
+import { TestClock } from "effect/testing";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -230,6 +231,105 @@ describe("the system's scheduler", () => {
 
     await Effect.runPromise(Fiber.interrupt(fiber));
     expect(bootstrap.signal?.aborted).toBe(true);
+    expect(await platform.fs.stat(PLIST)).toBeUndefined();
+  });
+});
+
+describe("an install interrupted inside launchctl bootstrap", () => {
+  const domain = `gui/${process.getuid?.()}`;
+  const target = `${domain}/io.github.perfectpan.snorlax.refresh`;
+
+  /**
+   * A launchctl that behaves like a real child: a stopped `bootstrap` does not end at the abort but exits only once
+   * `exitBootstrap` is called, having loaded the service from its plist when `loads` is true. `print` and `bootout`
+   * answer from that state, and every argv is recorded in `runs`.
+   */
+  const launchctlOutlivingAbort = (loads: boolean) => {
+    const runs: (readonly string[])[] = [];
+    const state: { loadedFrom?: string } = {};
+    const signals = { entered: () => {}, aborted: () => {}, exit: () => {} };
+    const entered = new Promise<void>((resolve) => {
+      signals.entered = resolve;
+    });
+    const aborted = new Promise<void>((resolve) => {
+      signals.aborted = resolve;
+    });
+    const exited = new Promise<void>((resolve) => {
+      signals.exit = resolve;
+    });
+    const answer = (code: number, stdout = "") => ({ code, signal: null, stdout, stderr: "", timedOut: false });
+    const run: Platform["process"]["run"] = async (_command, args, options) => {
+      runs.push(args);
+      if (args[0] === "print") {
+        return state.loadedFrom === undefined
+          ? answer(113)
+          : answer(0, `${target} = {\n\tpath = ${state.loadedFrom}\n}\n`);
+      }
+      if (args[0] === "bootout") {
+        state.loadedFrom = undefined;
+        return answer(0);
+      }
+      signals.entered();
+      await new Promise<void>((resolve) => options.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      signals.aborted();
+      await exited;
+      if (loads) {
+        state.loadedFrom = args[2];
+      }
+      // The kit rejects an aborted run once the child has closed.
+      throw new Error("launchctl was stopped");
+    };
+    return { run, runs, state, entered, aborted, exitBootstrap: signals.exit };
+  };
+
+  const installOn = (run: Platform["process"]["run"], platform: MemoryPlatform) =>
+    Effect.gen(function* () {
+      return yield* (yield* Scheduler).install({ dataDir: DATA_DIR }, Effect.void);
+    }).pipe(
+      Effect.provide(Layer.provide(Scheduler.launchd, Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform, run))))
+    );
+
+  it("waits for the stopped bootstrap to exit, then boots out the service it loaded and removes the plist", async () => {
+    const launchctl = launchctlOutlivingAbort(true);
+    const platform = memoryPlatform({ SNORLAX_LAUNCHCTL: LAUNCHCTL });
+    const fiber = Effect.runFork(installOn(launchctl.run, platform));
+    await launchctl.entered;
+    const interrupted = Effect.runPromise(Fiber.interrupt(fiber));
+    await launchctl.aborted;
+    // The service loads only as the child exits, so a run that read launchd before the exit would see nothing loaded.
+    launchctl.exitBootstrap();
+    await interrupted;
+
+    expect(launchctl.runs).toEqual([
+      ["print", target],
+      ["bootstrap", domain, PLIST],
+      ["print", target],
+      ["bootout", target]
+    ]);
+    expect(launchctl.state.loadedFrom).toBeUndefined();
+    expect(await platform.fs.stat(PLIST)).toBeUndefined();
+  });
+
+  it("stops waiting for a bootstrap that never exits once the Effect clock passes the limit", async () => {
+    const launchctl = launchctlOutlivingAbort(false);
+    const platform = memoryPlatform({ SNORLAX_LAUNCHCTL: LAUNCHCTL });
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(installOn(launchctl.run, platform));
+        yield* Effect.promise(() => launchctl.entered);
+        const interrupting = yield* Effect.forkChild(Fiber.interrupt(fiber));
+        // The child has been stopped, so the run now waits for it on the test clock.
+        yield* Effect.promise(() => launchctl.aborted);
+        yield* TestClock.adjust(Duration.seconds(5));
+        yield* Fiber.join(interrupting);
+      }).pipe(Effect.provide(TestClock.layer()))
+    );
+
+    expect(launchctl.runs).toEqual([
+      ["print", target],
+      ["bootstrap", domain, PLIST],
+      ["print", target]
+    ]);
     expect(await platform.fs.stat(PLIST)).toBeUndefined();
   });
 });

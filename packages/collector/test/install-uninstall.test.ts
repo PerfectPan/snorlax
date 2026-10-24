@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -68,6 +69,17 @@ interface InstallEnv {
   readonly failBootstrap: string;
   /** When this file exists, `print` emits a nested block whose `path =` line names this plist first. */
   readonly nested: string;
+  /**
+   * When this FIFO exists, `bootstrap` is held: it writes its pid to `bootstrapPid`, announces itself on this FIFO,
+   * and loads the service only once a line arrives on `releaseBootstrap`. A SIGTERM ends it before that, unless
+   * `outlivesStop` exists: then it reports the signal on `bootstrapStopped` and keeps waiting, like a launchctl
+   * whose load has already reached launchd.
+   */
+  readonly bootstrapEntered: string;
+  readonly releaseBootstrap: string;
+  readonly outlivesStop: string;
+  readonly bootstrapStopped: string;
+  readonly bootstrapPid: string;
 }
 
 const run = (env: InstallEnv, args: readonly string[], overrides?: { readonly snorlaxHome?: string }) =>
@@ -83,6 +95,7 @@ const writeStub = async (dir: string): Promise<string> => {
   const source = [
     `#!${process.execPath}`,
     `import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";`,
+    `import { readFile } from "node:fs/promises";`,
     `import { dirname, join } from "node:path";`,
     `import { fileURLToPath } from "node:url";`,
     `const dir = dirname(fileURLToPath(import.meta.url));`,
@@ -104,6 +117,17 @@ const writeStub = async (dir: string): Promise<string> => {
     `  const path = readFileSync(marker, "utf8").trim();`,
     `  if (path !== "") console.log("\\tpath = " + path);`,
     `  console.log("}");`,
+    `  process.exit(0);`,
+    `}`,
+    `if (command === "bootstrap" && existsSync(join(dir, "bootstrap-entered"))) {`,
+    `  writeFileSync(join(dir, "bootstrap-pid"), String(process.pid));`,
+    `  if (existsSync(join(dir, "outlives-stop"))) {`,
+    `    process.on("SIGTERM", () => writeFileSync(join(dir, "bootstrap-stopped"), "SIGTERM\\n"));`,
+    `  }`,
+    `  writeFileSync(join(dir, "bootstrap-entered"), "bootstrap\\n");`,
+    `  // The read opens in the thread pool, so the event loop stays free for the SIGTERM handler.`,
+    `  await readFile(join(dir, "release-bootstrap"));`,
+    `  writeFileSync(marker, plistPath);`,
     `  process.exit(0);`,
     `}`,
     `if (command === "bootstrap") {`,
@@ -137,7 +161,12 @@ const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) =
       record: join(stubDir, "argv.jsonl"),
       loaded: join(stubDir, "loaded"),
       failBootstrap: join(stubDir, "fail-bootstrap"),
-      nested: join(stubDir, "nested")
+      nested: join(stubDir, "nested"),
+      bootstrapEntered: join(stubDir, "bootstrap-entered"),
+      releaseBootstrap: join(stubDir, "release-bootstrap"),
+      outlivesStop: join(stubDir, "outlives-stop"),
+      bootstrapStopped: join(stubDir, "bootstrap-stopped"),
+      bootstrapPid: join(stubDir, "bootstrap-pid")
     });
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -440,6 +469,81 @@ describe("install and uninstall", () => {
       const interrupt = await runInterrupted("SIGINT");
       expect(interrupt.name).toBe("SIGINT");
       expect(interrupt.stdout).toBe("");
+    });
+  });
+
+  describe("a SIGTERM while launchctl bootstrap runs", () => {
+    /**
+     * Runs `install` until the stub's held bootstrap announces itself, signals snorlax with SIGTERM, then lets
+     * `afterSignal` finish the stub. Every step waits on a FIFO or a process event, never on time.
+     */
+    const installSignaledInBootstrap = async (env: InstallEnv, afterSignal: () => Promise<void>) => {
+      for (const fifo of [env.bootstrapEntered, env.releaseBootstrap, env.bootstrapStopped]) {
+        execFileSync("/usr/bin/mkfifo", [fifo]);
+      }
+      const entered = readFile(env.bootstrapEntered, "utf8");
+      const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: env.launchctl, os: "darwin" });
+      let stdout = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += String(chunk);
+      });
+      const exited = new Promise<NodeJS.Signals | null>((resolve) => {
+        child.on("exit", (_code, signal) => resolve(signal));
+      });
+      expect(await entered).toBe("bootstrap\n");
+      child.kill("SIGTERM");
+      await afterSignal();
+      const signal = await exited;
+      const pid = Number(await readFile(env.bootstrapPid, "utf8"));
+      const stubAlive = (() => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      return { signal, stdout, stubAlive };
+    };
+
+    it("boots out a service the bootstrap loaded before it stopped, and removes the plist", async () => {
+      await withInstallHome("darwin", async (env) => {
+        await writeFile(env.outlivesStop, "", "utf8");
+        const outcome = await installSignaledInBootstrap(env, async () => {
+          // The stub reports the SIGTERM snorlax relayed to it, so snorlax is now waiting for it to exit; the
+          // bootstrap then completes, as one already in launchd does.
+          expect(await readFile(env.bootstrapStopped, "utf8")).toBe("SIGTERM\n");
+          await writeFile(env.releaseBootstrap, "release\n", "utf8");
+        });
+
+        expect(outcome).toEqual({ signal: "SIGTERM", stdout: "", stubAlive: false });
+        const target = `gui/${uid()}/${LABEL}`;
+        expect(await readInvocations(env.record)).toEqual([
+          ["print", target],
+          ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
+          ["print", target],
+          ["bootout", target]
+        ]);
+        expect(existsSync(env.loaded)).toBe(false);
+        expect(existsSync(plistPathOf(env.home))).toBe(false);
+      });
+    });
+
+    it("boots out nothing when the bootstrap stops before it loads, and removes the plist", async () => {
+      await withInstallHome("darwin", async (env) => {
+        // Without outlives-stop the held bootstrap ends at the SIGTERM, before it loads anything.
+        const outcome = await installSignaledInBootstrap(env, async () => {});
+
+        expect(outcome).toEqual({ signal: "SIGTERM", stdout: "", stubAlive: false });
+        const target = `gui/${uid()}/${LABEL}`;
+        expect(await readInvocations(env.record)).toEqual([
+          ["print", target],
+          ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
+          ["print", target]
+        ]);
+        expect(existsSync(env.loaded)).toBe(false);
+        expect(existsSync(plistPathOf(env.home))).toBe(false);
+      });
     });
   });
 
