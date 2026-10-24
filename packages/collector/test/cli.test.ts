@@ -111,11 +111,39 @@ describe("calling convention (plan 3.2.1)", () => {
     expect(result.stderr).not.toContain(home);
   });
 
-  it("rejects --json=… : the flag takes no value, one failure object, exit 2", () => {
-    const result = run(["status", "--json=true"], home);
-    expect(z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code).toBe("invalid-arguments");
-    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+  it("the output mode follows the parsed --json value, however it was spelled", () => {
+    // effect/cli parses a boolean literal after the flag as its value and knows --no-json; the
+    // handler sees exactly that value, so these all print human text and exit 0.
+    for (const args of [
+      ["status", "--json", "false"],
+      ["status", "--json", "no"],
+      ["status", "--json", "0"],
+      ["status", "--no-json", "--json"],
+      ["status", "--json=false"]
+    ]) {
+      const result = run(args, home);
+      expect(result.status).toBe(0);
+      expect(result.stdout.startsWith("{")).toBe(false);
+      expect(result.stdout).toContain("snorlax");
+    }
+    // --json=true and a bare --json parse to true; effect/cli keeps the first value when the flag is
+    // spelled both ways, so --json --no-json stays JSON too.
+    for (const args of [
+      ["status", "--json"],
+      ["status", "--json=true"],
+      ["status", "--json", "--no-json"]
+    ]) {
+      const result = run(args, home);
+      expect(result.status).toBe(0);
+      expect(parseOneJsonObject(result.stdout).ok).toBe(true);
+    }
+  });
+
+  it("a --json behind -- is a positional: parse error, human rendering, exit 2", () => {
+    const result = run(["status", "--", "--json"], home);
     expect(result.status).toBe(2);
+    expect(result.stdout.startsWith("{")).toBe(false);
+    expect(result.stderr).toContain("Unexpected");
   });
 });
 

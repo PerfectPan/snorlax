@@ -14,15 +14,10 @@ export default defineConfig({
   lint: { ...lint, ignorePatterns: ["node_modules/**", "dist/**"] },
   build: {
     target: "node22.13",
-    // Terser with everything off except comment removal: the bundle stays readable and unminified
-    // (plan 2.4 D9 keeps a debuggable single file), but the inlined dependencies' doc comments —
-    // about 40% of the bytes — go. minify: false would keep every comment.
-    minify: "terser",
-    terserOptions: {
-      compress: false,
-      mangle: false,
-      format: { comments: false, keep_numbers: true }
-    },
+    // The bundle stays readable and unminified (plan 2.4 D9 keeps a debuggable single file), but
+    // rolldown drops the inlined dependencies' doc comments — about half the bytes — while keeping
+    // legal ones. minify would reformat the whole file into long lines; comments alone do not.
+    minify: false,
     outDir: "dist",
     lib: {
       entry: "src/cli/bin.ts",
@@ -39,7 +34,10 @@ export default defineConfig({
           }
         }
       ],
-      output: { banner: "#!/usr/bin/env node" }
+      output: {
+        banner: "#!/usr/bin/env node",
+        comments: { legal: true, annotation: false, jsdoc: false }
+      }
     }
   }
 });

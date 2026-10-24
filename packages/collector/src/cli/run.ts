@@ -16,18 +16,12 @@ import { Refresh } from "../refresh/service.ts";
 import { Schedule } from "../schedule/service.ts";
 import { SnapshotStore } from "../snapshot/store.ts";
 import { StatusReport } from "../status/report.ts";
+import { JsonFlag } from "../commands/flags.ts";
 import { CommandOutput } from "../commands/output.ts";
 import { errorMessage } from "../util/error-message.ts";
 import { RuntimeInfo } from "../version.ts";
 import { CliEnv } from "./env.ts";
-import {
-  bufferedConsole,
-  cliConsole,
-  printFailureJson,
-  printFailureMessage,
-  printHuman,
-  printPayloadJson
-} from "./output.ts";
+import { cliConsole, printFailureJson, printFailureMessage, printHuman, printPayloadJson } from "./output.ts";
 import { rootCommand } from "./root.ts";
 
 /**
@@ -68,8 +62,8 @@ const COMMAND_NAMES = new Set<string>([
 /** What one invocation decided, after all streams were written. */
 interface Outcome {
   readonly exit: number;
-  /** In `--json` mode effect/cli's help rendering is buffered; a buffered help still goes out. */
-  readonly flushConsole: boolean;
+  /** Human mode flushes effect/cli's buffered rendering; JSON mode drops it for the envelope. */
+  readonly output: "json" | "human";
 }
 
 /**
@@ -107,7 +101,9 @@ function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
     )
   );
   return Layer.provideMerge(
-    Layer.mergeAll(writers, readers),
+    // The parsed --json value reaches the handlers through runWith itself; this default only
+    // satisfies the type at the top and reads as human mode where no run provided it.
+    Layer.mergeAll(writers, readers, Layer.succeed(JsonFlag, false)),
     Layer.provideMerge(Log.live, Layer.provideMerge(DataDir.live, base))
   );
 }
@@ -126,45 +122,42 @@ export const runCli = (
     const env = yield* CliEnv;
     const info = yield* RuntimeInfo;
     const home = platform.home;
-    // The parsed flag decides the output mode, and `--json=` is rejected before anything runs: the
-    // boolean flag takes no value, and a silent `--json=false` meaning "json" would lie either way.
-    const jsonTokens = argv.filter((token) => token === "--json" || token.startsWith("--json="));
-    const malformedJson = jsonTokens.find((token) => token !== "--json");
-    const json = jsonTokens.length > 0;
+    // The output mode follows the value effect/cli actually parsed, which the handler hands over in
+    // its render. Where no handler ran — a parse failure or a built-in action — the mode falls back
+    // to the tokens before `--`, which is the best the raw line can say (a `--json` behind `--` is a
+    // positional, not the flag).
+    const fallbackJson = argv
+      .slice(0, argv.includes("--") ? argv.indexOf("--") : argv.length)
+      .some((token) => token === "--json" || token === "--json=true");
     const startedAt = platform.clock.monotonic();
     const commandName = argv.find((token) => !token.startsWith("-"));
     let failureCode: string | undefined;
 
-    // In `--json` mode effect/cli's help and version rendering is buffered and only flushed when it
-    // is the thing the run was asked for, so a failed run still prints exactly one JSON object.
+    // effect/cli renders help and parse errors through the Console while it runs, but the parsed
+    // `--json` value is known only afterwards, so every rendering is buffered first and flushed to
+    // the streams once the mode is decided — dropped entirely when a JSON envelope goes out instead.
     const buffered: { readonly out: string[]; readonly err: string[] } = { out: [], err: [] };
-    const consoleImpl: Console.Console = json ? bufferedConsole(home, buffered) : cliConsole(env, home);
+    const consoleImpl: Console.Console = cliConsole(home, buffered);
 
-    const program = (
-      malformedJson === undefined
-        ? Effect.gen(function* () {
-            yield* Command.runWith(rootCommand, { version: info.version, renderErrors: true })([...argv]);
-            const output = yield* (yield* CommandOutput).take;
-            if (Option.isNone(output)) {
-              // A built-in action (--help/--version) ran: effect/cli rendered it through the Console.
-              // With --json that rendering is discarded and the run reports the unusable combination.
-              if (json) {
-                printFailureJson(env, home, "invalid-arguments", "--help/--version is not available with --json");
-                return { exit: 2, flushConsole: false } satisfies Outcome;
-              }
-              return { exit: 0, flushConsole: false } satisfies Outcome;
-            }
-            if (json) {
-              printPayloadJson(env, home, output.value.payload);
-            } else {
-              printHuman(env, home, output.value.human);
-            }
-            return { exit: 0, flushConsole: false } satisfies Outcome;
-          })
-        : Effect.fail(
-            new UsageError({ message: `--json does not take a value ("${malformedJson}"); pass it as a plain --json` })
-          )
-    ).pipe(
+    const program = Effect.gen(function* () {
+      yield* Command.runWith(rootCommand, { version: info.version, renderErrors: true })([...argv]);
+      const output = yield* (yield* CommandOutput).take;
+      if (Option.isNone(output)) {
+        // A built-in action (--help/--version) ran: effect/cli rendered it through the Console.
+        // With --json that rendering is dropped and the run reports the unusable combination.
+        if (fallbackJson) {
+          printFailureJson(env, home, "invalid-arguments", "--help/--version is not available with --json");
+          return { exit: 2, output: "json" } satisfies Outcome;
+        }
+        return { exit: 0, output: "human" } satisfies Outcome;
+      }
+      if (output.value.json) {
+        printPayloadJson(env, home, output.value.payload);
+        return { exit: 0, output: "json" } satisfies Outcome;
+      }
+      printHuman(env, home, output.value.human);
+      return { exit: 0, output: "human" } satisfies Outcome;
+    }).pipe(
       Effect.provideService(Console.Console, consoleImpl),
       Effect.catchDefect((defect) => new CommandError({ code: "internal", message: errorMessage(defect) })),
       Effect.catch((error): Effect.Effect<Outcome> => {
@@ -172,38 +165,39 @@ export const runCli = (
         // Console above (buffered when --json), the error details too when not suppressed.
         if (error instanceof CliError.ShowHelp) {
           if (error.errors.length === 0) {
-            return Effect.succeed({ exit: 0, flushConsole: true });
+            return Effect.succeed({ exit: 0, output: "human" });
           }
           failureCode = "invalid-arguments";
-          if (json) {
+          if (fallbackJson) {
             printFailureJson(env, home, failureCode, error.errors.map((parseError) => parseError.message).join("; "));
+            return Effect.succeed({ exit: 2, output: "json" });
           }
-          return Effect.succeed({ exit: 2, flushConsole: false });
+          return Effect.succeed({ exit: 2, output: "human" });
         }
         if (error instanceof UsageError) {
           failureCode = "invalid-arguments";
-          if (json) {
+          if (fallbackJson) {
             printFailureJson(env, home, failureCode, error.message);
           } else {
             printFailureMessage(env, home, error.message);
           }
-          return Effect.succeed({ exit: 2, flushConsole: false });
+          return Effect.succeed({ exit: 2, output: "json" });
         }
         const code: FailureCode = error instanceof CommandError ? error.code : "internal";
         failureCode = code;
         const message = errorMessage(error);
-        if (json) {
+        if (fallbackJson) {
           printFailureJson(env, home, code, message);
         } else {
           printFailureMessage(env, home, message);
         }
-        return Effect.succeed({ exit: 1, flushConsole: false });
+        return Effect.succeed({ exit: 1, output: fallbackJson ? "json" : "human" });
       })
     );
 
     const outcome = yield* program;
 
-    if (json && outcome.flushConsole) {
+    if (outcome.output === "human") {
       for (const text of buffered.out) {
         env.stdout.write(text);
       }

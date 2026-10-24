@@ -1,7 +1,8 @@
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 import { Effect } from "effect";
 
 import { UsageError } from "../errors.ts";
+import { JsonFlag } from "../commands/flags.ts";
 import { doctorCommand } from "../commands/doctor.ts";
 import { installCommand } from "../commands/install.ts";
 import { pairCommand } from "../commands/pair.ts";
@@ -13,8 +14,8 @@ import { uninstallCommand } from "../commands/uninstall.ts";
 import { unpairCommand } from "../commands/unpair.ts";
 
 /**
- * The root command (plan 3.13): the global `--json` flag is a shared flag, so it is accepted both
- * before and after the command name. The root's own handler only runs when no command was named and
+ * The root command (plan 3.13): the global `--json` flag is an effect/cli Setting, so it is accepted
+ * both before and after the command name and its parsed value reaches the handler. The root's own handler only runs when no command was named and
  * fails as a usage error; every other parse failure (unknown command, unknown option, a missing or
  * malformed flag value) surfaces through `effect/cli` as a `ShowHelp` error, which `cli/run` maps to
  * exit 2 with the `invalid-arguments` code.
@@ -22,12 +23,7 @@ import { unpairCommand } from "../commands/unpair.ts";
 export const rootCommand = Command.make("snorlax", {}, () =>
   Effect.fail(new UsageError({ message: "a command is required; run `snorlax --help` for the command list" }))
 ).pipe(
-  Command.withSharedFlags({
-    json: Flag.Boolean("json").pipe(
-      Flag.withDefault(false),
-      Flag.withDescription("print one JSON object on stdout instead of human-readable text")
-    )
-  }),
+  Command.withGlobalFlags([JsonFlag]),
   Command.withDescription("read coding-agent usage logs and report tokens, requests, sessions and cost"),
   Command.withSubcommands([
     statusCommand,

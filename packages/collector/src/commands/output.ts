@@ -11,6 +11,8 @@ import { Context, Effect, Layer, Option } from "effect";
 export interface CommandRender {
   readonly payload: object;
   readonly human: string;
+  /** The parsed `--json` value (commands/flags.ts): `cli/` prints `payload` when true, `human` when false. */
+  readonly json: boolean;
 }
 
 /** The one-slot handoff from the command handler to the CLI framework: exactly one handler runs per process. */

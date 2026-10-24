@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import type { Snapshot } from "@rivus/snorlax-protocol";
 
 import { SnapshotStore } from "../snapshot/store.ts";
+import { JsonFlag } from "./flags.ts";
 import { CommandOutput } from "./output.ts";
 
 const humanSummary = (snapshot: Snapshot): string => {
@@ -30,10 +31,12 @@ const humanSummary = (snapshot: Snapshot): string => {
  */
 export const snapshotCommand = Command.make("snapshot", {}, () =>
   Effect.gen(function* () {
+    const json = yield* JsonFlag;
     const snapshot = yield* (yield* SnapshotStore).current;
     yield* (yield* CommandOutput).render({
       payload: { schemaVersion: 1, ok: true, snapshot },
-      human: `${humanSummary(snapshot)}\n`
+      human: `${humanSummary(snapshot)}\n`,
+      json
     });
   })
 ).pipe(Command.withDescription("print the current snapshot"));

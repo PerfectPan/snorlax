@@ -2,6 +2,7 @@ import { Command } from "effect/cli";
 import { Effect } from "effect";
 
 import { Doctor } from "../doctor/service.ts";
+import { JsonFlag } from "./flags.ts";
 import { CommandOutput } from "./output.ts";
 
 /**
@@ -11,8 +12,9 @@ import { CommandOutput } from "./output.ts";
  */
 export const doctorCommand = Command.make("doctor", {}, () =>
   Effect.gen(function* () {
+    const json = yield* JsonFlag;
     const payload = yield* (yield* Doctor).run;
     const human = payload.checks.map((check) => `${check.id}: ${check.status} — ${check.detail}`).join("\n");
-    yield* (yield* CommandOutput).render({ payload, human: `${human}\n` });
+    yield* (yield* CommandOutput).render({ payload, human: `${human}\n`, json });
   })
 ).pipe(Command.withDescription("local checks: node version, data directory, config"));

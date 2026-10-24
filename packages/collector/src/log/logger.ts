@@ -92,9 +92,9 @@ export async function createLogger(
 
 /**
  * The command log as a service. Building the layer opens nothing; `event` appends only — when the
- * data directory or its `logs` directory does not exist yet, the line is dropped. Commands that write
- * (`refresh`, `rebuild`, `install`, `uninstall`) create the directory through `DataDir.ensure`; the
- * read-only commands log nothing on a fresh machine instead of creating files (plan 3.13).
+ * data directory or its `logs` directory does not exist yet, the line is dropped. Commands that
+ * write (`refresh`, `rebuild`, `install`) create the directory through `DataDir.ensure`; the other
+ * commands log nothing on a fresh machine instead of creating files (plan 3.13).
  */
 export class Log extends Context.Service<Log, Logger>()("snorlax/log/Log") {
   static readonly live: Layer.Layer<Log, never, SnorlaxPlatform | NodeFiles | DataDir> = Layer.effect(

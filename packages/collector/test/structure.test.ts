@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -7,7 +7,9 @@ import { describe, expect, it } from "vite-plus/test";
  * The import direction of plan 3.13, enforced over every source file (not a directory whitelist):
  * files outside `cli/` never import `cli/`, and files outside `cli/` and `commands/` never import
  * `commands/` — so `cli/` may import `commands/`, `commands/` may import feature modules, and
- * errors.ts, the shared services and the pure rules stay below both.
+ * errors.ts, the shared services and the pure rules stay below both. All three import forms count:
+ * `from "…"`, side-effect `import "…"`, and dynamic `import("…")`; relative specs are resolved
+ * against the importing file's directory before the top-level segment is read.
  */
 
 const srcRoot = fileURLToPath(new URL("../src", import.meta.url));
@@ -26,18 +28,19 @@ const listFiles = async (dir: string): Promise<string[]> => {
   return files;
 };
 
-/** The first real path segment of an import spec, e.g. `../cli/env.ts` or `./cli/env.ts` -> `cli`. */
-const importedTopLevel = (spec: string): string | undefined => {
-  for (const segment of spec.replace(/\.ts$/, "").split("/")) {
-    if (segment === "." || segment === ".." || segment === "") {
-      continue;
-    }
-    return segment;
+/** Every module specifier in the file, whichever import form carries it. */
+const importSpecs = (text: string): string[] =>
+  [...text.matchAll(/(?:\bfrom\s+|\bimport\s+|\bimport\()\s*["']([^"']+)["']/g)].map((match) => match[1] ?? "");
+
+/** The imported file's path from `srcRoot` down, or undefined for non-relative specifiers. */
+const resolvedFromSrc = (spec: string, importerDir: string): string | undefined => {
+  if (!spec.startsWith(".")) {
+    return undefined;
   }
-  return undefined;
+  return relative(srcRoot, resolve(importerDir, spec)).split(sep).join("/");
 };
 
-const importSpecs = (text: string): string[] => [...text.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1] ?? "");
+const importedTopLevel = (fromSrc: string): string | undefined => fromSrc.split("/")[0];
 
 describe("collector module direction (plan 3.13)", () => {
   it("files outside cli/ never import cli/, and files outside cli/ and commands/ never import commands/", async () => {
@@ -46,8 +49,13 @@ describe("collector module direction (plan 3.13)", () => {
       const fromSrc = relative(srcRoot, file).split(sep).join("/");
       const inCli = fromSrc === "cli" || fromSrc.startsWith("cli/");
       const inCommands = fromSrc === "commands" || fromSrc.startsWith("commands/");
+      const importerDir = dirname(file);
       for (const spec of importSpecs(await readFile(file, "utf8"))) {
-        const topLevel = importedTopLevel(spec);
+        const imported = resolvedFromSrc(spec, importerDir);
+        if (imported === undefined) {
+          continue;
+        }
+        const topLevel = importedTopLevel(imported);
         if (topLevel === "cli" && !inCli) {
           offenders.push(`${fromSrc} -> ${spec}`);
         }
@@ -61,12 +69,15 @@ describe("collector module direction (plan 3.13)", () => {
 
   it("every command module imports no sibling command module", async () => {
     const offenders: string[] = [];
+    // commands/ also holds the shared render slot and the global --json flag; commands never import
+    // each other.
+    const shared = new Set(["commands/output.ts", "commands/flags.ts"]);
     for (const file of await listFiles(join(srcRoot, "commands"))) {
-      const text = await readFile(file, "utf8");
-      // Commands import feature modules and effect/cli, never a sibling command (output.ts apart).
-      for (const spec of importSpecs(text)) {
-        if (spec.startsWith("./") && spec !== "./output.ts") {
-          offenders.push(`${relative(srcRoot, file)} -> ${spec}`);
+      const importerDir = dirname(file);
+      for (const spec of importSpecs(await readFile(file, "utf8"))) {
+        const imported = resolvedFromSrc(spec, importerDir);
+        if (imported !== undefined && imported.startsWith("commands/") && !shared.has(imported)) {
+          offenders.push(`${relative(srcRoot, file).split(sep).join("/")} -> ${spec}`);
         }
       }
     }

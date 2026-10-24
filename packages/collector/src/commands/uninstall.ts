@@ -3,6 +3,7 @@ import { Effect } from "effect";
 
 import { DataDir } from "../data-dir/data-dir.ts";
 import { Schedule } from "../schedule/service.ts";
+import { JsonFlag } from "./flags.ts";
 import { CommandOutput } from "./output.ts";
 
 /**
@@ -16,6 +17,7 @@ export const uninstallCommand = Command.make(
   },
   ({ data }) =>
     Effect.gen(function* () {
+      const json = yield* JsonFlag;
       const dataDir = yield* DataDir;
       const { dataLeftovers } = yield* (yield* Schedule).uninstall({ deleteData: data });
       let human = data ? "LaunchAgent removed and data directory deleted\n" : "LaunchAgent removed\n";
@@ -25,6 +27,6 @@ export const uninstallCommand = Command.make(
           `the data directory ${dataDir.path} is kept; entries snorlax did not write remain: ` +
           `${dataLeftovers.join(", ")}\n`;
       }
-      yield* (yield* CommandOutput).render({ payload: { schemaVersion: 1, ok: true }, human });
+      yield* (yield* CommandOutput).render({ payload: { schemaVersion: 1, ok: true }, human, json });
     })
 ).pipe(Command.withDescription("remove the LaunchAgent; --data deletes the data directory"));

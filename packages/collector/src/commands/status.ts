@@ -2,11 +2,13 @@ import { Command } from "effect/cli";
 import { Effect } from "effect";
 
 import { StatusReport } from "../status/report.ts";
+import { JsonFlag } from "./flags.ts";
 import { CommandOutput } from "./output.ts";
 
 /** `snorlax status` (plan 3.1): version, data directory, device, last scan and sync, detected agents. */
 export const statusCommand = Command.make("status", {}, () =>
   Effect.gen(function* () {
+    const json = yield* JsonFlag;
     const payload = yield* (yield* StatusReport).report;
     const human = [
       `snorlax ${payload.version}`,
@@ -23,7 +25,7 @@ export const statusCommand = Command.make("status", {}, () =>
       }`,
       `agents: ${payload.agents.map((agent) => `${agent.agent}=${agent.status}`).join(" ")}`
     ].join("\n");
-    yield* (yield* CommandOutput).render({ payload, human: `${human}\n` });
+    yield* (yield* CommandOutput).render({ payload, human: `${human}\n`, json });
   })
 ).pipe(
   Command.withDescription("version, data directory, device, last scan and sync, decode failures, detected agents")

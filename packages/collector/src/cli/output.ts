@@ -40,19 +40,13 @@ const consoleInto = (write: Write): Console.Console => ({
 });
 
 /**
- * A Console wired to the CLI's sinks, so effect/cli's help and version rendering lands there too.
- * Everything effect/cli renders on its own — help text, formatted parse errors — passes through
- * `redactText` here: an error line can quote the command line it came from, and that line may name
- * paths under the home (plan 3.8).
+ * The Console effect/cli renders through — help, version, formatted parse errors — redacted here,
+ * because an error line can quote the command line it came from and that line may name paths under
+ * the home (plan 3.8). Everything is held back in `buffered` instead of written out: the parsed
+ * `--json` value is only known after the run, and a JSON envelope must drop the rendering while
+ * human mode flushes it.
  */
-export const cliConsole = (env: CliOutputEnv, home: string): Console.Console =>
-  consoleInto((sink, args) => env[sink].write(redactText(`${args.map(String).join(" ")}\n`, { home })));
-
-/**
- * A Console that holds effect/cli's rendering back in `buffered` (already redacted) instead of
- * writing it out, so a `--json` run can drop the help text and print exactly one JSON object.
- */
-export const bufferedConsole = (
+export const cliConsole = (
   home: string,
   buffered: { readonly out: string[]; readonly err: string[] }
 ): Console.Console =>
