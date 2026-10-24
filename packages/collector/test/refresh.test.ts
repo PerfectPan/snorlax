@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import type { BucketRow } from "../src/core/buckets/buckets.ts";
 import { createLogger, type Logger } from "../src/modules/log/log.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
-import { nodeFileOps } from "../src/modules/data-dir/data-dir.ts";
+import { nodeFileOps } from "../src/modules/platform/platform.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
@@ -32,7 +32,7 @@ const HOUR_10 = Date.UTC(2026, 9, 22, 10) / 1000;
 const TIME_ZONE = "Asia/Shanghai";
 const CC_PROJECT = join(".claude", "projects", "-Users-tester-fixture");
 
-const silentLog: Logger = { event: async () => {} };
+const silentLog: Logger = { event: () => Effect.void };
 
 let setup: RefreshSetup;
 
@@ -418,7 +418,7 @@ describe("failures", () => {
 
 describe("logging", () => {
   it("writes one summary line per refresh", async () => {
-    const log = await createLogger(setup.platform, nodeFileOps, setup.dataDir);
+    const log = await Effect.runPromise(createLogger(setup.platform, nodeFileOps, setup.dataDir));
     await runRefresh({ platform: setup.platform, dataDir: setup.dataDir, log, timeZone: TIME_ZONE });
     const text = await readFile(join(setup.dataDir, "logs", "snorlax.log"), "utf8");
     const refreshLine = text

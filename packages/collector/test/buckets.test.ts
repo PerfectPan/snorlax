@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { accumulateRecord, createAccumulator, portionRequestCounts } from "../src/core/buckets/buckets.ts";
@@ -22,7 +23,7 @@ const MTIME = quietMtime(NOW);
 const HOUR_9 = Date.UTC(2026, 9, 22, 9) / 1000;
 const TIME_ZONE = "UTC";
 
-const silentLog: Logger = { event: async () => {} };
+const silentLog: Logger = { event: () => Effect.void };
 
 /** A record with only the fields the splitting and accumulation rules read. */
 const record = (overrides: Partial<UsageRecord> & Pick<UsageRecord, "timestamp" | "usage">): UsageRecord => ({

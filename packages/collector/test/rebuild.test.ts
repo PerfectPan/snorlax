@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import type { BucketRow } from "../src/core/buckets/buckets.ts";
@@ -20,7 +21,7 @@ import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 const NOW = Date.UTC(2026, 9, 22, 12, 0, 0);
 const MTIME = quietMtime(NOW);
 const TIME_ZONE = "UTC";
-const SILENT_LOG: Logger = { event: async () => {} };
+const SILENT_LOG: Logger = { event: () => Effect.void };
 
 const HOUR = 3_600;
 const DAY = 86_400;

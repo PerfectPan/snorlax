@@ -1,11 +1,10 @@
 import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { SnorlaxPlatform } from "../platform/platform.ts";
-import { Context, Data, Effect, Layer } from "effect";
+import { Data, Effect } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
-import { NodeFiles, type NodeFileOps } from "./node-fs.ts";
+import type { NodeFileOps } from "../platform/platform.ts";
 
 /** The data directory is private to the user (plan 3.4.1, Spec 3.8). */
 export const DATA_DIR_MODE = 0o700;
@@ -36,48 +35,17 @@ export class DataDirCreateFailed extends Data.TaggedError("DataDirCreateFailed")
  * directory at mode 0700; existing wider modes are tightened. Only commands that write call this —
  * `status`, `doctor` and `snapshot` run without it and create nothing (plan 3.13).
  */
-export async function ensureDataDir(
+export const ensureDataDir = (
   platform: Pick<Platform, "fs">,
   nodeFiles: NodeFileOps,
   path: string
-): Promise<void> {
-  try {
-    await platform.fs.mkdir(path);
-    await nodeFiles.chmod(path, DATA_DIR_MODE);
-    await platform.fs.mkdir(join(path, "logs"));
-  } catch (error) {
-    throw new DataDirCreateFailed({ message: `cannot create the data directory ${path}: ${errorMessage(error)}` });
-  }
-}
-
-/**
- * The resolved data directory and the one operation that prepares it. Building the layer only
- * resolves the path — no file system access happens until a command calls `ensure`.
- */
-export class DataDir extends Context.Service<
-  DataDir,
-  {
-    readonly path: string;
-    readonly ensure: Effect.Effect<void, DataDirCreateFailed>;
-  }
->()("snorlax/data-dir/DataDir") {
-  static readonly live: Layer.Layer<DataDir, never, SnorlaxPlatform | NodeFiles> = Layer.effect(
-    DataDir,
-    Effect.gen(function* () {
-      const platform = yield* SnorlaxPlatform;
-      const ops = yield* NodeFiles;
-      const path = resolveDataDir(platform);
-      return DataDir.of({
-        path,
-        ensure: Effect.promise(() => ensureDataDir(platform, ops, path)).pipe(
-          Effect.catchDefect((defect) =>
-            defect instanceof DataDirCreateFailed ? Effect.fail(defect) : Effect.die(defect)
-          )
-        )
-      });
-    })
-  );
-}
-
-// The file operations the kit platform does not model; the data directory and the log use them.
-export { NodeFiles, nodeFileOps, type NodeFileOps } from "./node-fs.ts";
+): Effect.Effect<void, DataDirCreateFailed> =>
+  Effect.tryPromise({
+    try: async () => {
+      await platform.fs.mkdir(path);
+      await nodeFiles.chmod(path, DATA_DIR_MODE);
+      await platform.fs.mkdir(join(path, "logs"));
+    },
+    catch: (error) =>
+      new DataDirCreateFailed({ message: `cannot create the data directory ${path}: ${errorMessage(error)}` })
+  });

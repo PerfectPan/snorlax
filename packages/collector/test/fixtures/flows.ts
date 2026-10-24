@@ -2,23 +2,20 @@ import { basename } from "node:path";
 
 import { Effect } from "effect";
 
-import { rebuildFlow } from "../../src/commands/rebuild/flow.ts";
-import { refreshFlow } from "../../src/commands/refresh/flow.ts";
-import { DataDir } from "../../src/modules/data-dir/data-dir.ts";
+import { rebuildScan } from "../../src/commands/rebuild/flow.ts";
+import { refreshScan } from "../../src/commands/refresh/flow.ts";
 import {
   openLedger,
+  scanAndCommit,
   type Ledger,
   type LedgerPlatform,
   type ScanAndCommitDeps
 } from "../../src/modules/ledger/ledger.ts";
-import { Log } from "../../src/modules/log/log.ts";
-import { SnorlaxPlatform } from "../../src/modules/platform/platform.ts";
-import { TimeZone } from "../../src/modules/time-zone/time-zone.ts";
 import type { TestPlatform } from "./platform.ts";
 
 /**
- * The refresh and rebuild flows run on a test bed: the services the CLI provides come from `deps`, and the data
- * directory's `ensure` does nothing because the test bed has created it.
+ * The refresh and rebuild runs on a test bed: the commands' scan-and-commit runs over `deps` in place of what the
+ * flows read from the environment, and nothing prepares the data directory because the test bed has created it.
  */
 export interface RunDeps extends ScanAndCommitDeps {
   readonly platform: TestPlatform;
@@ -29,20 +26,9 @@ export interface RunHooks {
   readonly failBeforeCommit?: boolean;
 }
 
-const provided = <A, E>(
-  flow: Effect.Effect<A, E, SnorlaxPlatform | DataDir | Log>,
-  deps: RunDeps
-): Effect.Effect<A, E> =>
-  flow.pipe(
-    Effect.provideService(SnorlaxPlatform, deps.platform),
-    Effect.provideService(DataDir, DataDir.of({ path: deps.dataDir, ensure: Effect.void })),
-    Effect.provideService(Log, deps.log),
-    Effect.provideService(TimeZone, deps.timeZone)
-  );
+export const refreshRun = (deps: RunDeps) => scanAndCommit(deps, refreshScan);
 
-export const refreshRun = (deps: RunDeps) => provided(refreshFlow, deps);
-
-export const rebuildRun = (deps: RunDeps, days: number) => provided(rebuildFlow(days), deps);
+export const rebuildRun = (deps: RunDeps, days: number) => scanAndCommit(deps, rebuildScan(days));
 
 /**
  * Fails the run's last ledger write before the commit — `last_scan_completed_at` — through the platform's SQLite,

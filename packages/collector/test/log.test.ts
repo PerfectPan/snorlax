@@ -3,8 +3,10 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { nodeFileOps } from "../src/modules/data-dir/data-dir.ts";
+import { Effect } from "effect";
+
 import { createLogger, LOG_FILES_KEPT } from "../src/modules/log/log.ts";
+import { nodeFileOps } from "../src/modules/platform/platform.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 /**
@@ -26,9 +28,9 @@ const logPath = (): string => join(dataDir, "logs", "snorlax.log");
 describe("createLogger (plan 3.9)", () => {
   it("writes one line per event with an ISO timestamp prefix", async () => {
     const platform = createNodePlatform({ home: dataDir });
-    const logger = await createLogger(platform, nodeFileOps, dataDir);
-    await logger.event("command", { name: "status", exitCode: 0 });
-    await logger.event("refresh-summary", { records: 412, failures: 0 });
+    const logger = await Effect.runPromise(createLogger(platform, nodeFileOps, dataDir));
+    await Effect.runPromise(logger.event("command", { name: "status", exitCode: 0 }));
+    await Effect.runPromise(logger.event("refresh-summary", { records: 412, failures: 0 }));
 
     const lines = (await readFile(logPath(), "utf8")).trim().split("\n");
     expect(lines).toHaveLength(2);
@@ -38,8 +40,8 @@ describe("createLogger (plan 3.9)", () => {
 
   it("redacts home paths and secret-shaped values from every line", async () => {
     const platform = createNodePlatform({ home: dataDir });
-    const logger = await createLogger(platform, nodeFileOps, dataDir);
-    await logger.event("probe", { path: `${dataDir}/sessions`, token: "sk-ant-api03-abcdef" });
+    const logger = await Effect.runPromise(createLogger(platform, nodeFileOps, dataDir));
+    await Effect.runPromise(logger.event("probe", { path: `${dataDir}/sessions`, token: "sk-ant-api03-abcdef" }));
 
     const line = (await readFile(logPath(), "utf8")).trim().split("\n").at(-1) ?? "";
     expect(line).not.toContain(dataDir);
@@ -52,9 +54,9 @@ describe("createLogger (plan 3.9)", () => {
     const rotateDir = await mkdtemp(join(tmpdir(), "snorlax-rotate-"));
     try {
       const platform = createNodePlatform({ home: rotateDir });
-      const logger = await createLogger(platform, nodeFileOps, rotateDir, { maxBytes: 240 });
+      const logger = await Effect.runPromise(createLogger(platform, nodeFileOps, rotateDir, { maxBytes: 240 }));
       for (let index = 0; index < 12; index += 1) {
-        await logger.event("tick", { index });
+        await Effect.runPromise(logger.event("tick", { index }));
       }
 
       const logs = join(rotateDir, "logs");
@@ -76,8 +78,8 @@ describe("createLogger (plan 3.9)", () => {
 
   it("never fails the command when the log directory disappears", async () => {
     const platform = createNodePlatform({ home: dataDir });
-    const logger = await createLogger(platform, nodeFileOps, dataDir);
+    const logger = await Effect.runPromise(createLogger(platform, nodeFileOps, dataDir));
     await rm(join(dataDir, "logs"), { recursive: true, force: true });
-    await expect(logger.event("after-remove")).resolves.toBeUndefined();
+    await expect(Effect.runPromise(logger.event("after-remove"))).resolves.toBeUndefined();
   });
 });

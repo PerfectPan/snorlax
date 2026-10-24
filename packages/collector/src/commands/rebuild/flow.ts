@@ -1,9 +1,9 @@
 import { Effect } from "effect";
 
-import { DataDir } from "../../modules/data-dir/data-dir.ts";
-import { scanAndCommit } from "../../modules/ledger/ledger.ts";
-import { Log } from "../../modules/log/log.ts";
-import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import { ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
+import { scanAndCommit, type ScanRun } from "../../modules/ledger/ledger.ts";
+import { appendingLogger } from "../../modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
 
 /** `rebuild --days` accepts 1–30 days; Claude Code deletes older logs by default (plan 3.4.3). */
@@ -19,31 +19,31 @@ export function rebuildStartHour(now: number, days: number): number {
 }
 
 /**
- * One `snorlax rebuild --days n` (plan 3.4.3): like refresh, prepares the data directory first; then, through
- * the ledger's scan-and-commit and inside its one transaction, zeroes every bucket from the window start, drops
- * the `sessions_seen` rows inside the window, and rescans the window with no saved state. Zeroed buckets that
- * receive no usage stay as zero rows marked dirty, so a later upload replaces the backend's rows with zeros.
+ * Rebuild's part of the scan-and-commit run (plan 3.4.3): inside the run's one transaction, zeroes every bucket
+ * from the window start, drops the `sessions_seen` rows inside the window, and rescans the window with no saved
+ * state. Zeroed buckets that receive no usage stay as zero rows marked dirty, so a later upload replaces the
+ * backend's rows with zeros.
  */
+export const rebuildScan = (days: number): ScanRun => ({
+  event: "rebuild",
+  fields: { days },
+  window: (ledger, now) => {
+    const startHour = rebuildStartHour(now, days);
+    return {
+      since: startHour * 1000,
+      state: undefined,
+      beforeScan: Effect.andThen(ledger.zeroBucketsFrom(startHour), ledger.deleteSessionsSeenFrom(startHour))
+    };
+  }
+});
+
+/** One `snorlax rebuild --days n`: like refresh, prepares the data directory first, then runs `rebuildScan`. */
 export const rebuildFlow = (days: number) =>
   Effect.gen(function* () {
     const platform = yield* SnorlaxPlatform;
-    const dataDir = yield* DataDir;
-    const log = yield* Log;
-    const timeZone = yield* TimeZone;
-    yield* dataDir.ensure;
-    return yield* scanAndCommit(
-      { platform, dataDir: dataDir.path, log, timeZone },
-      {
-        event: "rebuild",
-        fields: { days },
-        window: (ledger, now) => {
-          const startHour = rebuildStartHour(now, days);
-          return {
-            since: startHour * 1000,
-            state: undefined,
-            beforeScan: Effect.andThen(ledger.zeroBucketsFrom(startHour), ledger.deleteSessionsSeenFrom(startHour))
-          };
-        }
-      }
-    );
+    const nodeFiles = yield* NodeFiles;
+    const dataDir = resolveDataDir(platform);
+    yield* ensureDataDir(platform, nodeFiles, dataDir);
+    const log = appendingLogger(platform, nodeFiles, dataDir);
+    return yield* scanAndCommit({ platform, dataDir, log, timeZone: yield* TimeZone }, rebuildScan(days));
   });

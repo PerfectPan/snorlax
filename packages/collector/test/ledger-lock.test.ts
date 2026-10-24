@@ -28,7 +28,7 @@ const HOUR_9 = Date.UTC(2026, 9, 22, 9) / 1000;
 const HOUR_10 = Date.UTC(2026, 9, 22, 10) / 1000;
 const TIME_ZONE = "UTC";
 const CC_PROJECT = join(".claude", "projects", "-Users-tester-fixture");
-const SILENT_LOG: Logger = { event: async () => {} };
+const SILENT_LOG: Logger = { event: () => Effect.void };
 
 const cc1Path = (home: string): string => join(home, CC_PROJECT, "cc-1.jsonl");
 

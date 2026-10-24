@@ -10,8 +10,7 @@ import * as z from "zod/mini";
 
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
-import { NodeFiles } from "../src/modules/data-dir/data-dir.ts";
-import { SnorlaxPlatform } from "../src/modules/platform/platform.ts";
+import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 
 /**
  * The read-only commands on a real file system under a temporary home (never a real agent home):

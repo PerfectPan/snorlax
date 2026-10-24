@@ -544,16 +544,14 @@ export const scanAndCommit = (
         paired: false
       });
       yield* writeSnapshot(platform, dataDir, snapshot);
-      yield* Effect.promise(() =>
-        deps.log.event(run.event, {
-          ...run.fields,
-          records: scanned.records,
-          failures: scanned.failures,
-          pushed: 0,
-          pulled: 0,
-          durationMs: Math.round(platform.clock.monotonic() - startedAt)
-        })
-      );
+      yield* deps.log.event(run.event, {
+        ...run.fields,
+        records: scanned.records,
+        failures: scanned.failures,
+        pushed: 0,
+        pulled: 0,
+        durationMs: Math.round(platform.clock.monotonic() - startedAt)
+      });
       return {
         result: {
           schemaVersion: 1,

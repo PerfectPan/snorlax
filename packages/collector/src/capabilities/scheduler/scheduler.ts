@@ -1,7 +1,7 @@
-import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { Context, Effect, Layer } from "effect";
 
-import { DataDir, DataDirCreateFailed } from "../../modules/data-dir/data-dir.ts";
+import { DataDirCreateFailed, ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
+import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import {
   CollectorPathUnresolved,
   DataDirDeleteFailed,
@@ -69,15 +69,16 @@ export class Schedule extends Context.Service<
     Schedule,
     Effect.gen(function* () {
       const platform = yield* SnorlaxPlatform;
-      const dataDir = yield* DataDir;
+      const nodeFiles = yield* NodeFiles;
+      const dataDir = resolveDataDir(platform);
       return Schedule.of({
         // `Effect.runPromise` rejects with the failure itself, so a `DataDirCreateFailed` from `prepare`
         // reaches `scheduleFailure` as the same instance.
         install: Effect.promise(() =>
-          installLaunchAgent(platform, dataDir.path, () => Effect.runPromise(dataDir.ensure))
+          installLaunchAgent(platform, dataDir, () => Effect.runPromise(ensureDataDir(platform, nodeFiles, dataDir)))
         ).pipe(Effect.catchDefect(scheduleFailure)),
         uninstall: (options) =>
-          Effect.promise(() => uninstallLaunchAgent(platform, dataDir.path, options)).pipe(
+          Effect.promise(() => uninstallLaunchAgent(platform, dataDir, options)).pipe(
             Effect.catchDefect(scheduleFailure)
           )
       });

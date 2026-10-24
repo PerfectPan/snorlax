@@ -3,8 +3,8 @@ import { Effect } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { readConfig } from "../../modules/config/config.ts";
-import { NodeFiles, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
-import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
+import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { RuntimeInfo } from "../../modules/version/version.ts";
 import {
   configCheck,
