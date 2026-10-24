@@ -2,17 +2,23 @@ import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 
 import { acquireProcessLock } from "@rivus/agent-kit-collab/process-lock";
-import { Duration, Effect, Fiber } from "effect";
+import { failureSchema } from "@rivus/snorlax-protocol";
+import { Duration, Effect, Fiber, Layer } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
+import * as z from "zod/mini";
 
+import { CliEnv } from "../src/cli/env.ts";
+import { runCli } from "../src/cli/run.ts";
 import { ledgerPath, readLedgerStatus, type ScanAndCommitOutcome } from "../src/modules/ledger/ledger.ts";
 import { LOCK_WAIT_MS } from "../src/modules/ledger/lock.ts";
 import { listBackups } from "../src/modules/ledger/migrations.ts";
 import type { Logger } from "../src/modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
 import { readLedger, rebuildRun, refreshRun, runRebuild, runRefresh, type RunDeps } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup, type TestPlatform } from "./fixtures/platform.ts";
+import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
  * One refresh at a time per data directory (plan 3.5): the ledger lock serializes overlapping runs, and
@@ -504,6 +510,60 @@ describe("a held lock", () => {
       );
       expect(failure._tag).toBe("LedgerLockHeld");
       expect(failure.message).toMatch(/^waited 60s for the ledger lock .*ledger\.lock: /);
+
+      probe.releaseGate();
+      expect((await holder).result.ok).toBe(true);
+    } finally {
+      await setup.remove();
+    }
+  });
+
+  it("reports the timed-out wait through the CLI as one locked failure object on stdout and exit 1", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    try {
+      await writeFixtures(setup.home);
+      await refreshOn(setup.platform, setup);
+      await appendOne(setup.home);
+
+      const probe = probedPlatform(setup, cc1Path(setup.home));
+      const holder = refreshOn(probe.platform, setup);
+      await probe.gateReached;
+
+      const stdout: string[] = [];
+      const base = Layer.mergeAll(
+        // The CLI finds the test bed's data directory through SNORLAX_HOME, as a run under launchd does.
+        Layer.succeed(SnorlaxPlatform, {
+          ...probe.platform,
+          env: { ...probe.platform.env, SNORLAX_HOME: setup.dataDir }
+        }),
+        NodeFiles.live,
+        fakeScheduler([], { jobFile: join(setup.home, "job") }),
+        Layer.succeed(
+          CliEnv,
+          CliEnv.of({
+            stdout: { write: (text) => void stdout.push(text) },
+            stderr: { write: () => undefined },
+            colors: false
+          })
+        )
+      );
+      const exit = await Effect.runPromise(
+        Effect.gen(function* () {
+          const cli = yield* Effect.forkChild(Effect.flip(runCli(["refresh", "--json"], base)));
+          // The CLI's refresh has reached the lock, so its wait is on the test clock.
+          yield* Effect.promise(() => probe.waitForEvent("realpath", 2));
+          yield* TestClock.adjust(Duration.millis(LOCK_WAIT_MS));
+          return yield* Fiber.join(cli);
+        }).pipe(Effect.provide(TestClock.layer()))
+      );
+
+      expect(exit.exitCode).toBe(1);
+      // JSON.parse takes the whole of stdout, so anything printed besides the one object fails here.
+      expect(z.parse(failureSchema, JSON.parse(stdout.join("")))).toEqual({
+        schemaVersion: 1,
+        ok: false,
+        error: { code: "locked", message: expect.stringMatching(/^waited 60s for the ledger lock .*ledger\.lock: /) }
+      });
 
       probe.releaseGate();
       expect((await holder).result.ok).toBe(true);
