@@ -481,8 +481,8 @@ spellings.
 
 ### 3.13 Collector code structure
 
-The collector is organized by command: each command owns a folder, and what two or more commands need lives in
-`shared/`.
+The collector is organized by command, and code below the commands is split by what it does: pure rules, modules
+with IO, and capabilities with more than one implementation.
 
 ```text
 packages/collector/src/
@@ -492,38 +492,37 @@ packages/collector/src/
                          signal-relaying runner (interrupt, then re-raise SIGINT/SIGTERM)
   commands/
     refresh/             command.ts (flags, rendering) + flow.ts (the flow, in Effect)
-    rebuild/             command.ts + flow.ts (zeroes the window, then shared/ledger's scan-and-commit)
+    rebuild/             command.ts + flow.ts (zeroes the window, then the ledger module's scan-and-commit)
     status/  snapshot/   command.ts + flow.ts
     doctor/              command.ts + flow.ts + checks.ts (doctor's own verdict rules, plain functions)
-    install/  uninstall/ command.ts + flow.ts, both on shared/scheduler
+    install/  uninstall/ command.ts + flow.ts, both on capabilities/scheduler
     pair/  unpair/       stubs until Batch 7
-  shared/
-    ledger/              the SQLite ledger, migrations, and the scan-and-commit flow refresh and rebuild share
-    scan/                agent-kit `scanUsage`, wrapped once
-    buckets/             split by model and hourly accumulation (plain functions)
-    snapshot/            snapshot building (plain functions: windows, series) and the snapshot file
-    data-dir/  config/  log/  platform/  time-zone/
-    scheduler/           capability: interface, launchd layer (systemd in Batch 8), test fake
-    secrets/             capability from Batch 7: Keychain, libsecret, memory
-    backend/             capability from Batch 6: HTTP client, memory
+  core/                  pure rules, no IO: buckets (split by model, hourly accumulation), snapshot (windows,
+                         series, building the snapshot from buckets)
+  modules/               IO with a single implementation: ledger (SQLite, migrations, the scan-and-commit flow
+                         refresh and rebuild share), scan (agent-kit `scanUsage`, wrapped once), snapshot-file,
+                         data-dir, config, log, platform, time-zone
+  capabilities/          external systems with more than one implementation: scheduler (launchd; systemd in
+                         Batch 8; test fake), secrets (Batch 7: Keychain, libsecret, memory), backend (Batch 6:
+                         HTTP client, memory)
   errors.ts              tagged errors whose codes are the protocol `FailureCode`
 ```
 
 Rules, checked by `test/structure.test.ts` where they are about imports:
 
-1. Imports go one way: `cli` → `commands` → `shared`. `shared/` never imports `commands/` or `cli/`.
-2. A command folder never imports another command folder. Code a second command needs moves to `shared/`.
+1. Imports go one way: `cli` → `commands` → `capabilities` → `modules` → `core`. `core/` imports none of the
+   other layers (protocol and agent-kit types are fine); nothing below `commands/` imports `commands/` or `cli/`.
+2. A command folder never imports another command folder. Code a second command needs moves down into `core/`,
+   `modules/` or `capabilities/`, by what it is.
 3. Code only one command uses stays in that command's folder.
-4. Each `shared/` module has one entry file named after it (`shared/ledger/ledger.ts`); its other files are
-   internal. Code outside the module imports only the entry file. No re-export barrels.
-5. Capabilities are the external systems with more than one implementation (`scheduler`, `secrets`, `backend`).
-   Each is a `Context.Service` interface with one `Layer` per implementation; `cli/bin.ts` picks the
-   implementation and tests provide fakes. Modules with a single implementation (ledger, scan, snapshot file,
-   config, log) are plain modules, not services.
-6. Flows (`commands/*/flow.ts`, and shared flows such as scan-and-commit) are written in Effect: the ledger, the
-   ledger lock and other resources are acquired in scopes, so an interrupted run releases them. Pure rules
-   (buckets, snapshot windows, doctor verdicts) are plain functions without Effect types. No service exists only
-   to wrap a Promise function.
+4. Each module and capability has one entry file named after it (`modules/ledger/ledger.ts`); its other files are
+   internal. Code outside it imports only the entry file. No re-export barrels.
+5. Capabilities are `Context.Service` interfaces with one `Layer` per implementation; `cli/bin.ts` picks the
+   implementation and tests provide fakes. Modules are plain modules, not services.
+6. Flows (`commands/*/flow.ts`, and module flows several commands share, such as scan-and-commit) are written in
+   Effect: the ledger, the ledger lock and other resources are acquired in scopes, so an interrupted run releases
+   them. `core/` and command-specific rules (doctor verdicts) are plain functions without Effect types. No service
+   exists only to wrap a Promise function.
 7. Building a Layer has no side effects. `status`, `doctor` and `snapshot` create or change no files: `doctor`
    reports a missing directory, a wrong mode or a data directory that is a file as failed checks in a `Doctor`
    payload, and repairs nothing.
@@ -733,11 +732,13 @@ Each batch leaves `pnpm run check` green.
 - Change: reorganize the collector into the layout and rules of 3.13. Each command gets `commands/<name>/` with
   `command.ts` and an Effect `flow.ts`; the per-feature services that only wrap Promise functions (`refresh`,
   `rebuild`, `schedule`, `snapshot`, `doctor`) and the platform adapters they need go away; the scan-and-commit
-  step refresh and rebuild share becomes an Effect flow in `shared/ledger/` that acquires the ledger and the lock
-  in a scope; `scheduler` becomes a capability (interface, launchd layer, test fake). No CLI behavior changes.
+  step refresh and rebuild share becomes an Effect flow in `modules/ledger/` that acquires the ledger and the lock
+  in a scope; pure rules move to `core/`; `scheduler` becomes a capability in `capabilities/` (interface, launchd
+  layer, test fake). No CLI behavior changes.
 - Tests: existing tests pass with unchanged assertions (only import paths move); the structure test catches a
-  cross-command import, a deep import into a `shared/` module and a `shared/` import of `commands/`; an
-  interrupted refresh releases the ledger lock and closes the ledger (driven by a gate, no real time).
+  cross-command import, a deep import into a module or capability, and an upward import (for example `core/` →
+  `modules/`, `modules/` → `commands/`); an interrupted refresh releases the ledger lock and closes the ledger
+  (driven by a gate, no real time).
 - Exit: `pnpm run check`; the built bundle behaves the same on the 4b smoke set (`--help`, `--version`,
   `status --json`, `doctor --json`, `snapshot --json`, `--version --json`, signals); cold start reported.
 
