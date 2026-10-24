@@ -1,8 +1,8 @@
 # Plan 0001: snorlax
 
-- Status: accepted (owner decisions recorded 2026-10-22 and 2026-10-23). Milestone 1: Batches 0–4 are merged;
-  Batch 4b (`effect/cli`, D12) is next. Milestone 2 waits for agent-kit K1 and K2; Milestone 3 needs the owner's
-  Cloudflare account (6.1)
+- Status: accepted (owner decisions recorded 2026-10-22 to 2026-10-24). Milestone 1: Batches 0–4b are merged;
+  Batch 4c (command folders, 3.13) is next, then 4d. Milestone 2 waits for agent-kit K1 and K2; Milestone 3 needs
+  the owner's Cloudflare account (6.1)
 - Owner: PerfectPan
 - Reviewer: unconfirmed
 - Last updated: 2026-10-24
@@ -117,7 +117,7 @@ this Mac
 | D9 | v1 app bundles one JS file and runs it with the Node already installed; Node SEA later | Node SEA from the start | Keeps the bundle around 2 MB and avoids hardened-runtime JIT entitlements until distribution needs them. |
 | D10 | New repository, not part of agent-presence | Grow agent-presence | Owner decision. Presence can later become an output of this collector (8.3). |
 | D11 | GPL-3.0-only | MIT | Repository convention for applications. |
-| D12 | The collector CLI is built on `effect/cli` (Effect 4); IO and orchestration are Effect services, pure rules stay plain TypeScript (3.13) | An own `node:util` `parseArgs` dispatcher; citty | Layers build a service only when a command uses it, so read-only commands such as `doctor` cause no side effects; the typed error channel ties every failure to a `FailureCode`; test layers and `TestClock` cover the injected-clock rule; agent-kit already ships Effect 4 entries (`PlatformService`, `NodePlatformLive`). `effect/cli` is marked unstable, so `effect` is pinned to the exact version agent-kit's peer names and both are upgraded together. Owner decision. |
+| D12 | The collector CLI is built on `effect/cli` (Effect 4); flows are written in Effect and external capabilities are Effect services; pure rules stay plain TypeScript (3.13) | An own `node:util` `parseArgs` dispatcher; citty | Layers build a service only when a command uses it, so read-only commands such as `doctor` cause no side effects; the typed error channel ties every failure to a `FailureCode`; test layers and `TestClock` cover the injected-clock rule; agent-kit already ships Effect 4 entries (`PlatformService`, `NodePlatformLive`). `effect/cli` is marked unstable, so `effect` is pinned to the exact version agent-kit's peer names and both are upgraded together. Owner decision. |
 
 ## 3. Detailed design
 
@@ -481,47 +481,72 @@ spellings.
 
 ### 3.13 Collector code structure
 
+The collector is organized by command: each command owns a folder, and what two or more commands need lives in
+`shared/`.
+
 ```text
 packages/collector/src/
-  cli/        framework: the root command, the global `--json` flag, the output envelope (one JSON object on
-              stdout with `schemaVersion` and `ok`), FailureCode -> exit code 0/1/2, redaction of all output,
-              the command log line; `bin.ts` runs it on a `runFork`-based runner whose signal relay lets
-              SIGINT/SIGTERM end the process by signal (interrupt first, then re-raise), which
-              `NodeRuntime.runMain`'s exit(130) would not
-  commands/   one module per command: flags with `effect/cli`, a handler that calls services and returns the
-              protocol payload and a human rendering; nothing else
-  <feature>/  business modules: data-dir, config, log, ledger, scan, buckets, snapshot, refresh, rebuild,
-              doctor, status, schedule (sync, keychain, pair in M3)
-  errors.ts   tagged errors whose codes are the protocol `FailureCode`
+  cli/                   framework: root command, global `--json`, output envelope (one JSON object on stdout
+                         with `schemaVersion` and `ok`), FailureCode -> exit code 0/1/2, redaction of all output,
+                         the command log line; `bin.ts` picks the capability implementations and runs the
+                         signal-relaying runner (interrupt, then re-raise SIGINT/SIGTERM)
+  commands/
+    refresh/             command.ts (flags, rendering) + flow.ts (the flow, in Effect)
+    rebuild/             command.ts + flow.ts (zeroes the window, then shared/ledger's scan-and-commit)
+    status/  snapshot/   command.ts + flow.ts
+    doctor/              command.ts + flow.ts + checks.ts (doctor's own verdict rules, plain functions)
+    install/  uninstall/ command.ts + flow.ts, both on shared/scheduler
+    pair/  unpair/       stubs until Batch 7
+  shared/
+    ledger/              the SQLite ledger, migrations, and the scan-and-commit flow refresh and rebuild share
+    scan/                agent-kit `scanUsage`, wrapped once
+    buckets/             split by model and hourly accumulation (plain functions)
+    snapshot/            snapshot building (plain functions: windows, series) and the snapshot file
+    data-dir/  config/  log/  platform/  time-zone/
+    scheduler/           capability: interface, launchd layer (systemd in Batch 8), test fake
+    secrets/             capability from Batch 7: Keychain, libsecret, memory
+    backend/             capability from Batch 6: HTTP client, memory
+  errors.ts              tagged errors whose codes are the protocol `FailureCode`
 ```
 
-- Imports go one way: `cli` → `commands` → feature modules. Feature modules never import `cli/` or `commands/`.
-- IO and orchestration in feature modules are `Context.Service` + `Layer`. Pure rules (bucket accumulation, the
-  split by model, snapshot windows, doctor verdicts) are plain functions with no Effect types.
-- Building a layer has no side effects; work happens when a service method runs. `status`, `doctor` and
-  `snapshot` never create or change files: `doctor` reports a missing directory, a wrong mode or a data directory
-  that is a file as failed checks in a `Doctor` payload, and repairs nothing.
-- Errors: feature modules fail with the tagged errors in `errors.ts`; only `cli/` maps them to exit codes and the
-  failure shape. The protocol's `FailureCode` is the type of every error code.
+Rules, checked by `test/structure.test.ts` where they are about imports:
+
+1. Imports go one way: `cli` → `commands` → `shared`. `shared/` never imports `commands/` or `cli/`.
+2. A command folder never imports another command folder. Code a second command needs moves to `shared/`.
+3. Code only one command uses stays in that command's folder.
+4. Each `shared/` module has one entry file named after it (`shared/ledger/ledger.ts`); its other files are
+   internal. Code outside the module imports only the entry file. No re-export barrels.
+5. Capabilities are the external systems with more than one implementation (`scheduler`, `secrets`, `backend`).
+   Each is a `Context.Service` interface with one `Layer` per implementation; `cli/bin.ts` picks the
+   implementation and tests provide fakes. Modules with a single implementation (ledger, scan, snapshot file,
+   config, log) are plain modules, not services.
+6. Flows (`commands/*/flow.ts`, and shared flows such as scan-and-commit) are written in Effect: the ledger, the
+   ledger lock and other resources are acquired in scopes, so an interrupted run releases them. Pure rules
+   (buckets, snapshot windows, doctor verdicts) are plain functions without Effect types. No service exists only
+   to wrap a Promise function.
+7. Building a Layer has no side effects. `status`, `doctor` and `snapshot` create or change no files: `doctor`
+   reports a missing directory, a wrong mode or a data directory that is a file as failed checks in a `Doctor`
+   payload, and repairs nothing.
+
+- Errors: modules and flows fail with the tagged errors in `errors.ts`; only `cli/` maps them to exit codes and
+  the failure shape. The protocol's `FailureCode` is the type of every error code.
 - agent-kit calls take the platform from `PlatformService` (`NodePlatformLive` in `bin.ts`, a memory platform in
-  tests). Promise or async-iterable kit APIs (`scanUsage`) are wrapped once, in the module that uses them.
+  tests).
 - Output: help, usage errors and version use `effect/cli`'s `CliOutput.defaultFormatter`; command failures are
-  rendered by `cli/` (`renderErrors: false`) so that `--json` keeps exactly one object on stdout. Human renderings
-  are plain text; color comes from `node:util` `styleText` against the destination stream (so `NO_COLOR` and
-  non-TTY output stay plain), and column alignment uses `CliOutput.displayWidth`.
-- Startup: in the single-file bundle, on-demand import does nothing — rollup inlines dynamic imports and every
-  included module's top level runs at startup. Startup cost is therefore controlled where it is real: every
-  Layer builds without side effects (a command's work happens only in its own services), and the cold-start
-  budget is measured. 4b measured `snorlax status --json` (median of 20 runs, fresh temporary `HOME` each) at
-  85 ms on the `parseArgs` CLI and 111 ms on `effect/cli`; the bundle is stripped of comments without being
-  minified (terser, `compress`/`mangle` off).
+  rendered by `cli/` so that `--json` keeps exactly one object on stdout; the output mode follows the parsed
+  `--json` value. Human renderings are plain text; color comes from `node:util` `styleText` against the
+  destination stream (so `NO_COLOR` and non-TTY output stay plain).
+- Startup: in the single-file bundle, on-demand import does nothing (rollup inlines dynamic imports), so startup
+  cost is controlled by side-effect-free Layers and measured. Batch 4b measured `snorlax status --json` (median
+  of 20 runs, fresh temporary `HOME` each) at 85 ms on the `parseArgs` CLI and about 112 ms on `effect/cli`. The
+  bundle is not minified; rolldown keeps only legal comments.
 
 ## 4. Rollout and stability
 
 ### 4.1 Gates and rollout stages
 
 1. Batch 0 results recorded in section 7 (signing path, scan numbers).
-2. M1 (Batches 1–4b): the owner uses the app on one Mac for three days. Token totals match ccusage
+2. M1 (Batches 1–4d): the owner uses the app on one Mac for three days. Token totals match ccusage
    (`ccusage claude daily` plus `ccusage codex daily`, same time zone) for every day that has ended; today may be
    lower by the last requests of sessions still running, which agent-kit reports once their file has been quiet
    for 30 minutes.
@@ -569,7 +594,7 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 
 | Milestone | Result | Batches |
 | --- | --- | --- |
-| M1 Local | On one Mac, the menu bar app and the desktop widget show this machine's tokens, requests and sessions for today, the last 7 and the last 30 days, refreshed every 5 minutes. Cost shows the amounts agents logged themselves; other requests are marked unpriced. | 0–4b |
+| M1 Local | On one Mac, the menu bar app and the desktop widget show this machine's tokens, requests and sessions for today, the last 7 and the last 30 days, refreshed every 5 minutes. Cost shows the amounts agents logged themselves; other requests are marked unpriced. | 0–4d |
 | M2 Pricing | Every request whose model is in the pricing table is priced. | 5 |
 | M3 Cross-device | Several Macs and Linux machines show the same totals through the owner's Worker. | 6–8 |
 
@@ -593,7 +618,7 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 - Every batch PR updates 6.8 Progress: status, decisions taken within this plan's limits, open problems. 6.8 is the
   handoff to the next session or agent; there is no separate handoff file.
 - Steps marked "owner" are prepared in the PR (exact commands) and run by the owner.
-- Collector code follows 3.13. Batches 1–3 predate it; Batch 4b moves them.
+- Collector code follows 3.13. Batches 1–4b predate the command-folder layout; Batch 4c moves them.
 - When a batch needs a decision this plan does not make, stop that batch, add the question to section 7, and
   continue with a batch that does not depend on it.
 
@@ -696,16 +721,35 @@ Each batch leaves `pnpm run check` green.
   - Every output, human text included, is redacted in `cli/`; error codes are typed as `FailureCode`; business
     modules no longer import from `cli/`.
   - `snapshot --json` prints `{ schemaVersion, ok, snapshot }` (3.1).
-  - Issue #11: the 30-day group bound for buckets after today, the remaining row coercions, the
-    `readLedgerStatus` open failure code, SQLite busy handling between `status` and a committing refresh, and the
-    `ledger-lock` test helpers.
-  - Issue #13: a snorlax marker before `uninstall --data` deletes anything, and `doctor` checking the scheduled job
-    and its Node path.
 - Tests: existing suites keep their behavior; a test per listed fix; the hand-written shape guard in
   `test/cli.test.ts` replaced by a zod schema.
 - Exit: `pnpm run check` passes; `pnpm --filter @rivus/snorlax pack` shows no `dependencies`; the PR reports the
-  median of 20 cold runs of `snorlax status --json` before and after (3.13). It may ship as two PRs: the move to
-  `effect/cli`, then the fixes.
+  median of 20 cold runs of `snorlax status --json` before and after (3.13). Shipped as #16; the folder layout of
+  3.13 follows in Batch 4c and the remaining review findings in Batch 4d.
+
+#### Batch 4c (M1): command folders
+
+- Files: `packages/collector/src/**`, `packages/collector/test/**`.
+- Change: reorganize the collector into the layout and rules of 3.13. Each command gets `commands/<name>/` with
+  `command.ts` and an Effect `flow.ts`; the per-feature services that only wrap Promise functions (`refresh`,
+  `rebuild`, `schedule`, `snapshot`, `doctor`) and the platform adapters they need go away; the scan-and-commit
+  step refresh and rebuild share becomes an Effect flow in `shared/ledger/` that acquires the ledger and the lock
+  in a scope; `scheduler` becomes a capability (interface, launchd layer, test fake). No CLI behavior changes.
+- Tests: existing tests pass with unchanged assertions (only import paths move); the structure test catches a
+  cross-command import, a deep import into a `shared/` module and a `shared/` import of `commands/`; an
+  interrupted refresh releases the ledger lock and closes the ledger (driven by a gate, no real time).
+- Exit: `pnpm run check`; the built bundle behaves the same on the 4b smoke set (`--help`, `--version`,
+  `status --json`, `doctor --json`, `snapshot --json`, `--version --json`, signals); cold start reported.
+
+#### Batch 4d (M1): review leftovers
+
+- Change: issue #11 (the 30-day group bound for buckets after today, the remaining row coercions, the
+  `readLedgerStatus` open failure code, SQLite busy handling between `status` and a committing refresh, the
+  `ledger-lock` test helpers), issue #13 (a snorlax marker before `uninstall --data` deletes anything, `doctor`
+  checking the scheduled job and its Node path), and issue #15 (the `launchctl` child on interruption, `EPIPE` on
+  a closed stdout, third-party license notices in the package).
+- Tests: one per item.
+- Exit: `pnpm run check`; the issues closed by the PR.
 
 #### Batch 5 (M2): pricing
 
@@ -780,7 +824,9 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | 2 | merged | #7 | Rebuild runs its zeroing and its rescan as one transaction (zeroed buckets, `sessions_seen` deletes, scan, bucket writes, `scan_state`, `last_scan_completed_at` all commit together), not the plan's "one transaction, then steps 3–8": a crash between them would re-read the window over buckets that were no longer zeroed and double count. `RefreshResult.sync` is `{ok:false, pushed:0, pulled:0}` while unpaired (the "not paired" report of Batch 2; snapshot and `status` carry `sync.state: "unpaired"`). `failuresByAgent` counts every scan failure except `RootMissing` — an agent that is not installed is detection, not a decode failure, unlike the Batch 0 measure script, which counts every failure. `meta.device_name` stays NULL until `pair` owns it (Batch 7); the snapshot's device name comes from `config.json`. A snapshot write failure fails the command (exit 1, `data-dir`) after the ledger commit; the scan stays and the next refresh rewrites the snapshot. Rebuild's window start is hour-aligned rolling `now − n×24 h`, keeping bucket keys whole. Backups keep the latest two by version. `CollectorPlatform` gained optional `sqlite` and process-identity members; the refresh command widens the platform for the lock, whose absent identity members throw (the kit treats a throwing `self` as "no identity"). Test fixtures pin mtimes one hour before the scan clock so the kit decodes sources as `final` (an unpinned mtime delays Claude Code's open-request reporting past the 30-minute quiet window). S2's proof counts bytes read through the platform: an unchanged source is touched by at most the kit's one-byte cursor probe. Month-of-history fixture (9,300 records, five agents): full refresh 118 ms, incremental 29 ms, scan state 141 KB. The ledger opens under the ledger lock — migration, backup, the meta write and the meta/scan-state read all run inside it — so overlapping runs queue on the lock instead of the second reading the first's pre-commit state, and a run never fails with SQLITE_BUSY while another scans. A split record's requests are distributed across its portions: a portion naming its own `modelCalls` keeps it; the calls left over, never below zero, go to the token-largest portion without its own count, other missing portions count 0, and known counts above the record's leave the missing portions at 0; a record without `modelCalls` counts each portion by its own count or 1. | `RefreshResult.sync` cannot distinguish "unpaired" from "failed" (`ok:false` for both); Batch 7 may want a state field there (protocol change). `status` reads the device id and last scan from the ledger but sync and failures from the snapshot until Batch 7 owns them in the ledger. |
 | 3 | merged | #9 | macOS LaunchAgent only. `install` writes `~/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist` with Label, ProgramArguments = absolute `process.execPath` + absolute running `snorlax.mjs` + `refresh`, StartInterval 300, RunAtLoad, and StandardOutPath/StandardErrorPath at `/dev/null` — the refresh summary already goes to the rotating `logs/snorlax.log` (3.9), and an unrotated launchd redirect file would only grow. A non-empty `SNORLAX_HOME` is copied into the plist's EnvironmentVariables so the agent uses that data directory. Before any change, `launchctl print gui/<uid>/<label>` must name the loaded service's `path`; the CLI refuses (exit 1, `internal`, no file touched) unless that path is its own plist — Snorlax.app's Launch at login and this agent share one label and are mutually exclusive (3.11), and a print that names no path is refused rather than guessed. Load is `launchctl bootstrap gui/<uid> <plist>`; a service already loaded under the CLI's own plist is `bootout` by service target first, so install can be repeated and a hand-deleted plist does not block uninstall; a failed `bootstrap` removes the plist it just wrote. `SNORLAX_LAUNCHCTL` overrides the launchctl binary (default `/bin/launchctl`); tests point it at a stub under a temporary HOME whose `bootstrap` fails like launchctl's while a service is loaded. `SNORLAX_OS` (`darwin`, `linux`, `win32`) selects the scheduler instead of `platform.os` so the bundled CLI can run this path on the Linux CI job; it is not copied into the plist. Linux and other systems exit 1 with code `internal` and a message that names Batch 8, because plan 3.2.1 has no unsupported-platform code and the protocol FailureCode union is outside this batch. `uninstall --data` removes only the entries snorlax writes — `ledger.db` with its SQLite sidecars, `ledger.db.bak-v*`, `ledger.lock` and its `.holder`, `config.json`, `snapshot.json` and crashed `.<hex>.tmp` atomic-write temps, `node-path`, `logs/` — then removes the directory itself only when empty, listing anything left in the output with exit 0, after `removeKeychainItem()`, which is a no-op until Batch 7. Relative data directories are refused; so are `/`, the home directory, and its ancestors, compared through `realpath`. The S14 test hashes all six agent directories around install, a real `refresh` (exit 0, `records` > 0), and uninstall, and HOME's top level gains nothing but `Library/` and the data directory. The install test parses that plist with the `plist` package (catalog devDependency, 5.0.0) and a zod schema. | `doctor` does not check scheduling yet, and the plist's Node path is `process.execPath`, which carries the installed version (nvm, Homebrew): upgrading or removing that Node silently stops the timer. Keychain removal waits for Batch 7. systemd waits for Batch 8. `launchctl print` treats every non-zero exit as not loaded. An in-flight refresh is not awaited after bootout before `uninstall --data` deletes the directory. |
 | 4 | merged | #8 | S1 owner run is still pending, so the widget keeps the App Group and does not add the home-relative read entitlement. quicktype 26.0.0 (catalog) reads `schema/*.json`; the generator shares window totals with `$ref` and sets JSON Schema titles so Swift names stay stable, and date-times stay `String`. Token short form is 1000-based K/M/B/T (`812345678` → `812M`); cost is `$` with two fraction digits (`312.4` → `$312.40`); the review pass below replaced that suffix: a fully unpriced window reads `unpriced`, a partially priced one `≥ $x.xx`. Device name is shown from `snorlax status` and is read-only because no command changes it. `refresh` decodes the failure shape; Batch 2 has landed, so refresh scans real logs. `SMAppService.register()` runs only from the Settings toggle. Node discovery writes `<data>/node-path` from `/bin/zsh -lc 'command -v node'` when the saved Node is missing or older than 22.13, runs after the snapshot loads, and reads the path from the last `/`-leading output line. The compiled launcher execs the bundled collector. The Xcode build phase runs `pnpm --filter @rivus/snorlax run build` and copies `dist/snorlax.mjs`; user script sandboxing is off so that phase can run pnpm. A newer snapshot is not copied; the widget keeps the last accepted copy. A review pass replaced the `/bin/sh` launcher with a compiled `SnorlaxLauncher` tool target embedded at `Contents/Helpers/snorlax` with Code Sign On Copy — an unsigned subcomponent failed every signed build — and CI gained an ad-hoc signed build verified with `codesign --verify --deep --strict`. An unchanged snapshot (same `generatedAt`) is not copied again and does not reload widget timelines. The popover names an unnamed local device `This Mac` and an unnamed remote by the first 8 characters of its id, hides Devices when this Mac is the only device, drops rows with no usage today, plots the 30-day chart on real dates, and shows `unpriced` for fully unpriced windows and `≥ $x.xx` for partially priced ones. The widget distinguishes a missing snapshot, an unavailable container, and a newer snapshot, captions the snapshot with `as of`, and shows `—` for Today when the snapshot's day in the snapshot's zone has passed. | App Group container, `SMAppService` registration, and the widget gallery still need the owner's Personal Team (section 7). Signing-disabled tests do not answer them. Changing the device name has no CLI command. Batch 2 has landed, so `snorlax refresh` fills a snapshot by scanning this Mac's logs. Pairing controls are Batch 8. The App Group container is system-protected: a CLI cannot delete `snapshot.json` inside it, so uninstall needs the app to delete its copy or prompt the user (R14). |
-| 4b | in review (branch `refactor/collector-effect-cli`, part 1: the move and the structural fixes; #11/#13 leftovers follow) | — | `effect` and `@effect/platform-node` pinned to 4.0.4 in the catalog — the exact version `@rivus/agent-kit` 0.20.0 names in `peerDependencies.effect`; `@effect/platform-node-shared` pinned by override to the same train because 4.0.6's `effect` peer is `^4.0.6`. Structure per 3.13: `cli/` (root command, shared `--json`, envelope, exit codes, redaction, command log), `commands/` (flags via `effect/cli`, handler returns payload + human text through a one-slot `CommandOutput` service), feature services (`DataDir`, `ConfigStore`, `Log`, `StatusReport`, `Doctor`, `SnapshotStore`, `Refresh`, `Rebuild`, `Schedule`) over the plain orchestration the Batch 2/3 tests still call; `errors.ts` holds the tagged `UsageError`/`CommandError` whose `code` is the protocol `FailureCode`; the platform reaches features as `SnorlaxPlatform` (the kit `PlatformService` narrowed so the memory platform satisfies it); `bin.ts` runs `NodeRuntime.runMain` over `NodePlatformLive`. Parse errors from `effect/cli` arrive as `CliError.ShowHelp`; `cli/` renders them as exit 2 + `invalid-arguments`, its own tagged errors as exit 1, and prints the failure shape itself (`renderErrors` left on for the human path). effect/cli's own rendering is captured through a buffering, redacting `Console` and flushed only once the mode is decided, so a `--json` run drops it and keeps exactly one JSON object on stdout; the mode itself follows the value effect/cli parsed — `--json` is a `GlobalFlag.Setting`, the handler hands the parsed value to its render, and only paths where no handler ran (parse errors, built-in flags) fall back to the tokens before `--`. This makes `--json=false`, `--json no`, `--json 0`, `--no-json` and `status -- --json` behave by their parsed meaning (effect keeps the first value when the flag is spelled twice). Exit codes travel on the `Runtime.errorExitCode` marker of a `CliExit` failure. Fixes: bundled runtime deps moved to `devDependencies` (pack shows no `dependencies`); `doctor` fails the data-dir check on a missing directory, a file in its place, or a mode wider than 0700 — exit 0, nothing repaired, and the old writability probe is gone because the command must not touch files; `status`, `snapshot` and `uninstall` create nothing on a fresh machine (`DataDir.ensure` is called only by `refresh`, `rebuild` and `install` — install only after the ownership check, so a refused install builds nothing; it also creates `logs/`, which the append-only `Log` service needs for the refresh summary, while the kit's `fs.remove` and the leftovers handling treat a missing directory as already clean); `snapshot --json` wraps as `SnapshotOutput`; every output is redacted centrally in `cli/` (`redact` for JSON values, `redactText` for text), so `status.dataDir` and the `install`/`uninstall` human paths now read `~/…` — the affected test assertions follow that spelling; the hand-written shape guard in `test/cli.test.ts` became zod parses and the bundle tests parse stdout through the protocol schemas; a structure test walks the sources for `cli/`/`commands/` imports inside feature modules. The Swift generator injects the prepared snapshot schema into `snapshot-output`'s `$defs` and skips snapshot.json as its own quicktype source, because quicktype renames a named type that lives in two documents. Cold start of `snorlax status --json` (median of 20 runs, fresh temp `HOME` each): 85 ms on main 1d12d09, 112 ms on the final bundle here; `dist/snorlax.mjs` grew 824 KB → 1,006 KB (Effect runtime inlined; rolldown drops doc comments via `output.comments` — 31,495 lines, longest 560 chars — and the file stays unminified per D9's debuggable single file). `bin.ts` does not use `NodeRuntime.runMain`: it would turn a timed-out command into exit(130), which breaks the app's `CollectorClient` timeout detection (3.2.1); instead a `runFork` runner interrupts the fiber on SIGINT/SIGTERM and then re-raises the same signal at the process, so it ends by signal with empty stdout. The built-in flags are narrowed to help and version via `CliConfig` (`--wizard` would prompt interactively, `--completions`/`--log-level` are outside the convention): human `--help`/`-h`/`--version`/`-v` exit 0; with `--json` they print one `invalid-arguments` object and exit 2. `--json=` is rejected (`invalid-arguments`, exit 2) because the boolean flag takes no value and `--json=false` parsing to json would misreport either way. effect/cli's own human rendering (help, formatted parse errors) is redacted like every other output. | `effect/cli` is unstable and pinned exactly; it upgrades with agent-kit's peer range. Command modules load eagerly — real laziness is unobservable in the single-file bundle, so startup cost is held at the layer level (no side effects before a command runs) plus the cold-start measurement. `--json` is accepted before the command name (npm-style shared flags). The human path of a usage error prints effect/cli's help and formatted errors instead of the old message-plus-usage on stderr; `UsageError` prints the message alone. `pair`/`unpair` stay stubs; the #11/#13 items and the PR are the second part. |
+| 4b | merged | #16 | `effect` and `@effect/platform-node` pinned to 4.0.4 in the catalog — the exact version `@rivus/agent-kit` 0.20.0 names in `peerDependencies.effect`; `@effect/platform-node-shared` pinned by override to the same train because 4.0.6's `effect` peer is `^4.0.6`. Structure per 3.13: `cli/` (root command, shared `--json`, envelope, exit codes, redaction, command log), `commands/` (flags via `effect/cli`, handler returns payload + human text through a one-slot `CommandOutput` service), feature services (`DataDir`, `ConfigStore`, `Log`, `StatusReport`, `Doctor`, `SnapshotStore`, `Refresh`, `Rebuild`, `Schedule`) over the plain orchestration the Batch 2/3 tests still call; `errors.ts` holds the tagged `UsageError`/`CommandError` whose `code` is the protocol `FailureCode`; the platform reaches features as `SnorlaxPlatform` (the kit `PlatformService` narrowed so the memory platform satisfies it); `bin.ts` runs `NodeRuntime.runMain` over `NodePlatformLive`. Parse errors from `effect/cli` arrive as `CliError.ShowHelp`; `cli/` renders them as exit 2 + `invalid-arguments`, its own tagged errors as exit 1, and prints the failure shape itself (`renderErrors` left on for the human path). effect/cli's own rendering is captured through a buffering, redacting `Console` and flushed only once the mode is decided, so a `--json` run drops it and keeps exactly one JSON object on stdout; the mode itself follows the value effect/cli parsed — `--json` is a `GlobalFlag.Setting`, the handler hands the parsed value to its render, and only paths where no handler ran (parse errors, built-in flags) fall back to the tokens before `--`. This makes `--json=false`, `--json no`, `--json 0`, `--no-json` and `status -- --json` behave by their parsed meaning (effect keeps the first value when the flag is spelled twice). Exit codes travel on the `Runtime.errorExitCode` marker of a `CliExit` failure. Fixes: bundled runtime deps moved to `devDependencies` (pack shows no `dependencies`); `doctor` fails the data-dir check on a missing directory, a file in its place, or a mode wider than 0700 — exit 0, nothing repaired, and the old writability probe is gone because the command must not touch files; `status`, `snapshot` and `uninstall` create nothing on a fresh machine (`DataDir.ensure` is called only by `refresh`, `rebuild` and `install` — install only after the ownership check, so a refused install builds nothing; it also creates `logs/`, which the append-only `Log` service needs for the refresh summary, while the kit's `fs.remove` and the leftovers handling treat a missing directory as already clean); `snapshot --json` wraps as `SnapshotOutput`; every output is redacted centrally in `cli/` (`redact` for JSON values, `redactText` for text), so `status.dataDir` and the `install`/`uninstall` human paths now read `~/…` — the affected test assertions follow that spelling; the hand-written shape guard in `test/cli.test.ts` became zod parses and the bundle tests parse stdout through the protocol schemas; a structure test walks the sources for `cli/`/`commands/` imports inside feature modules. The Swift generator injects the prepared snapshot schema into `snapshot-output`'s `$defs` and skips snapshot.json as its own quicktype source, because quicktype renames a named type that lives in two documents. Cold start of `snorlax status --json` (median of 20 runs, fresh temp `HOME` each): 85 ms on main 1d12d09, 112 ms on the final bundle here; `dist/snorlax.mjs` grew 824 KB → 1,006 KB (Effect runtime inlined; rolldown drops doc comments via `output.comments` — 31,495 lines, longest 560 chars — and the file stays unminified per D9's debuggable single file). `bin.ts` does not use `NodeRuntime.runMain`: it would turn a timed-out command into exit(130), which breaks the app's `CollectorClient` timeout detection (3.2.1); instead a `runFork` runner interrupts the fiber on SIGINT/SIGTERM and then re-raises the same signal at the process, so it ends by signal with empty stdout. The built-in flags are narrowed to help and version via `CliConfig` (`--wizard` would prompt interactively, `--completions`/`--log-level` are outside the convention): human `--help`/`-h`/`--version`/`-v` exit 0; with `--json` they print one `invalid-arguments` object and exit 2. `--json=` is rejected (`invalid-arguments`, exit 2) because the boolean flag takes no value and `--json=false` parsing to json would misreport either way. effect/cli's own human rendering (help, formatted parse errors) is redacted like every other output. | `effect/cli` is unstable and pinned exactly; it upgrades with agent-kit's peer range. Command modules load eagerly — real laziness is unobservable in the single-file bundle, so startup cost is held at the layer level (no side effects before a command runs) plus the cold-start measurement. `--json` is accepted before the command name (npm-style shared flags). The human path of a usage error prints effect/cli's help and formatted errors instead of the old message-plus-usage on stderr; `UsageError` prints the message alone. `pair`/`unpair` stay stubs; the #11/#13 items and the PR are the second part. |
+| 4c | not started | | | |
+| 4d | not started | | | |
 | 5 | waiting for agent-kit K1, K2 | | | |
 | 6 | not started | | | |
 | 7 | not started | | | |
