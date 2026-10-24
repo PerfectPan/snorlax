@@ -8,7 +8,7 @@ import * as z from "zod/mini";
 import { failureSchema, refreshResultSchema, snapshotOutputSchema, statusSchema } from "@rivus/snorlax-protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { runBundle } from "./fixtures/bundle.ts";
+import { runBundle, spawnBundle } from "./fixtures/bundle.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
@@ -327,5 +327,30 @@ describe("ledger and snapshot failures", () => {
       await mkdir(join(data, "snapshot.json", "occupied"), { recursive: true });
     };
     expect(await inFreshHome(occupied, ["refresh", "--json"])).toEqual({ code: "data-dir", status: 1 });
+  });
+});
+
+describe("a closed stdout", () => {
+  /** Runs the bundle with the read end of its stdout closed before it starts, so every write to stdout fails with EPIPE. */
+  const runWithClosedStdout = (args: readonly string[], where: string) =>
+    new Promise<{ readonly code: number | null; readonly stderr: string }>((resolve) => {
+      const child = spawnBundle(args, { home: where });
+      child.stdout.destroy();
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += String(chunk);
+      });
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+
+  it("drops EPIPE quietly and exits with the command's own code", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-epipe-"));
+    try {
+      expect(await runWithClosedStdout(["status", "--json"], fresh)).toEqual({ code: 0, stderr: "" });
+      expect(await runWithClosedStdout(["status"], fresh)).toEqual({ code: 0, stderr: "" });
+      expect(await runWithClosedStdout(["rebuild", "--days", "0", "--json"], fresh)).toEqual({ code: 2, stderr: "" });
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
   });
 });
