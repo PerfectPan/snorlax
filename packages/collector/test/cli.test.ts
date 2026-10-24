@@ -12,13 +12,11 @@ import { runBundle, spawnBundle } from "./fixtures/bundle.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
- * End-to-end tests against the built bundle (`dist/snorlax.mjs`), run under a temporary `HOME` and
- * `SNORLAX_HOME` so no real agent directory is ever touched. The bundle is built before tests run
- * (`pnpm run check` orders build before test); a bare `pnpm test` needs `pnpm run build` first.
+ * Runs the built bundle end to end under the temporary `home`, with `SNORLAX_HOME` at `<home>/data`, so no real
+ * agent directory is ever touched. `doctor` asks launchd about the scheduled job on macOS; the helper's default
+ * launchctl path does not exist, which keeps the real launchctl out of the tests and creates no stub file in the
+ * home whose emptiness they assert.
  */
-
-// `doctor` asks launchd about the scheduled job on macOS; the helper's default launchctl path does not exist,
-// which keeps the real launchctl out of the tests and creates no stub file in the home whose emptiness they assert.
 const run = (args: readonly string[], home: string) => runBundle(args, { home });
 
 /** One JSON object and nothing else: a plain-object record, parsed at the boundary with a schema. */

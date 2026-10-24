@@ -47,7 +47,10 @@ const stringArray = (name: string, values: readonly string[], level: number): st
 export const launchAgentPlistPath = (home: string): string =>
   join(home, "Library", "LaunchAgents", LAUNCH_AGENT_PLIST_NAME);
 
-/** XML property list in one fixed layout; tests parse it back with a plist parser, not by matching the text. */
+/**
+ * XML property list in one fixed layout. Tests read the whole file back with the `plist` package; at run time only
+ * `launchAgentNodePath` reads it back, and it matches this layout's text to keep an XML parser out of the bundle.
+ */
 export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   const lines = [
     `<?xml version="1.0" encoding="UTF-8"?>`,
