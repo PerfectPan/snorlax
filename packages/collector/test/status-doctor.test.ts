@@ -1,5 +1,5 @@
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
-import { SnorlaxPlatform } from "../src/platform.ts";
+import { SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 import { doctorSchema, statusSchema } from "@rivus/snorlax-protocol";
 import { Effect, Layer } from "effect";
 import * as z from "zod/mini";
@@ -7,9 +7,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { runCli } from "../src/cli/run.ts";
 import { CliEnv } from "../src/cli/env.ts";
-import type { NodeFileOps } from "../src/data-dir/node-fs.ts";
-import { NodeFiles } from "../src/data-dir/node-fs.ts";
-import { RuntimeInfo } from "../src/version.ts";
+import type { NodeFileOps } from "../src/modules/data-dir/data-dir.ts";
+import { NodeFiles } from "../src/modules/data-dir/data-dir.ts";
+import { RuntimeInfo } from "../src/modules/version/version.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**

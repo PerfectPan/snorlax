@@ -72,12 +72,19 @@ describe("collector module direction (plan 3.13)", () => {
     // commands/ also holds the shared render slot and the global --json flag; commands never import
     // each other.
     const shared = new Set(["commands/output.ts", "commands/flags.ts"]);
+    const folderOf = (fromSrc: string): string => fromSrc.split("/").slice(0, 2).join("/");
     for (const file of await listFiles(join(srcRoot, "commands"))) {
       const importerDir = dirname(file);
+      const importer = relative(srcRoot, file).split(sep).join("/");
       for (const spec of importSpecs(await readFile(file, "utf8"))) {
         const imported = resolvedFromSrc(spec, importerDir);
-        if (imported !== undefined && imported.startsWith("commands/") && !shared.has(imported)) {
-          offenders.push(`${relative(srcRoot, file).split(sep).join("/")} -> ${spec}`);
+        if (
+          imported !== undefined &&
+          imported.startsWith("commands/") &&
+          !shared.has(imported) &&
+          folderOf(imported) !== folderOf(importer)
+        ) {
+          offenders.push(`${importer} -> ${spec}`);
         }
       }
     }

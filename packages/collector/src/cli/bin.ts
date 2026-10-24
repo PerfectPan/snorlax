@@ -3,8 +3,8 @@ import process from "node:process";
 import { NodePlatformLive } from "@rivus/agent-kit/node/effect";
 import { Effect, Layer, Runtime } from "effect";
 
-import { NodeFiles } from "../data-dir/node-fs.ts";
-import { SnorlaxPlatform } from "../platform.ts";
+import { NodeFiles } from "../modules/data-dir/data-dir.ts";
+import { SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
 

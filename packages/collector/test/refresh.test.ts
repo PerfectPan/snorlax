@@ -9,11 +9,12 @@ import { snapshotOutputSchema, snapshotSchema, type Snapshot } from "@rivus/snor
 import * as z from "zod/mini";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { openLedger, type BucketRow } from "../src/ledger/ledger.ts";
-import { createLogger, type Logger } from "../src/log/logger.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import { readSnapshotFile } from "../src/snapshot/read.ts";
-import { nodeFileOps } from "../src/data-dir/node-fs.ts";
+import type { BucketRow } from "../src/core/buckets/buckets.ts";
+import { openLedger } from "../src/modules/ledger/ledger.ts";
+import { createLogger, type Logger } from "../src/modules/log/log.ts";
+import { runRefresh } from "../src/commands/refresh/refresh.ts";
+import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
+import { nodeFileOps } from "../src/modules/data-dir/data-dir.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 

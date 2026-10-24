@@ -7,9 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 
-import { CommandError } from "../src/errors.ts";
-import { listBackups, SCHEMA_VERSION } from "../src/ledger/migrations.ts";
-import { ledgerPath, openLedger } from "../src/ledger/ledger.ts";
+import { CommandError } from "../src/modules/errors/errors.ts";
+import { listBackups, SCHEMA_VERSION } from "../src/modules/ledger/migrations.ts";
+import { ledgerPath, openLedger } from "../src/modules/ledger/ledger.ts";
 
 /**
  * The ledger's forward-only migrations and backups (plan 3.3.2, 5.3): a fresh data directory creates the

@@ -3,14 +3,19 @@ import { join } from "node:path";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { accumulateRecord, createAccumulator, portionRequestCounts } from "../src/buckets/accumulate.ts";
-import { splitByModel } from "../src/buckets/split.ts";
-import { openLedger, type BucketRow } from "../src/ledger/ledger.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import { readSnapshotFile } from "../src/snapshot/read.ts";
+import {
+  accumulateRecord,
+  createAccumulator,
+  portionRequestCounts,
+  type BucketRow
+} from "../src/core/buckets/buckets.ts";
+import { splitByModel } from "../src/core/buckets/split.ts";
+import { openLedger } from "../src/modules/ledger/ledger.ts";
+import { runRefresh } from "../src/commands/refresh/refresh.ts";
+import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
 import { quietMtime, writeGrokSession, writeOpencodeDatabase, writePiSession } from "./fixtures/agents.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
-import type { Logger } from "../src/log/logger.ts";
+import type { Logger } from "../src/modules/log/log.ts";
 
 /**
  * Spec S12 and the bucket arithmetic of plan 3.4.1 step 4: agent-logged costs (Pi, opencode) land in the

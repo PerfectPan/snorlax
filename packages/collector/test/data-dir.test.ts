@@ -4,8 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ensureDataDir, resolveDataDir } from "../src/data-dir/data-dir.ts";
-import { nodeFileOps } from "../src/data-dir/node-fs.ts";
+import { ensureDataDir, nodeFileOps, resolveDataDir } from "../src/modules/data-dir/data-dir.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 let tempRoot: string;

@@ -3,11 +3,12 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { openLedger, type BucketRow } from "../src/ledger/ledger.ts";
-import { rebuildStartHour, REBUILD_MAX_DAYS, runRebuild } from "../src/rebuild/rebuild.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import { readSnapshotFile } from "../src/snapshot/read.ts";
-import type { Logger } from "../src/log/logger.ts";
+import type { BucketRow } from "../src/core/buckets/buckets.ts";
+import { openLedger } from "../src/modules/ledger/ledger.ts";
+import { rebuildStartHour, REBUILD_MAX_DAYS, runRebuild } from "../src/commands/rebuild/rebuild.ts";
+import { runRefresh } from "../src/commands/refresh/refresh.ts";
+import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
+import type { Logger } from "../src/modules/log/log.ts";
 import { quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 

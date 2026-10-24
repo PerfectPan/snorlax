@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createNodePlatform } from "@rivus/agent-kit/node";
 import type { Platform } from "@rivus/agent-kit/platform";
 
-import type { RefreshPlatform } from "../../src/refresh/lock.ts";
+import type { RefreshPlatform } from "../../src/modules/ledger/ledger.ts";
 
 /**
  * A refresh test bed: a real temporary home (generated fixtures only — a real agent home is never read),

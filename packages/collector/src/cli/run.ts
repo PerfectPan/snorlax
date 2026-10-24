@@ -1,4 +1,4 @@
-import { SnorlaxPlatform } from "../platform.ts";
+import { SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { ChildProcessSpawner } from "effect/process";
 import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
 import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
@@ -6,20 +6,20 @@ import { layerTest as stdioLayerTest } from "effect/Stdio";
 
 import type { FailureCode } from "@rivus/snorlax-protocol";
 
-import { DataDir } from "../data-dir/data-dir.ts";
-import { NodeFiles } from "../data-dir/node-fs.ts";
-import { Doctor } from "../doctor/service.ts";
-import { CommandError, UsageError } from "../errors.ts";
-import { Log } from "../log/logger.ts";
-import { Rebuild } from "../rebuild/service.ts";
-import { Refresh } from "../refresh/service.ts";
-import { Schedule } from "../schedule/service.ts";
-import { SnapshotStore } from "../snapshot/store.ts";
-import { StatusReport } from "../status/report.ts";
+import { DataDir } from "../modules/data-dir/data-dir.ts";
+import { NodeFiles } from "../modules/data-dir/data-dir.ts";
+import { Doctor } from "../commands/doctor/service.ts";
+import { CommandError, UsageError } from "../modules/errors/errors.ts";
+import { Log } from "../modules/log/log.ts";
+import { Rebuild } from "../commands/rebuild/service.ts";
+import { Refresh } from "../commands/refresh/service.ts";
+import { Schedule } from "../capabilities/scheduler/scheduler.ts";
+import { SnapshotStore } from "../commands/snapshot/store.ts";
+import { StatusReport } from "../commands/status/report.ts";
 import { JsonFlag } from "../commands/flags.ts";
 import { CommandOutput } from "../commands/output.ts";
-import { errorMessage } from "../util/error-message.ts";
-import { RuntimeInfo } from "../version.ts";
+import { errorMessage } from "../core/error-message/error-message.ts";
+import { RuntimeInfo } from "../modules/version/version.ts";
 import { CliEnv } from "./env.ts";
 import { cliConsole, printFailureJson, printFailureMessage, printHuman, printPayloadJson } from "./output.ts";
 import { rootCommand } from "./root.ts";

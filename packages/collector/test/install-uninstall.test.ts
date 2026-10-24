@@ -12,9 +12,9 @@ import * as plist from "plist";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
-import { CommandError } from "../src/errors.ts";
-import { resolvedDeletableDataDir } from "../src/schedule/launchd.ts";
-import { renderLaunchAgentPlist } from "../src/schedule/plist.ts";
+import { CommandError } from "../src/modules/errors/errors.ts";
+import { resolvedDeletableDataDir } from "../src/capabilities/scheduler/launchd.ts";
+import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 
 /**

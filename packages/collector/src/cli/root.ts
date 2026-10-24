@@ -1,17 +1,17 @@
 import { Command } from "effect/cli";
 import { Effect } from "effect";
 
-import { UsageError } from "../errors.ts";
+import { UsageError } from "../modules/errors/errors.ts";
 import { JsonFlag } from "../commands/flags.ts";
-import { doctorCommand } from "../commands/doctor.ts";
-import { installCommand } from "../commands/install.ts";
-import { pairCommand } from "../commands/pair.ts";
-import { rebuildCommand } from "../commands/rebuild.ts";
-import { refreshCommand } from "../commands/refresh.ts";
-import { snapshotCommand } from "../commands/snapshot.ts";
-import { statusCommand } from "../commands/status.ts";
-import { uninstallCommand } from "../commands/uninstall.ts";
-import { unpairCommand } from "../commands/unpair.ts";
+import { doctorCommand } from "../commands/doctor/command.ts";
+import { installCommand } from "../commands/install/command.ts";
+import { pairCommand } from "../commands/pair/command.ts";
+import { rebuildCommand } from "../commands/rebuild/command.ts";
+import { refreshCommand } from "../commands/refresh/command.ts";
+import { snapshotCommand } from "../commands/snapshot/command.ts";
+import { statusCommand } from "../commands/status/command.ts";
+import { uninstallCommand } from "../commands/uninstall/command.ts";
+import { unpairCommand } from "../commands/unpair/command.ts";
 
 /**
  * The root command (plan 3.13): the global `--json` flag is an effect/cli Setting, so it is accepted

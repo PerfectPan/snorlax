@@ -3,8 +3,8 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { nodeFileOps } from "../src/data-dir/node-fs.ts";
-import { createLogger, LOG_FILES_KEPT } from "../src/log/logger.ts";
+import { nodeFileOps } from "../src/modules/data-dir/data-dir.ts";
+import { createLogger, LOG_FILES_KEPT } from "../src/modules/log/log.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 /**

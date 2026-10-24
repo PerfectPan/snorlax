@@ -2,12 +2,12 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { ledgerPath, openLedger, readLedgerStatus } from "../src/ledger/ledger.ts";
-import { listBackups } from "../src/ledger/migrations.ts";
-import type { Logger } from "../src/log/logger.ts";
-import { runRebuild } from "../src/rebuild/rebuild.ts";
-import { runRefresh } from "../src/refresh/refresh.ts";
-import type { RefreshPlatform } from "../src/refresh/lock.ts";
+import { ledgerPath, openLedger, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
+import { listBackups } from "../src/modules/ledger/migrations.ts";
+import type { Logger } from "../src/modules/log/log.ts";
+import { runRebuild } from "../src/commands/rebuild/rebuild.ts";
+import { runRefresh } from "../src/commands/refresh/refresh.ts";
+import type { RefreshPlatform } from "../src/modules/ledger/ledger.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
