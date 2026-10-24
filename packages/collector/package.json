@@ -29,19 +29,19 @@
     "url": "git+https://github.com/PerfectPan/snorlax.git",
     "directory": "packages/collector"
   },
-  "dependencies": {
+  "devDependencies": {
     "@date-fns/tz": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@perfectpan/lint-config": "catalog:",
     "@rivus/agent-kit": "catalog:",
     "@rivus/agent-kit-collab": "catalog:",
     "@rivus/snorlax-protocol": "workspace:*",
-    "date-fns": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@perfectpan/lint-config": "catalog:",
     "@types/node": "catalog:",
+    "date-fns": "catalog:",
+    "effect": "catalog:",
     "plist": "catalog:",
     "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "zod": "catalog:"
   }
 }

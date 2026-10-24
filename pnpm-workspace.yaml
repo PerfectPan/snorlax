@@ -8,6 +8,10 @@ packages:
 # does not declare — those install fine, so keep shared versions in the catalog deliberately.
 catalogMode: strict
 catalog:
+  # effect and @effect/platform-node are pinned to the exact version @rivus/agent-kit's
+  # peerDependencies.effect names (plan 2.4 D12); both upgrade together with the kit's peer range.
+  effect: 4.0.4
+  '@effect/platform-node': 4.0.4
   # The bundled vitest peers on a real `vite` range, while vite-plus provides `vite` as this core alias;
   # pnpm can only satisfy that peer through the override below. Keep the version in lockstep with the
   # `vite-plus` entry (same release train; Dependabot does not see the mapping).
@@ -27,6 +31,9 @@ catalog:
 # Redirect whatever declares a `vite` range to the vite-plus core alias.
 overrides:
   vite@*: 'catalog:'
+  # @effect/platform-node's caret range would float @effect/platform-node-shared to a version whose
+  # effect peer no longer accepts the pinned 4.0.4; keep the whole effect 4.0.4 train together.
+  '@effect/platform-node-shared@*': 4.0.4
 
 peerDependencyRules:
   allowAny:
