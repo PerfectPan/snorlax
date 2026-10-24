@@ -47,7 +47,7 @@ export class Doctor extends Context.Service<
                 };
           let config: ConfigObservation;
           try {
-            await readConfig(platform, dataDir.path);
+            await Effect.runPromise(readConfig(platform, dataDir.path));
             config = { ok: true };
           } catch (error) {
             config = { ok: false, message: errorMessage(error) };

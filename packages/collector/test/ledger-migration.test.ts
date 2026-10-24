@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 
 import { listBackups, SCHEMA_VERSION } from "../src/modules/ledger/migrations.ts";
-import { ledgerPath, LedgerSchemaTooNew, openLedger } from "../src/modules/ledger/ledger.ts";
+import { ledgerPath, LedgerSchemaTooNew } from "../src/modules/ledger/ledger.ts";
+import { readLedger } from "./fixtures/flows.ts";
 
 /**
  * The ledger's forward-only migrations and backups (plan 3.3.2, 5.3): a fresh data directory creates the
@@ -29,7 +31,7 @@ if (sqlite === undefined) {
 }
 const platform = { fs, sqlite };
 
-const open = () => openLedger(platform, dataDir);
+const open = () => readLedger(platform, dataDir, Effect.succeed);
 
 const userVersion = (): number => {
   const db = new DatabaseSync(ledgerPath(dataDir));
@@ -60,68 +62,60 @@ afterAll(async () => {
 describe("a fresh data directory", () => {
   it("creates the schema, a device id and no backup", async () => {
     const ledger = await open();
-    try {
-      expect(userVersion()).toBe(SCHEMA_VERSION);
-      expect(ledger.meta.deviceId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(ledger.meta.lastScanCompletedAt).toBe(null);
-      expect(ledger.meta.pullCursor).toBe(0);
-      expect(ledger.meta.pricingVersion).toBe(null);
-    } finally {
-      ledger.close();
-    }
+    expect(userVersion()).toBe(SCHEMA_VERSION);
+    expect(ledger.meta.deviceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ledger.meta.lastScanCompletedAt).toBe(null);
+    expect(ledger.meta.pullCursor).toBe(0);
+    expect(ledger.meta.pricingVersion).toBe(null);
     expect(await listBackups(platform.fs, dataDir)).toEqual([]);
   });
 
   it("keeps the device id and the schema version on reopening", async () => {
     const first = await open();
     const deviceId = first.meta.deviceId;
-    first.close();
 
     const second = await open();
-    try {
-      expect(second.meta.deviceId).toBe(deviceId);
-      expect(userVersion()).toBe(SCHEMA_VERSION);
-    } finally {
-      second.close();
-    }
+    expect(second.meta.deviceId).toBe(deviceId);
+    expect(userVersion()).toBe(SCHEMA_VERSION);
     expect(await listBackups(platform.fs, dataDir)).toEqual([]);
   });
 });
 
 describe("a database on an older schema version", () => {
   it("is backed up as bak-v<old> and migrated with its data intact", async () => {
-    const ledger = await open();
+    const ledger = await readLedger(platform, dataDir, (opened) =>
+      Effect.as(
+        opened.transaction(
+          opened.addBuckets([
+            {
+              hour: Date.UTC(2026, 9, 22, 9) / 1000,
+              agent: "claude-code",
+              model: "claude-opus-5-5",
+              inputTokens: 100,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              outputTokens: 5,
+              reasoningTokens: 0,
+              requests: 1,
+              sessionsStarted: 1,
+              costUsd: 0,
+              unpricedRequests: 1
+            }
+          ])
+        ),
+        opened
+      )
+    );
     const deviceId = ledger.meta.deviceId;
-    await ledger.transaction(() => {
-      ledger.addBuckets([
-        {
-          hour: Date.UTC(2026, 9, 22, 9) / 1000,
-          agent: "claude-code",
-          model: "claude-opus-5-5",
-          inputTokens: 100,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          outputTokens: 5,
-          reasoningTokens: 0,
-          requests: 1,
-          sessionsStarted: 1,
-          costUsd: 0,
-          unpricedRequests: 1
-        }
-      ]);
-    });
-    ledger.close();
 
     // A database that predates version bookkeeping sits on `user_version` 0 with its tables in place.
     setUserVersion(0);
-    const migrated = await open();
-    try {
-      expect(userVersion()).toBe(SCHEMA_VERSION);
-      expect(migrated.meta.deviceId).toBe(deviceId);
-      expect(migrated.readBuckets()).toHaveLength(1);
-    } finally {
-      migrated.close();
-    }
+    const migrated = await readLedger(platform, dataDir, (opened) =>
+      Effect.map(opened.readBuckets(), (buckets) => ({ meta: opened.meta, buckets }))
+    );
+    expect(userVersion()).toBe(SCHEMA_VERSION);
+    expect(migrated.meta.deviceId).toBe(deviceId);
+    expect(migrated.buckets).toHaveLength(1);
     expect((await listBackups(platform.fs, dataDir)).map((backup) => backup.version)).toEqual([0]);
   });
 
@@ -139,26 +133,22 @@ describe("a database on an older schema version", () => {
 
 describe("the persisted scan state", () => {
   it("keeps fields this build does not know, at the top and inside a source", async () => {
-    const ledger = await open();
-    ledger.setScanState({
-      sources: {
-        "a.jsonl": { agent: "claude-code", path: "a.jsonl", mtimeMs: 1, futureSourceField: true }
-      },
-      requests: {},
-      futureStateField: "kept"
-    });
-    ledger.close();
+    await readLedger(platform, dataDir, (ledger) =>
+      ledger.setScanState({
+        sources: {
+          "a.jsonl": { agent: "claude-code", path: "a.jsonl", mtimeMs: 1, futureSourceField: true }
+        },
+        requests: {},
+        futureStateField: "kept"
+      })
+    );
 
     // A newer kit reads its own added fields back out of the state this build persisted (plan 3.7).
     const reopened = await open();
-    try {
-      expect(reopened.scanState).toMatchObject({
-        futureStateField: "kept",
-        sources: { "a.jsonl": { futureSourceField: true } }
-      });
-    } finally {
-      reopened.close();
-    }
+    expect(reopened.scanState).toMatchObject({
+      futureStateField: "kept",
+      sources: { "a.jsonl": { futureSourceField: true } }
+    });
   });
 });
 
@@ -204,7 +194,7 @@ describe("a database from a newer build", () => {
         }
       }
     };
-    await expect(openLedger(brokenPlatform, dataDir)).rejects.toMatchObject({
+    await expect(readLedger(brokenPlatform, dataDir, Effect.succeed)).rejects.toMatchObject({
       _tag: "LedgerUnreadable",
       message: /ledger\.db/
     });

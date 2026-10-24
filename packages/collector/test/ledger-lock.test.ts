@@ -1,15 +1,14 @@
 import { basename, join } from "node:path";
 
+import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ledgerPath, openLedger, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
+import { ledgerPath, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
 import { listBackups } from "../src/modules/ledger/migrations.ts";
 import type { Logger } from "../src/modules/log/log.ts";
-import { runRebuild } from "../src/commands/rebuild/rebuild.ts";
-import { runRefresh } from "../src/commands/refresh/refresh.ts";
-import type { RefreshPlatform } from "../src/modules/ledger/ledger.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
-import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
+import { readLedger, runRebuild, runRefresh } from "./fixtures/flows.ts";
+import { createRefreshSetup, type RefreshSetup, type TestPlatform } from "./fixtures/platform.ts";
 
 /**
  * One refresh at a time per data directory (plan 3.5): the ledger lock serializes overlapping runs, and
@@ -65,21 +64,17 @@ const appendOne = (home: string): Promise<void> =>
     MTIME
   );
 
-const refreshOn = (platform: RefreshPlatform, setup: RefreshSetup): Promise<unknown> =>
+const refreshOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
   runRefresh({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE });
 
-const rebuildOn = (platform: RefreshPlatform, setup: RefreshSetup): Promise<unknown> =>
+const rebuildOn = (platform: TestPlatform, setup: RefreshSetup): Promise<unknown> =>
   runRebuild({ platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE }, 30);
 
 /** The ledger result two runs must land on, whichever order they ran in: buckets and the scan time. */
-const stateOf = async (setup: RefreshSetup): Promise<unknown> => {
-  const ledger = await openLedger(setup.platform, setup.dataDir);
-  try {
-    return { lastScanCompletedAt: ledger.meta.lastScanCompletedAt, buckets: ledger.readBuckets() };
-  } finally {
-    ledger.close();
-  }
-};
+const stateOf = (setup: RefreshSetup): Promise<unknown> =>
+  readLedger(setup.platform, setup.dataDir, (ledger) =>
+    Effect.map(ledger.readBuckets(), (buckets) => ({ lastScanCompletedAt: ledger.meta.lastScanCompletedAt, buckets }))
+  );
 
 const setUserVersion = (setup: RefreshSetup, version: number): void => {
   const db = setup.platform.sqlite.open(ledgerPath(setup.dataDir));
@@ -91,7 +86,7 @@ const setUserVersion = (setup: RefreshSetup, version: number): void => {
 };
 
 interface Probe {
-  readonly platform: RefreshPlatform;
+  readonly platform: TestPlatform;
   /** Resolves when the gated run reads its gate path for the first time: mid-scan, under the lock. */
   readonly gateReached: Promise<void>;
   releaseGate: () => void;
@@ -137,7 +132,7 @@ const probedPlatform = (setup: RefreshSetup, gatePath: string): Probe => {
   let gateTripped = false;
   const base = setup.platform.fs;
 
-  const platform: RefreshPlatform = {
+  const platform: TestPlatform = {
     ...setup.platform,
     fs: {
       ...base,

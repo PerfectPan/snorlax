@@ -1,8 +1,7 @@
 import { Command, Flag } from "effect/cli";
 import { Data, Effect } from "effect";
 
-import { Rebuild } from "./service.ts";
-import { REBUILD_MAX_DAYS, REBUILD_MIN_DAYS } from "./rebuild.ts";
+import { rebuildFlow, REBUILD_MAX_DAYS, REBUILD_MIN_DAYS } from "./flow.ts";
 import { JsonFlag } from "../flags.ts";
 import { CommandOutput } from "../output.ts";
 
@@ -28,7 +27,7 @@ export const rebuildCommand = Command.make(
           message: `--days must be between ${REBUILD_MIN_DAYS} and ${REBUILD_MAX_DAYS}`
         });
       }
-      const result = yield* (yield* Rebuild).run(days);
+      const { result } = yield* rebuildFlow(days);
       yield* (yield* CommandOutput).render({
         payload: result,
         human: humanSummary(days, result.records, result.failures),

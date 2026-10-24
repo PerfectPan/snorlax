@@ -3,17 +3,11 @@ import { join } from "node:path";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import {
-  accumulateRecord,
-  createAccumulator,
-  portionRequestCounts,
-  type BucketRow
-} from "../src/core/buckets/buckets.ts";
+import { accumulateRecord, createAccumulator, portionRequestCounts } from "../src/core/buckets/buckets.ts";
 import { splitByModel } from "../src/core/buckets/split.ts";
-import { openLedger } from "../src/modules/ledger/ledger.ts";
-import { runRefresh } from "../src/commands/refresh/refresh.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
 import { quietMtime, writeGrokSession, writeOpencodeDatabase, writePiSession } from "./fixtures/agents.ts";
+import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 
@@ -332,13 +326,7 @@ describe("S12: agent-logged cost over real fixture logs", () => {
     expect(outcome.result.records).toBe(4);
     expect(outcome.result.failures).toBe(0);
 
-    const ledger = await openLedger(setup.platform, setup.dataDir);
-    let rows: BucketRow[];
-    try {
-      rows = ledger.readBuckets();
-    } finally {
-      ledger.close();
-    }
+    const rows = await readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
 
     const pi = rows.find((row) => row.agent === "pi" && row.model === "gemini-3-pro");
     expect(pi).toMatchObject({
@@ -410,13 +398,7 @@ describe("a turn record with a per-model split (Grok fixtures)", () => {
       });
       expect(outcome.result.records).toBe(1);
 
-      const ledger = await openLedger(setup.platform, setup.dataDir);
-      let rows: BucketRow[];
-      try {
-        rows = ledger.readBuckets();
-      } finally {
-        ledger.close();
-      }
+      const rows = await readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
       const grok4 = rows.find((row) => row.agent === "grok" && row.model === "grok-4");
       expect(grok4).toMatchObject({
         inputTokens: 200,
@@ -463,13 +445,7 @@ describe("a turn record with a per-model split (Grok fixtures)", () => {
       });
       await runRefresh({ platform: setup.platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE });
 
-      const ledger = await openLedger(setup.platform, setup.dataDir);
-      let rows: BucketRow[];
-      try {
-        rows = ledger.readBuckets();
-      } finally {
-        ledger.close();
-      }
+      const rows = await readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
       // The record stays whole under its own model: no per-model rows, the turn's amount, its two calls.
       expect(rows.map((row) => [row.model, row.requests, row.costUsd])).toEqual([["grok-4", 2, 0.025]]);
       expect(rows[0]?.unpricedRequests).toBe(0);
@@ -502,13 +478,7 @@ describe("a turn record with a per-model split (Grok fixtures)", () => {
       });
       await runRefresh({ platform: setup.platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE });
 
-      const ledger = await openLedger(setup.platform, setup.dataDir);
-      let rows: BucketRow[];
-      try {
-        rows = ledger.readBuckets();
-      } finally {
-        ledger.close();
-      }
+      const rows = await readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
       // The three calls land once each: the leftover two on the token-largest share, one on its own count.
       const grok4 = rows.find((row) => row.agent === "grok" && row.model === "grok-4");
       expect(grok4).toMatchObject({ requests: 2, unpricedRequests: 2 });

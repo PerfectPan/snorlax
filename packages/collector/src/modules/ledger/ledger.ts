@@ -3,12 +3,19 @@ import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
-import { Data } from "effect";
+import type { RefreshResult } from "@rivus/snorlax-protocol";
+import { Data, Effect, Exit, type Scope } from "effect";
 import * as z from "zod/mini";
 
 import type { BucketDelta, BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../../core/buckets/buckets.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
+import { buildSnapshot } from "../../core/snapshot/snapshot.ts";
+import { readConfig, type ConfigInvalid } from "../config/config.ts";
+import type { LogFieldValue, Logger } from "../log/log.ts";
+import { writeSnapshot, type SnapshotWriteFailed } from "../snapshot-file/snapshot-file.ts";
+import { holdLedgerLock, LedgerLockHeld } from "./lock.ts";
 import { LedgerBackupFailed, LedgerSchemaTooNew, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
+import { commitScan, type ScanWindow } from "./scan-and-commit.ts";
 import type { PlatformSqlite, SqliteDatabase, SqliteValue } from "./sqlite.ts";
 
 /** The `meta` row; `device_id` is generated once, here, when the ledger is created. */
@@ -79,37 +86,36 @@ const scanStateSchema = z.looseObject({
 });
 
 /**
- * The open ledger. Every method runs on the one connection opened in `openLedger`; the multi-statement
- * writes of a refresh run inside `transaction`, so a run that dies mid-way leaves the database as it was
- * (Spec S3).
+ * The open ledger. Every operation runs on the one connection `openLedger` holds for its scope; the
+ * multi-statement writes of a run go inside `transaction`, so a run that fails or is interrupted mid-way leaves
+ * the database as it was (Spec S3). A SQLite statement that throws is a defect; a row this build cannot read
+ * fails as `LedgerUnreadable`.
  */
 export interface Ledger {
-  readonly db: SqliteDatabase;
   readonly meta: LedgerMeta;
   /** The saved scan state, `undefined` before the first completed scan. */
   readonly scanState: PersistedScanState | undefined;
   /**
-   * Runs `body` between `BEGIN IMMEDIATE` and `COMMIT`, rolling back on any throw. The body may await
-   * between statements (the refresh scan iterates inside it); nothing else may write meanwhile, which the
-   * ledger lock guarantees.
+   * Runs `body` between `BEGIN IMMEDIATE` and `COMMIT`, rolling back when it fails or is interrupted. The body
+   * may wait between statements (the run's scan iterates inside it); nothing else may write meanwhile, which
+   * the ledger lock guarantees.
    */
-  transaction<T>(body: () => T | Promise<T>): Promise<T>;
+  transaction<A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R>;
   /** Adds each bucket's numbers into its row and marks the row dirty (absolute totals, plan 3.3.1). */
-  addBuckets(buckets: readonly BucketDelta[]): void;
+  addBuckets(buckets: readonly BucketDelta[]): Effect.Effect<void>;
   /** Records sessions first seen in this run; a row that exists already is ignored. */
-  addSessionsSeen(sessions: readonly { agent: string; sessionId: string; firstHour: number }[]): void;
+  addSessionsSeen(sessions: readonly { agent: string; sessionId: string; firstHour: number }[]): Effect.Effect<void>;
   /** Every (agent, session id) the ledger has already counted a session start for. */
-  sessionsSeen(): Map<string, Set<string>>;
-  setScanState(state: unknown): void;
-  setLastScanCompleted(atMs: number): void;
-  readBuckets(): BucketRow[];
-  readRemoteBuckets(): RemoteBucketRow[];
-  readRemoteDevices(): RemoteDeviceRow[];
+  sessionsSeen(): Effect.Effect<Map<string, Set<string>>, LedgerUnreadable>;
+  setScanState(state: unknown): Effect.Effect<void>;
+  setLastScanCompleted(atMs: number): Effect.Effect<void>;
+  readBuckets(): Effect.Effect<BucketRow[], LedgerUnreadable>;
+  readRemoteBuckets(): Effect.Effect<RemoteBucketRow[], LedgerUnreadable>;
+  readRemoteDevices(): Effect.Effect<RemoteDeviceRow[], LedgerUnreadable>;
   /** Zeroes every bucket at or after `startHour` and marks it dirty, for `rebuild` (plan 3.4.3). */
-  zeroBucketsFrom(startHour: number): void;
+  zeroBucketsFrom(startHour: number): Effect.Effect<void>;
   /** Drops session-first-seen rows at or after `startHour`, so a rescan counts those sessions again. */
-  deleteSessionsSeenFrom(startHour: number): void;
-  close(): void;
+  deleteSessionsSeenFrom(startHour: number): Effect.Effect<void>;
 }
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
@@ -153,49 +159,64 @@ const remoteDeviceRowSchema = z.object({
   revoked: z.number()
 });
 
-const parseRow = <S extends z.core.$ZodType>(path: string, table: string, schema: S, row: unknown): z.output<S> => {
-  const parsed = z.safeParse(schema, row);
-  if (!parsed.success) {
-    throw new LedgerUnreadable({
-      message: `${path}: the ledger's ${table} table holds a row this build cannot read: ${z.prettifyError(parsed.error)}`
+const unreadableRow = (path: string, table: string, error: z.core.$ZodError): LedgerUnreadable =>
+  new LedgerUnreadable({
+    message: `${path}: the ledger's ${table} table holds a row this build cannot read: ${z.prettifyError(error)}`
+  });
+
+/** Parses a table's rows, failing on the first row this build cannot read. */
+const parseRows = <S extends z.core.$ZodType>(
+  path: string,
+  table: string,
+  schema: S,
+  rows: readonly unknown[]
+): Effect.Effect<z.output<S>[], LedgerUnreadable> => {
+  const parsed: z.output<S>[] = [];
+  for (const row of rows) {
+    const result = z.safeParse(schema, row);
+    if (!result.success) {
+      return Effect.fail(unreadableRow(path, table, result.error));
+    }
+    parsed.push(result.data);
+  }
+  return Effect.succeed(parsed);
+};
+
+const readMeta = (path: string, db: SqliteDatabase): Effect.Effect<LedgerMeta, LedgerUnreadable> =>
+  Effect.suspend(() => {
+    const row = db.prepare("SELECT * FROM meta WHERE id = 0").get();
+    if (row === undefined) {
+      return Effect.fail(new LedgerUnreadable({ message: "the ledger's meta row is missing; run snorlax doctor" }));
+    }
+    const parsed = z.safeParse(metaRowSchema, row);
+    if (!parsed.success) {
+      return Effect.fail(unreadableRow(path, "meta", parsed.error));
+    }
+    const meta = parsed.data;
+    return Effect.succeed({
+      deviceId: meta.device_id,
+      deviceName: meta.device_name,
+      lastScanCompletedAt: meta.last_scan_completed_at,
+      pullCursor: meta.pull_cursor,
+      pricingVersion: meta.pricing_version
     });
-  }
-  return parsed.data;
-};
+  });
 
-const readMeta = (path: string, db: SqliteDatabase): LedgerMeta => {
-  const row = db.prepare("SELECT * FROM meta WHERE id = 0").get();
-  if (row === undefined) {
-    throw new LedgerUnreadable({ message: "the ledger's meta row is missing; run snorlax doctor" });
-  }
-  const meta = parseRow(path, "meta", metaRowSchema, row);
-  return {
-    deviceId: meta.device_id,
-    deviceName: meta.device_name,
-    lastScanCompletedAt: meta.last_scan_completed_at,
-    pullCursor: meta.pull_cursor,
-    pricingVersion: meta.pricing_version
-  };
-};
-
-const bucketOf = (path: string, row: unknown): BucketRow => {
-  const bucket = parseRow(path, "buckets", bucketRowSchema, row);
-  return {
-    hour: bucket.hour,
-    agent: bucket.agent,
-    model: bucket.model,
-    inputTokens: bucket.input_tokens,
-    cacheReadTokens: bucket.cache_read_tokens,
-    cacheWriteTokens: bucket.cache_write_tokens,
-    outputTokens: bucket.output_tokens,
-    reasoningTokens: bucket.reasoning_tokens,
-    requests: bucket.requests,
-    sessionsStarted: bucket.sessions_started,
-    costUsd: bucket.cost_usd,
-    unpricedRequests: bucket.unpriced_requests,
-    dirty: bucket.dirty !== 0
-  };
-};
+const bucketOf = (bucket: z.output<typeof bucketRowSchema>): BucketRow => ({
+  hour: bucket.hour,
+  agent: bucket.agent,
+  model: bucket.model,
+  inputTokens: bucket.input_tokens,
+  cacheReadTokens: bucket.cache_read_tokens,
+  cacheWriteTokens: bucket.cache_write_tokens,
+  outputTokens: bucket.output_tokens,
+  reasoningTokens: bucket.reasoning_tokens,
+  requests: bucket.requests,
+  sessionsStarted: bucket.sessions_started,
+  costUsd: bucket.cost_usd,
+  unpricedRequests: bucket.unpriced_requests,
+  dirty: bucket.dirty !== 0
+});
 
 const bucketParams = (bucket: BucketDelta): SqliteValue[] => [
   bucket.hour,
@@ -212,83 +233,40 @@ const bucketParams = (bucket: BucketDelta): SqliteValue[] => [
   bucket.unpricedRequests
 ];
 
-const parseScanState = (path: string, raw: string): PersistedScanState => {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch (error) {
-    throw new LedgerUnreadable({
-      message: `${path} holds a scan state that is not JSON: ${errorMessage(error)}`
+const parseScanState = (path: string, raw: string): Effect.Effect<PersistedScanState, LedgerUnreadable> =>
+  Effect.gen(function* () {
+    const json = yield* Effect.try({
+      try: (): unknown => JSON.parse(raw),
+      catch: (error) =>
+        new LedgerUnreadable({ message: `${path} holds a scan state that is not JSON: ${errorMessage(error)}` })
     });
-  }
-  const parsed = z.safeParse(scanStateSchema, json);
-  if (!parsed.success) {
-    throw new LedgerUnreadable({
-      message: `${path} holds a scan state this build cannot read: ${z.prettifyError(parsed.error)}`
-    });
-  }
-  // The schema checks every field this collector reads; a cursor's `queue` holds the kit's own records,
-  // opaque here and leniently re-parsed by the kit, so the checked shape is widened only at this one cast.
-  return parsed.data as PersistedScanState;
-};
-
-/**
- * Opens (creating on first run) `<data>/ledger.db`, migrates it to `SCHEMA_VERSION` with a backup first,
- * and makes sure the `meta` row with its device id exists. The device id is generated once per data
- * directory and never derived from the host name (plan 2.4 D7).
- */
-export async function openLedger(platform: LedgerPlatform, dataDir: string): Promise<Ledger> {
-  const path = ledgerPath(dataDir);
-  const existing = await platform.fs.stat(path);
-  let db: SqliteDatabase;
-  try {
-    db = platform.sqlite.open(path);
-  } catch (error) {
-    throw new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
-  }
-  let meta: LedgerMeta;
-  let scanState: PersistedScanState | undefined;
-  try {
-    await prepareMigrations(platform.fs, dataDir, path, db, existing?.kind === "file");
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      db.prepare("INSERT OR IGNORE INTO meta (id, device_id) VALUES (0, ?)").run(randomUUID());
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
+    const parsed = z.safeParse(scanStateSchema, json);
+    if (!parsed.success) {
+      return yield* new LedgerUnreadable({
+        message: `${path} holds a scan state this build cannot read: ${z.prettifyError(parsed.error)}`
+      });
     }
-    meta = readMeta(path, db);
-    const saved = db.prepare("SELECT state FROM scan_state WHERE id = 0").get();
-    scanState = saved === undefined ? undefined : parseScanState(path, String(saved.state));
-  } catch (error) {
-    db.close();
-    if (
-      error instanceof LedgerUnreadable ||
-      error instanceof LedgerSchemaTooNew ||
-      error instanceof LedgerBackupFailed
-    ) {
-      throw error;
-    }
-    throw new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
-  }
+    // The schema checks every field this collector reads; a cursor's `queue` holds the kit's own records,
+    // opaque here and leniently re-parsed by the kit, so the checked shape is widened only at this one cast.
+    return parsed.data as PersistedScanState;
+  });
 
-  return {
-    db,
-    meta,
-    scanState,
-    async transaction<T>(body: () => T | Promise<T>): Promise<T> {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        const result = await body();
-        db.exec("COMMIT");
-        return result;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    },
-    addBuckets(buckets) {
+const ledgerOn = (
+  path: string,
+  db: SqliteDatabase,
+  meta: LedgerMeta,
+  scanState: PersistedScanState | undefined
+): Ledger => ({
+  meta,
+  scanState,
+  transaction: (body) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => db.exec("BEGIN IMMEDIATE")),
+      () => Effect.tap(body, () => Effect.sync(() => db.exec("COMMIT"))),
+      (_, exit) => (Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => db.exec("ROLLBACK")))
+    ),
+  addBuckets: (buckets) =>
+    Effect.sync(() => {
       const statement = db.prepare(
         `INSERT INTO buckets (${BUCKET_COLUMNS}, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT (hour, agent, model) DO UPDATE SET
@@ -306,78 +284,106 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
       for (const bucket of buckets) {
         statement.run(...bucketParams(bucket));
       }
-    },
-    addSessionsSeen(sessions) {
+    }),
+  addSessionsSeen: (sessions) =>
+    Effect.sync(() => {
       const statement = db.prepare(
         "INSERT INTO sessions_seen (agent, session_id, first_hour) VALUES (?, ?, ?) ON CONFLICT (agent, session_id) DO NOTHING"
       );
       for (const session of sessions) {
         statement.run(session.agent, session.sessionId, session.firstHour);
       }
-    },
-    sessionsSeen(): Map<string, Set<string>> {
-      const seen = new Map<string, Set<string>>();
-      const rows = db.prepare("SELECT agent, session_id FROM sessions_seen").all();
-      for (const row of rows.map((row) => parseRow(path, "sessions_seen", sessionSeenRowSchema, row))) {
-        const sessions = seen.get(row.agent) ?? new Set<string>();
-        sessions.add(row.session_id);
-        seen.set(row.agent, sessions);
-      }
-      return seen;
-    },
-    setScanState(state) {
+    }),
+  sessionsSeen: () =>
+    Effect.suspend(() =>
+      parseRows(
+        path,
+        "sessions_seen",
+        sessionSeenRowSchema,
+        db.prepare("SELECT agent, session_id FROM sessions_seen").all()
+      )
+    ).pipe(
+      Effect.map((rows) => {
+        const seen = new Map<string, Set<string>>();
+        for (const row of rows) {
+          const sessions = seen.get(row.agent) ?? new Set<string>();
+          sessions.add(row.session_id);
+          seen.set(row.agent, sessions);
+        }
+        return seen;
+      })
+    ),
+  setScanState: (state) =>
+    Effect.sync(() => {
       db.prepare(
         "INSERT INTO scan_state (id, state) VALUES (0, ?) ON CONFLICT (id) DO UPDATE SET state = excluded.state"
       ).run(JSON.stringify(state));
-    },
-    setLastScanCompleted(atMs) {
+    }),
+  setLastScanCompleted: (atMs) =>
+    Effect.sync(() => {
       db.prepare("UPDATE meta SET last_scan_completed_at = ? WHERE id = 0").run(atMs);
-    },
-    readBuckets(): BucketRow[] {
-      return db
-        .prepare(`SELECT ${BUCKET_COLUMNS}, dirty FROM buckets ORDER BY hour, agent, model`)
-        .all()
-        .map((row) => bucketOf(path, row));
-    },
-    readRemoteBuckets(): RemoteBucketRow[] {
-      return db
-        .prepare(`SELECT device_id, seq, ${BUCKET_COLUMNS} FROM remote_buckets ORDER BY device_id, hour, agent, model`)
-        .all()
-        .map((row): RemoteBucketRow => {
-          const bucket = parseRow(path, "remote_buckets", remoteBucketRowSchema, row);
-          return {
-            deviceId: bucket.device_id,
-            seq: bucket.seq,
-            hour: bucket.hour,
-            agent: bucket.agent,
-            model: bucket.model,
-            inputTokens: bucket.input_tokens,
-            cacheReadTokens: bucket.cache_read_tokens,
-            cacheWriteTokens: bucket.cache_write_tokens,
-            outputTokens: bucket.output_tokens,
-            reasoningTokens: bucket.reasoning_tokens,
-            requests: bucket.requests,
-            sessionsStarted: bucket.sessions_started,
-            costUsd: bucket.cost_usd,
-            unpricedRequests: bucket.unpriced_requests
-          };
-        });
-    },
-    readRemoteDevices(): RemoteDeviceRow[] {
-      return db
-        .prepare("SELECT id, name, last_push_at, revoked FROM remote_devices")
-        .all()
-        .map((row): RemoteDeviceRow => {
-          const device = parseRow(path, "remote_devices", remoteDeviceRowSchema, row);
-          return {
-            id: device.id,
-            name: device.name,
-            lastPushAt: device.last_push_at,
-            revoked: device.revoked !== 0
-          };
-        });
-    },
-    zeroBucketsFrom(startHour) {
+    }),
+  readBuckets: () =>
+    Effect.suspend(() =>
+      parseRows(
+        path,
+        "buckets",
+        bucketRowSchema,
+        db.prepare(`SELECT ${BUCKET_COLUMNS}, dirty FROM buckets ORDER BY hour, agent, model`).all()
+      )
+    ).pipe(Effect.map((rows) => rows.map(bucketOf))),
+  readRemoteBuckets: () =>
+    Effect.suspend(() =>
+      parseRows(
+        path,
+        "remote_buckets",
+        remoteBucketRowSchema,
+        db
+          .prepare(
+            `SELECT device_id, seq, ${BUCKET_COLUMNS} FROM remote_buckets ORDER BY device_id, hour, agent, model`
+          )
+          .all()
+      )
+    ).pipe(
+      Effect.map((rows) =>
+        rows.map((bucket): RemoteBucketRow => ({
+          deviceId: bucket.device_id,
+          seq: bucket.seq,
+          hour: bucket.hour,
+          agent: bucket.agent,
+          model: bucket.model,
+          inputTokens: bucket.input_tokens,
+          cacheReadTokens: bucket.cache_read_tokens,
+          cacheWriteTokens: bucket.cache_write_tokens,
+          outputTokens: bucket.output_tokens,
+          reasoningTokens: bucket.reasoning_tokens,
+          requests: bucket.requests,
+          sessionsStarted: bucket.sessions_started,
+          costUsd: bucket.cost_usd,
+          unpricedRequests: bucket.unpriced_requests
+        }))
+      )
+    ),
+  readRemoteDevices: () =>
+    Effect.suspend(() =>
+      parseRows(
+        path,
+        "remote_devices",
+        remoteDeviceRowSchema,
+        db.prepare("SELECT id, name, last_push_at, revoked FROM remote_devices").all()
+      )
+    ).pipe(
+      Effect.map((rows) =>
+        rows.map((device): RemoteDeviceRow => ({
+          id: device.id,
+          name: device.name,
+          lastPushAt: device.last_push_at,
+          revoked: device.revoked !== 0
+        }))
+      )
+    ),
+  zeroBucketsFrom: (startHour) =>
+    Effect.sync(() => {
       db.prepare(
         `UPDATE buckets SET
            input_tokens = 0, cache_read_tokens = 0, cache_write_tokens = 0, output_tokens = 0,
@@ -385,15 +391,50 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
            dirty = 1
          WHERE hour >= ?`
       ).run(startHour);
-    },
-    deleteSessionsSeenFrom(startHour) {
+    }),
+  deleteSessionsSeenFrom: (startHour) =>
+    Effect.sync(() => {
       db.prepare("DELETE FROM sessions_seen WHERE first_hour >= ?").run(startHour);
-    },
-    close() {
-      db.close();
-    }
-  };
-}
+    })
+});
+
+/**
+ * Opens (creating on first run) `<data>/ledger.db` for the rest of the scope, migrates it to `SCHEMA_VERSION`
+ * with a backup first, and makes sure the `meta` row with its device id exists. The device id is generated once
+ * per data directory and never derived from the host name (plan 2.4 D7). The connection closes with the scope.
+ */
+export const openLedger = (
+  platform: LedgerPlatform,
+  dataDir: string
+): Effect.Effect<Ledger, LedgerUnreadable | LedgerSchemaTooNew | LedgerBackupFailed, Scope.Scope> =>
+  Effect.gen(function* () {
+    const path = ledgerPath(dataDir);
+    const cannotOpen = (error: unknown): LedgerUnreadable =>
+      new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
+    const existing = yield* Effect.promise(() => platform.fs.stat(path));
+    const db = yield* Effect.acquireRelease(
+      Effect.try({ try: () => platform.sqlite.open(path), catch: cannotOpen }),
+      (opened) => Effect.sync(() => opened.close())
+    );
+    return yield* Effect.gen(function* () {
+      yield* prepareMigrations(platform.fs, dataDir, path, db, existing?.kind === "file");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare("INSERT OR IGNORE INTO meta (id, device_id) VALUES (0, ?)").run(randomUUID());
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      const meta = yield* readMeta(path, db);
+      const saved = db.prepare("SELECT state FROM scan_state WHERE id = 0").get();
+      const scanState = saved === undefined ? undefined : yield* parseScanState(path, String(saved.state));
+      return ledgerOn(path, db, meta, scanState);
+    }).pipe(
+      // A SQLite statement that throws while the ledger is being opened means it cannot be opened.
+      Effect.catchDefect((defect) => Effect.fail(cannotOpen(defect)))
+    );
+  });
 
 /** The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything. */
 export async function readLedgerStatus(
@@ -406,7 +447,7 @@ export async function readLedgerStatus(
   }
   const db = platform.sqlite.open(path, { readonly: true });
   try {
-    const meta = readMeta(path, db);
+    const meta = Effect.runSync(readMeta(path, db));
     return { deviceId: meta.deviceId, lastScanCompletedAt: meta.lastScanCompletedAt };
   } catch (error) {
     throw error instanceof LedgerUnreadable
@@ -417,13 +458,107 @@ export async function readLedgerStatus(
   }
 }
 
-export { LedgerBackupFailed, LedgerSchemaTooNew, SCHEMA_VERSION };
-// The ledger lock and the scan-and-commit step that refresh and rebuild share.
-export {
-  LedgerLockHeld,
-  LedgerPlatformUnsupported,
-  refreshPlatformOf,
-  withLedgerLock,
-  type RefreshPlatform
-} from "./lock.ts";
-export { commitScan, type RefreshDeps, type RefreshOutcome, type ScanHooks } from "./scan-and-commit.ts";
+/** The platform has no SQLite, which the ledger needs. */
+export class LedgerPlatformUnsupported extends Data.TaggedError("LedgerPlatformUnsupported")<{
+  readonly message: string;
+}> {}
+
+/** What a refresh or rebuild runs on, besides the window it scans. */
+export interface ScanAndCommitDeps {
+  readonly platform: Platform;
+  readonly dataDir: string;
+  readonly log: Logger;
+  /** IANA time zone of this device; the snapshot's day windows follow it (plan 3.2.2). */
+  readonly timeZone: string;
+}
+
+/** What a command adds to the shared run: where its scan starts and the summary line it logs. */
+export interface ScanRun {
+  /** The summary line's event name; `fields` come before the shared ones (rebuild's `days`). */
+  readonly event: string;
+  readonly fields?: Readonly<Record<string, LogFieldValue>>;
+  /** The scan's window, from the ledger as opened under the lock and the run's wall-clock time. */
+  readonly window: (ledger: Ledger, now: number) => ScanWindow;
+}
+
+export interface ScanAndCommitOutcome {
+  readonly result: RefreshResult;
+  readonly failuresByAgent: Record<string, number>;
+}
+
+/**
+ * One refresh or rebuild over the ledger (plan 3.4.1 steps 2–8, minus the sync of step 6 that arrives with
+ * Batch 7): take the ledger lock, open the ledger under it, scan the command's window and commit buckets and
+ * scan state in one transaction, then build and atomically write the snapshot and log the summary line. Opening
+ * under the lock puts the migration, the meta write and the read of meta and scan state after the previous
+ * run's commit, so two overlapping runs queue instead of the second reading the first's pre-commit state. The
+ * lock and the ledger are held in a scope, so a run that fails or is interrupted rolls back, closes the ledger
+ * and releases the lock. The scan result stays committed even when the snapshot write fails; the next run
+ * rewrites the snapshot.
+ */
+export const scanAndCommit = (
+  deps: ScanAndCommitDeps,
+  run: ScanRun
+): Effect.Effect<
+  ScanAndCommitOutcome,
+  | LedgerPlatformUnsupported
+  | LedgerLockHeld
+  | LedgerUnreadable
+  | LedgerSchemaTooNew
+  | LedgerBackupFailed
+  | ConfigInvalid
+  | SnapshotWriteFailed
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { platform, dataDir } = deps;
+      const { sqlite } = platform;
+      if (sqlite === undefined) {
+        return yield* new LedgerPlatformUnsupported({
+          message: "this platform has no SQLite; the ledger cannot run here"
+        });
+      }
+      const startedAt = platform.clock.monotonic();
+      yield* holdLedgerLock(platform, dataDir);
+      const now = platform.clock.now();
+      const ledger = yield* openLedger({ fs: platform.fs, sqlite }, dataDir);
+      const scanned = yield* commitScan(platform, ledger, run.window(ledger, now), now);
+      const config = yield* readConfig(platform, dataDir);
+      const snapshot = buildSnapshot({
+        now,
+        timeZone: deps.timeZone,
+        thisDevice: { id: ledger.meta.deviceId, name: config.deviceName ?? null },
+        buckets: yield* ledger.readBuckets(),
+        remoteBuckets: yield* ledger.readRemoteBuckets(),
+        remoteDevices: yield* ledger.readRemoteDevices(),
+        lastScanAt: now,
+        failuresByAgent: scanned.failuresByAgent,
+        paired: false
+      });
+      yield* writeSnapshot(platform, dataDir, snapshot);
+      yield* Effect.promise(() =>
+        deps.log.event(run.event, {
+          ...run.fields,
+          records: scanned.records,
+          failures: scanned.failures,
+          pushed: 0,
+          pulled: 0,
+          durationMs: Math.round(platform.clock.monotonic() - startedAt)
+        })
+      );
+      return {
+        result: {
+          schemaVersion: 1,
+          ok: true,
+          scannedAt: new Date(now).toISOString(),
+          records: scanned.records,
+          failures: scanned.failures,
+          // Not paired in this milestone: the sync fields say no sync ran (Batch 7 pairs a backend).
+          sync: { ok: false, pushed: 0, pulled: 0 }
+        },
+        failuresByAgent: scanned.failuresByAgent
+      };
+    })
+  );
+
+export { LedgerBackupFailed, LedgerLockHeld, LedgerSchemaTooNew, SCHEMA_VERSION };

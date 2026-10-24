@@ -67,7 +67,7 @@ const LAUNCHCTL_TIMEOUT_MS = 15_000;
 const PLIST_MODE = 0o644;
 const DEFAULT_LAUNCHCTL = "/bin/launchctl";
 
-/** `run` is the only process operation install uses, matching `CollectorPlatform`. */
+/** `run` is the only process operation install uses. */
 type SchedulerPlatform = Pick<Platform, "env" | "fs" | "home" | "os"> & {
   readonly process: Pick<Platform["process"], "run">;
 };

@@ -7,15 +7,15 @@ import { fileURLToPath } from "node:url";
 
 import { snapshotOutputSchema, snapshotSchema, type Snapshot } from "@rivus/snorlax-protocol";
 import * as z from "zod/mini";
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import type { BucketRow } from "../src/core/buckets/buckets.ts";
-import { openLedger } from "../src/modules/ledger/ledger.ts";
 import { createLogger, type Logger } from "../src/modules/log/log.ts";
-import { runRefresh } from "../src/commands/refresh/refresh.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
 import { nodeFileOps } from "../src/modules/data-dir/data-dir.ts";
 import { appendClaudeRequests, quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
+import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
 /**
@@ -55,14 +55,7 @@ const snapshot = async (): Promise<Snapshot> => {
   return read.snapshot;
 };
 
-const buckets = async (): Promise<BucketRow[]> => {
-  const ledger = await openLedger(setup.platform, setup.dataDir);
-  try {
-    return ledger.readBuckets();
-  } finally {
-    ledger.close();
-  }
-};
+const buckets = (): Promise<BucketRow[]> => readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
 
 const claudeRequest = (
   requestId: string,
@@ -242,14 +235,10 @@ describe("S1: the first run counts the history", () => {
   });
 
   it("creates the ledger with a device id and persists the scan time", async () => {
-    const ledger = await openLedger(setup.platform, setup.dataDir);
-    try {
-      expect(ledger.meta.deviceId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(ledger.meta.lastScanCompletedAt).toBe(NOW);
-      expect(ledger.scanState).toBeDefined();
-    } finally {
-      ledger.close();
-    }
+    const ledger = await readLedger(setup.platform, setup.dataDir, Effect.succeed);
+    expect(ledger.meta.deviceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ledger.meta.lastScanCompletedAt).toBe(NOW);
+    expect(ledger.scanState).toBeDefined();
   });
 });
 

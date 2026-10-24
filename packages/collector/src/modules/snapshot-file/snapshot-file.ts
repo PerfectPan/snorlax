@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 import { snapshotSchema, type Snapshot } from "@rivus/snorlax-protocol";
-import { Data } from "effect";
+import { Data, Effect } from "effect";
 import * as z from "zod/mini";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
@@ -43,15 +43,14 @@ export class SnapshotWriteFailed extends Data.TaggedError("SnapshotWriteFailed")
  * 3.2.2), so a reader only ever sees the previous snapshot or the new one. A write failure leaves the
  * previous snapshot in place and fails with `SnapshotWriteFailed` (plan 6.8, Batch 2).
  */
-export async function writeSnapshot(
+export const writeSnapshot = (
   platform: Pick<Platform, "fs">,
   dataDir: string,
   snapshot: Snapshot
-): Promise<void> {
+): Effect.Effect<void, SnapshotWriteFailed> => {
   const path = join(dataDir, "snapshot.json");
-  try {
-    await platform.fs.writeAtomic(path, `${JSON.stringify(snapshot)}\n`);
-  } catch (error) {
-    throw new SnapshotWriteFailed({ message: `cannot write the snapshot ${path}: ${errorMessage(error)}` });
-  }
-}
+  return Effect.tryPromise({
+    try: () => platform.fs.writeAtomic(path, `${JSON.stringify(snapshot)}\n`),
+    catch: (error) => new SnapshotWriteFailed({ message: `cannot write the snapshot ${path}: ${errorMessage(error)}` })
+  });
+};

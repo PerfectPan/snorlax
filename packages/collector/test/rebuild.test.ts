@@ -4,12 +4,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import type { BucketRow } from "../src/core/buckets/buckets.ts";
-import { openLedger } from "../src/modules/ledger/ledger.ts";
-import { rebuildStartHour, REBUILD_MAX_DAYS, runRebuild } from "../src/commands/rebuild/rebuild.ts";
-import { runRefresh } from "../src/commands/refresh/refresh.ts";
+import { rebuildStartHour, REBUILD_MAX_DAYS } from "../src/commands/rebuild/flow.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 import { quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
+import { readLedger, runRebuild, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
 /**
@@ -43,14 +42,7 @@ const refresh = (hooks?: Parameters<typeof runRefresh>[1]) =>
 const rebuild = (days: number, hooks?: Parameters<typeof runRebuild>[2]) =>
   runRebuild({ platform: setup.platform, dataDir: setup.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE }, days, hooks);
 
-const rows = async (): Promise<BucketRow[]> => {
-  const ledger = await openLedger(setup.platform, setup.dataDir);
-  try {
-    return ledger.readBuckets();
-  } finally {
-    ledger.close();
-  }
-};
+const rows = (): Promise<BucketRow[]> => readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
 
 const totalsOf = async (): Promise<{ tokens: number; requests: number; sessions: number }> => {
   const read = await readSnapshotFile(setup.platform, setup.dataDir);

@@ -8,8 +8,6 @@ import { DataDir } from "../modules/data-dir/data-dir.ts";
 import { NodeFiles } from "../modules/data-dir/data-dir.ts";
 import { Doctor } from "../commands/doctor/service.ts";
 import { Log } from "../modules/log/log.ts";
-import { Rebuild } from "../commands/rebuild/service.ts";
-import { Refresh } from "../commands/refresh/service.ts";
 import { Schedule } from "../capabilities/scheduler/scheduler.ts";
 import { SnapshotStore } from "../commands/snapshot/store.ts";
 import { StatusReport } from "../commands/status/report.ts";
@@ -66,12 +64,11 @@ interface Outcome {
 
 /**
  * The whole service graph of one invocation, built around the caller's `base`: `base` feeds DataDir
- * the platform and the sinks, DataDir feeds every feature layer, and Log feeds the refresh and
- * rebuild layers that write summary lines. The merges keep every service the invocation itself reads
- * exposed to the program.
+ * the platform and the sinks, DataDir feeds Log and every feature layer, and the refresh and rebuild
+ * flows read the platform, DataDir and Log themselves. The merges keep every service the invocation
+ * itself reads exposed to the program.
  */
 function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
-  const writers = Layer.provideMerge(Layer.mergeAll(Refresh.live, Rebuild.live), Log.live);
   const readers = Layer.mergeAll(
     StatusReport.live,
     Doctor.live,
@@ -101,7 +98,7 @@ function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
   return Layer.provideMerge(
     // The parsed --json value reaches the handlers through runWith itself; this default only
     // satisfies the type at the top and reads as human mode where no run provided it.
-    Layer.mergeAll(writers, readers, Layer.succeed(JsonFlag, false)),
+    Layer.mergeAll(readers, Layer.succeed(JsonFlag, false)),
     Layer.provideMerge(Log.live, Layer.provideMerge(DataDir.live, base))
   );
 }

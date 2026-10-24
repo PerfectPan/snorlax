@@ -15,6 +15,8 @@ export interface ScanOptions {
   readonly since: number;
   /** The saved state of the previous scan; absent on the first run. */
   readonly state?: PersistedScanState;
+  /** Aborting stops the scan's reads; the run that started it no longer waits for its outcome. */
+  readonly signal: AbortSignal;
 }
 
 /**
@@ -30,6 +32,7 @@ export async function collectUsage(
 ): Promise<ScanOutcome> {
   const scan = scanUsage(platform, {
     since: options.since,
+    signal: options.signal,
     ...(options.state === undefined ? {} : { state: options.state })
   });
   let records = 0;

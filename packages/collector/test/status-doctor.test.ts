@@ -10,6 +10,7 @@ import { CliEnv } from "../src/cli/env.ts";
 import type { NodeFileOps } from "../src/modules/data-dir/data-dir.ts";
 import { NodeFiles } from "../src/modules/data-dir/data-dir.ts";
 import { RuntimeInfo } from "../src/modules/version/version.ts";
+import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
@@ -59,7 +60,7 @@ const runCommand = async (
   const err = createCapture();
   const nodeFiles = memoryNodeFiles(deps?.mode);
   const base = Layer.mergeAll(
-    Layer.succeed(SnorlaxPlatform, platform),
+    Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform)),
     Layer.succeed(NodeFiles, nodeFiles),
     Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
     Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })

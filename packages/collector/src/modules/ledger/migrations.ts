@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { Data } from "effect";
+import { Data, Effect } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 
@@ -179,35 +179,37 @@ export class LedgerBackupFailed extends Data.TaggedError("LedgerBackupFailed")<{
 /**
  * Opens the door for `openLedger`: reads `PRAGMA user_version`, refuses a database from a newer build, and
  * backs up before any migration runs. `isExisting` says whether the database file existed before it was
- * opened; a database this call creates has nothing to back up.
+ * opened; a database this call creates has nothing to back up. A SQLite statement that throws is a defect
+ * here; `openLedger` reports it as an unreadable ledger.
  */
-export async function prepareMigrations(
+export const prepareMigrations = (
   fs: Platform["fs"],
   dataDir: string,
   ledgerPath: string,
   db: { exec(sql: string): void; prepare(sql: string): { get(): Record<string, unknown> | undefined } },
   isExisting: boolean
-): Promise<{ readonly from: number; readonly backup: LedgerBackup | undefined }> {
-  const row = db.prepare("PRAGMA user_version").get();
-  const from = Number(row?.user_version ?? 0);
-  if (from > SCHEMA_VERSION) {
-    throw new LedgerSchemaTooNew({
-      message: `${ledgerPath} was written by a newer snorlax (schema version ${from}; this build knows ${SCHEMA_VERSION})`
-    });
-  }
-  if (from === SCHEMA_VERSION) {
-    return { from, backup: undefined };
-  }
-  let backup: LedgerBackup | undefined;
-  if (isExisting) {
-    try {
-      backup = await backupLedger(fs, dataDir, ledgerPath, from);
-    } catch (error) {
-      throw new LedgerBackupFailed({
-        message: `cannot back up ${ledgerPath} before migrating: ${errorMessage(error)}`
+): Effect.Effect<
+  { readonly from: number; readonly backup: LedgerBackup | undefined },
+  LedgerSchemaTooNew | LedgerBackupFailed
+> =>
+  Effect.gen(function* () {
+    const row = db.prepare("PRAGMA user_version").get();
+    const from = Number(row?.user_version ?? 0);
+    if (from > SCHEMA_VERSION) {
+      return yield* new LedgerSchemaTooNew({
+        message: `${ledgerPath} was written by a newer snorlax (schema version ${from}; this build knows ${SCHEMA_VERSION})`
       });
     }
-  }
-  runMigrations(db, from);
-  return { from, backup };
-}
+    if (from === SCHEMA_VERSION) {
+      return { from, backup: undefined };
+    }
+    const backup = isExisting
+      ? yield* Effect.tryPromise({
+          try: () => backupLedger(fs, dataDir, ledgerPath, from),
+          catch: (error) =>
+            new LedgerBackupFailed({ message: `cannot back up ${ledgerPath} before migrating: ${errorMessage(error)}` })
+        })
+      : undefined;
+    runMigrations(db, from);
+    return { from, backup };
+  });

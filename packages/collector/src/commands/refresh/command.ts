@@ -1,7 +1,7 @@
 import { Command } from "effect/cli";
 import { Effect } from "effect";
 
-import { Refresh } from "./service.ts";
+import { refreshFlow } from "./flow.ts";
 import { JsonFlag } from "../flags.ts";
 import { CommandOutput } from "../output.ts";
 
@@ -16,7 +16,7 @@ const humanSummary = (scannedAt: string, records: number, failures: number): str
 export const refreshCommand = Command.make("refresh", {}, () =>
   Effect.gen(function* () {
     const json = yield* JsonFlag;
-    const result = yield* (yield* Refresh).run;
+    const { result } = yield* refreshFlow;
     yield* (yield* CommandOutput).render({
       payload: result,
       human: `${humanSummary(result.scannedAt, result.records, result.failures)}\n`,

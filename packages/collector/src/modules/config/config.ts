@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { Data } from "effect";
+import { Data, Effect } from "effect";
 import * as z from "zod/mini";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
@@ -23,23 +23,26 @@ export class ConfigInvalid extends Data.TaggedError("ConfigInvalid")<{ readonly 
 
 export const configFilePath = (dataDir: string): string => join(dataDir, "config.json");
 
-export async function readConfig(platform: Pick<Platform, "fs">, dataDir: string): Promise<ConfigValue> {
-  const path = configFilePath(dataDir);
-  const text = await readTextFile(platform, path);
-  if (text === undefined) {
-    return {};
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch (error) {
-    throw new ConfigInvalid({ message: `${path} is not valid JSON: ${errorMessage(error)}` });
-  }
-  const parsed = z.safeParse(configSchema, json);
-  if (!parsed.success) {
-    throw new ConfigInvalid({
-      message: `${path} does not match the expected shape: ${z.prettifyError(parsed.error)}`
+/** Reads `config.json`; a missing file is an empty config, and a read that fails for another reason is a defect. */
+export const readConfig = (
+  platform: Pick<Platform, "fs">,
+  dataDir: string
+): Effect.Effect<ConfigValue, ConfigInvalid> =>
+  Effect.gen(function* () {
+    const path = configFilePath(dataDir);
+    const text = yield* Effect.promise(() => readTextFile(platform, path));
+    if (text === undefined) {
+      return {};
+    }
+    const json = yield* Effect.try({
+      try: (): unknown => JSON.parse(text),
+      catch: (error) => new ConfigInvalid({ message: `${path} is not valid JSON: ${errorMessage(error)}` })
     });
-  }
-  return parsed.data;
-}
+    const parsed = z.safeParse(configSchema, json);
+    if (!parsed.success) {
+      return yield* new ConfigInvalid({
+        message: `${path} does not match the expected shape: ${z.prettifyError(parsed.error)}`
+      });
+    }
+    return parsed.data;
+  });

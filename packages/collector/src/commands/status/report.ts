@@ -1,6 +1,6 @@
 import { builtinProviders, type Provider } from "@rivus/agent-kit/providers";
 import { detectAgents, type Installation } from "@rivus/agent-kit/discovery";
-import type { CollectorPlatform } from "../../modules/platform/platform.ts";
+import type { Platform } from "@rivus/agent-kit/platform";
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import type { DetectedAgent, Status } from "@rivus/snorlax-protocol";
 import { Context, Data, Effect, Layer } from "effect";
@@ -17,7 +17,7 @@ import { errorMessage } from "../../core/error-message/error-message.ts";
  * auth probes are stripped, so no agent command runs and no credential file is read — detection only stats
  * paths. `runnable` therefore never appears.
  */
-export async function detectAgentsStatOnly(platform: CollectorPlatform): Promise<Installation[]> {
+export async function detectAgentsStatOnly(platform: Platform): Promise<Installation[]> {
   const providers: Provider[] = builtinProviders.flatMap((provider) =>
     provider.discovery === undefined
       ? []
@@ -56,7 +56,7 @@ export class StatusReport extends Context.Service<
       return StatusReport.of({
         report: Effect.tryPromise({
           try: async () => {
-            const config = await readConfig(platform, dataDir.path);
+            const config = await Effect.runPromise(readConfig(platform, dataDir.path));
             // Device id and last scan come from the ledger (plan 6.8, Batch 2); sync state and decode
             // failures are the last refresh's, persisted in the snapshot, until sync owns them in Batch 7.
             const ledger = await readLedgerStatus(platform, dataDir.path);
