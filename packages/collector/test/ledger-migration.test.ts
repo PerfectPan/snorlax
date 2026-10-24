@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { createNodePlatform } from "@rivus/agent-kit/node";
 
-import { CliError } from "../src/cli/errors.ts";
+import { CommandError } from "../src/errors.ts";
 import { listBackups, SCHEMA_VERSION } from "../src/ledger/migrations.ts";
 import { ledgerPath, openLedger } from "../src/ledger/ledger.ts";
 
@@ -192,7 +192,7 @@ describe("a database from a newer build", () => {
   it("refuses to open instead of downgrading", async () => {
     setUserVersion(SCHEMA_VERSION + 1);
     await expect(open()).rejects.toThrow(/newer snorlax/);
-    await expect(open()).rejects.toBeInstanceOf(CliError);
+    await expect(open()).rejects.toBeInstanceOf(CommandError);
     expect(userVersion()).toBe(SCHEMA_VERSION + 1);
   });
 

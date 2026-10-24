@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { acquireProcessLock, type ProcessLock } from "@rivus/agent-kit-collab/process-lock";
 import type { Platform } from "@rivus/agent-kit/platform";
 
-import { CliError } from "../cli/errors.ts";
+import { CommandError } from "../errors.ts";
 import type { PlatformSqlite } from "../ledger/sqlite.ts";
 import { errorMessage } from "../util/error-message.ts";
 
@@ -35,18 +35,18 @@ export async function withLedgerLock<T>(
   try {
     const acquired = await acquireProcessLock(platform, path, { wait: true, signal });
     if (!acquired.ok) {
-      throw new CliError("locked", `another snorlax process holds ${path}`);
+      throw new CommandError({ code: "locked", message: `another snorlax process holds ${path}` });
     }
     lock = acquired.value;
   } catch (error) {
-    if (error instanceof CliError) {
+    if (error instanceof CommandError) {
       throw error;
     }
     if (signal.aborted) {
-      throw new CliError(
-        "locked",
-        `waited ${LOCK_WAIT_MS / 1000}s for the ledger lock ${path}: ${errorMessage(error)}`
-      );
+      throw new CommandError({
+        code: "locked",
+        message: `waited ${LOCK_WAIT_MS / 1000}s for the ledger lock ${path}: ${errorMessage(error)}`
+      });
     }
     throw error;
   }

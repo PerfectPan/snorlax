@@ -5,7 +5,7 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 import * as z from "zod/mini";
 
-import { CliError } from "../cli/errors.ts";
+import { CommandError } from "../errors.ts";
 import { errorMessage } from "../util/error-message.ts";
 import { MigrationError, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
 import type { PlatformSqlite, SqliteDatabase, SqliteValue } from "./sqlite.ts";
@@ -186,10 +186,10 @@ const remoteDeviceRowSchema = z.object({
 const parseRow = <S extends z.core.$ZodType>(path: string, table: string, schema: S, row: unknown): z.output<S> => {
   const parsed = z.safeParse(schema, row);
   if (!parsed.success) {
-    throw new CliError(
-      "data-dir",
-      `${path}: the ledger's ${table} table holds a row this build cannot read: ${z.prettifyError(parsed.error)}`
-    );
+    throw new CommandError({
+      code: "data-dir",
+      message: `${path}: the ledger's ${table} table holds a row this build cannot read: ${z.prettifyError(parsed.error)}`
+    });
   }
   return parsed.data;
 };
@@ -197,7 +197,7 @@ const parseRow = <S extends z.core.$ZodType>(path: string, table: string, schema
 const readMeta = (path: string, db: SqliteDatabase): LedgerMeta => {
   const row = db.prepare("SELECT * FROM meta WHERE id = 0").get();
   if (row === undefined) {
-    throw new CliError("data-dir", "the ledger's meta row is missing; run snorlax doctor");
+    throw new CommandError({ code: "data-dir", message: "the ledger's meta row is missing; run snorlax doctor" });
   }
   const meta = parseRow(path, "meta", metaRowSchema, row);
   return {
@@ -248,14 +248,17 @@ const parseScanState = (path: string, raw: string): PersistedScanState => {
   try {
     json = JSON.parse(raw);
   } catch (error) {
-    throw new CliError("data-dir", `${path} holds a scan state that is not JSON: ${errorMessage(error)}`);
+    throw new CommandError({
+      code: "data-dir",
+      message: `${path} holds a scan state that is not JSON: ${errorMessage(error)}`
+    });
   }
   const parsed = z.safeParse(scanStateSchema, json);
   if (!parsed.success) {
-    throw new CliError(
-      "data-dir",
-      `${path} holds a scan state this build cannot read: ${z.prettifyError(parsed.error)}`
-    );
+    throw new CommandError({
+      code: "data-dir",
+      message: `${path} holds a scan state this build cannot read: ${z.prettifyError(parsed.error)}`
+    });
   }
   // The schema checks every field this collector reads; a cursor's `queue` holds the kit's own records,
   // opaque here and leniently re-parsed by the kit, so the checked shape is widened only at this one cast.
@@ -274,7 +277,7 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
   try {
     db = platform.sqlite.open(path);
   } catch (error) {
-    throw new CliError("data-dir", `cannot open the ledger ${path}: ${errorMessage(error)}`);
+    throw new CommandError({ code: "data-dir", message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
   }
   let meta: LedgerMeta;
   let scanState: PersistedScanState | undefined;
@@ -293,12 +296,12 @@ export async function openLedger(platform: LedgerPlatform, dataDir: string): Pro
     scanState = saved === undefined ? undefined : parseScanState(path, String(saved.state));
   } catch (error) {
     db.close();
-    if (error instanceof CliError) {
+    if (error instanceof CommandError) {
       throw error;
     }
     const detail =
       error instanceof MigrationError ? error.message : `cannot open the ledger ${path}: ${errorMessage(error)}`;
-    throw new CliError("data-dir", detail);
+    throw new CommandError({ code: "data-dir", message: detail });
   }
 
   return {
@@ -437,9 +440,9 @@ export async function readLedgerStatus(
     const meta = readMeta(path, db);
     return { deviceId: meta.deviceId, lastScanCompletedAt: meta.lastScanCompletedAt };
   } catch (error) {
-    throw error instanceof CliError
+    throw error instanceof CommandError
       ? error
-      : new CliError("data-dir", `cannot read the ledger ${path}: ${errorMessage(error)}`);
+      : new CommandError({ code: "data-dir", message: `cannot read the ledger ${path}: ${errorMessage(error)}` });
   } finally {
     db.close();
   }

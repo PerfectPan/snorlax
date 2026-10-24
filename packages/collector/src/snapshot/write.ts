@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Platform } from "@rivus/agent-kit/platform";
 import type { Snapshot } from "@rivus/snorlax-protocol";
 
-import { CliError } from "../cli/errors.ts";
+import { CommandError } from "../errors.ts";
 import { errorMessage } from "../util/error-message.ts";
 
 /**
@@ -20,6 +20,6 @@ export async function writeSnapshot(
   try {
     await platform.fs.writeAtomic(path, `${JSON.stringify(snapshot)}\n`);
   } catch (error) {
-    throw new CliError("data-dir", `cannot write the snapshot ${path}: ${errorMessage(error)}`);
+    throw new CommandError({ code: "data-dir", message: `cannot write the snapshot ${path}: ${errorMessage(error)}` });
   }
 }

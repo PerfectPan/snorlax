@@ -12,7 +12,7 @@ import * as plist from "plist";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
-import { CliError } from "../src/cli/errors.ts";
+import { CommandError } from "../src/errors.ts";
 import { resolvedDeletableDataDir } from "../src/schedule/launchd.ts";
 import { renderLaunchAgentPlist } from "../src/schedule/plist.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
@@ -300,7 +300,13 @@ describe("install and uninstall", () => {
       const again = run(env, ["install"]);
       expect(again.status).toBe(0);
       expect(again.stderr).toBe("");
-      expect(again.stdout).toBe(`LaunchAgent installed at ${plistPath}\n`);
+      // Human output is redacted in cli/, so the plist path is spelled relative to the home.
+      expect(again.stdout).toBe(
+        `LaunchAgent installed at ${relative(env.home, plistPath)
+          .split(sep)
+          .join("/")
+          .replace(/^Library/, "~/Library")}\n`
+      );
       await decodePlist(plistPath);
 
       expect(await readInvocations(env.record)).toEqual([
@@ -558,9 +564,10 @@ describe("install and uninstall", () => {
 
       const removed = run(env, ["uninstall", "--data"]);
       expect(removed.status).toBe(0);
+      // Human output is redacted in cli/, so the data directory is spelled relative to the home.
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
-          `the data directory ${dataDir} is kept; entries snorlax did not write remain: Documents, photo.jpg\n`
+          "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n"
       );
       expect(existsSync(join(dataDir, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
@@ -679,7 +686,7 @@ describe("uninstall --data path guard", () => {
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")).rejects.toThrow(/refusing to delete/);
     await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(/must be absolute/);
     await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe("/tmp/home/snorlax");
-    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CliError);
+    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(CommandError);
   });
 
   it("compares through realpath, so a symlinked spelling of the home directory is refused too", async () => {

@@ -1,0 +1,69 @@
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vite-plus/test";
+
+/**
+ * The import direction of plan 3.13: `cli/` may import `commands/`, `commands/` may import feature
+ * modules, and feature modules never import `cli/` or `commands/` — errors.ts, the shared services
+ * and the pure rules stay below both. This walks the sources and fails on any upward import.
+ */
+
+const srcRoot = fileURLToPath(new URL("../src", import.meta.url));
+
+const FEATURE_MODULES = [
+  "buckets",
+  "config",
+  "data-dir",
+  "doctor",
+  "ledger",
+  "log",
+  "rebuild",
+  "refresh",
+  "scan",
+  "schedule",
+  "snapshot",
+  "status"
+] as const;
+
+const listFiles = async (dir: string): Promise<string[]> => {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(path)));
+    } else if (entry.name.endsWith(".ts")) {
+      files.push(path);
+    }
+  }
+  return files;
+};
+
+describe("collector module direction (plan 3.13)", () => {
+  it("feature modules never import cli/ or commands/", async () => {
+    const offenders: string[] = [];
+    for (const feature of FEATURE_MODULES) {
+      for (const file of await listFiles(join(srcRoot, feature))) {
+        const text = await readFile(file, "utf8");
+        if (/(?:from|import)\s+"[^"]*\/(?:cli|commands)\//.test(text)) {
+          offenders.push(file);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("every command module lives under commands/ and imports no other command module", async () => {
+    const commandFiles = await listFiles(join(srcRoot, "commands"));
+    const offenders: string[] = [];
+    for (const file of commandFiles) {
+      const text = await readFile(file, "utf8");
+      // Commands import feature modules and effect/cli, never a sibling command.
+      if (/from "\.\/(?!output\.ts)/.test(text)) {
+        offenders.push(file);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});

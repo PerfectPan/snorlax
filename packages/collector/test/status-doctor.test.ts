@@ -1,17 +1,22 @@
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
+import { SnorlaxPlatform } from "../src/platform.ts";
 import { doctorSchema, statusSchema } from "@rivus/snorlax-protocol";
+import { Effect, Layer } from "effect";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { CollectorPlatform } from "../src/cli/context.ts";
-import { runCli } from "../src/cli/main.ts";
+import { runCli } from "../src/cli/run.ts";
+import { CliEnv } from "../src/cli/env.ts";
 import type { NodeFileOps } from "../src/data-dir/node-fs.ts";
+import { NodeFiles } from "../src/data-dir/node-fs.ts";
+import { RuntimeInfo } from "../src/version.ts";
 import { makeSnapshot } from "./sample.ts";
 
 /**
  * In-process command tests on the agent-kit memory platform: no real file system is touched and the clock is
  * fixed at 2026-10-22T12:00:00Z, so time-derived output is deterministic. They also prove the collector
- * depends only on the platform port and the `NodeFileOps` seam.
+ * depends only on the platform port and the `NodeFiles` seam. Output is redacted in `cli/`, so paths come
+ * out spelled relative to the home (`~/…`).
  */
 
 const DATA_DIR = "/testroot/tester/snorlax-data";
@@ -43,7 +48,7 @@ const runCommand = async (
   files: Record<string, string>,
   deps?: { nodeVersion?: string; mode?: () => number | undefined }
 ): Promise<RunResult> => {
-  const platform: CollectorPlatform = createMemoryPlatform({
+  const platform = createMemoryPlatform({
     home: "/testroot/tester",
     env: { SNORLAX_HOME: DATA_DIR },
     os: "darwin",
@@ -53,30 +58,35 @@ const runCommand = async (
   const out = createCapture();
   const err = createCapture();
   const nodeFiles = memoryNodeFiles(deps?.mode);
-  const exitCode = await runCli(args, {
-    platform,
-    nodeFiles,
-    version: "0.1.0",
-    nodeVersion: deps?.nodeVersion ?? "v24.11.0",
-    stdout: out.sink,
-    stderr: err.sink
-  });
-  return { exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join(""), nodeFiles };
+  const base = Layer.mergeAll(
+    Layer.succeed(SnorlaxPlatform, platform),
+    Layer.succeed(NodeFiles, nodeFiles),
+    Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
+    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
+  );
+  const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
+  return { exitCode: exit.exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join(""), nodeFiles };
 };
 
 const failureCodeSchema = z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) });
 
+/** The config file also makes the memory platform see the data directory itself, so stat finds a dir. */
+const withConfig = (config = "{}"): Record<string, string> => ({ [`${DATA_DIR}/config.json`]: config });
+
 describe("status", () => {
   it("reports an empty data directory with nulls and unpaired sync, exit 0", async () => {
-    const { exitCode, stdout } = await runCommand(["status", "--json"], {});
+    const { exitCode, stdout, nodeFiles } = await runCommand(["status", "--json"], {});
     const status = z.parse(statusSchema, JSON.parse(stdout));
     expect(status.ok).toBe(true);
-    expect(status.dataDir).toBe(DATA_DIR);
+    // cli/ redacts every output, so the data directory is spelled relative to the home (plan 3.13).
+    expect(status.dataDir).toBe("~/snorlax-data");
     expect(status.device).toEqual({ id: null, name: null });
     expect(status.lastScanAt).toBeNull();
     expect(status.sync).toEqual({ state: "unpaired", at: null });
     expect(status.failuresByAgent).toEqual({});
     expect(exitCode).toBe(0);
+    // Reading status creates nothing: the appends the logger dropped are the only trace (plan 3.13).
+    expect(nodeFiles.appended).toHaveLength(1);
   });
 
   it("lists the builtin agents and never reports runnable (stat-only detection)", async () => {
@@ -141,7 +151,7 @@ describe("status", () => {
 
 describe("doctor", () => {
   it("passes every local check on a healthy directory and exits 0", async () => {
-    const { exitCode, stdout } = await runCommand(["doctor", "--json"], {});
+    const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig());
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(true);
     expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config"]);
@@ -149,29 +159,37 @@ describe("doctor", () => {
   });
 
   it("still exits 0 when a check fails; healthy reports false", async () => {
-    const { exitCode, stdout } = await runCommand(["doctor", "--json"], {}, { nodeVersion: "v22.12.9" });
+    const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig(), { nodeVersion: "v22.12.9" });
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(false);
     expect(doctor.checks.find((check) => check.id === "node-version")?.status).toBe("error");
+    expect(doctor.checks.find((check) => check.id === "data-dir")?.status).toBe("ok");
     expect(exitCode).toBe(0);
   });
 
+  it("reports a missing data directory as a failed check and creates nothing", async () => {
+    const { stdout } = await runCommand(["doctor", "--json"], {});
+    const doctor = z.parse(doctorSchema, JSON.parse(stdout));
+    expect(doctor.checks.find((check) => check.id === "data-dir")?.status).toBe("error");
+    expect(doctor.healthy).toBe(false);
+  });
+
   it("fails the data-dir check when the mode is wider than 0700", async () => {
-    const { stdout } = await runCommand(["doctor", "--json"], {}, { mode: () => 0o755 });
+    const { stdout } = await runCommand(["doctor", "--json"], withConfig(), { mode: () => 0o755 });
     expect(z.parse(doctorSchema, JSON.parse(stdout)).checks.find((check) => check.id === "data-dir")?.status).toBe(
       "error"
     );
   });
 
   it("fails the config check on a corrupt config.json", async () => {
-    const { stdout } = await runCommand(["doctor", "--json"], { [`${DATA_DIR}/config.json`]: "{oops" });
+    const { stdout } = await runCommand(["doctor", "--json"], withConfig("{oops"));
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.checks.find((check) => check.id === "config")?.status).toBe("error");
     expect(doctor.healthy).toBe(false);
   });
 
   it("redacts the home directory out of check details", async () => {
-    const { stdout } = await runCommand(["doctor", "--json"], {});
+    const { stdout } = await runCommand(["doctor", "--json"], withConfig());
     expect(stdout).not.toContain("/testroot/tester");
   });
 });
