@@ -22,8 +22,9 @@ export const uninstallCommand = {
     data: Flag.Boolean("data").pipe(Flag.withDefault(false), Flag.withDescription("also delete the data directory"))
   },
   run: ({ data }: { readonly data: boolean }) =>
-    Effect.map(uninstallFlow({ deleteData: data }), ({ dataDir, dataLeftovers }) => ({
+    Effect.map(uninstallFlow({ deleteData: data }), ({ dataDir, deleted, dataLeftovers }) => ({
       payload: { schemaVersion: 1, ok: true },
-      human: humanResult(data, dataDir, dataLeftovers)
+      human: humanResult(data, dataDir, dataLeftovers),
+      ...(deleted ? { deletedDataDir: true as const } : {})
     }))
 };

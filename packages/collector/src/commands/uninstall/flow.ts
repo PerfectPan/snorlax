@@ -14,8 +14,8 @@ const removeKeychainItem: Effect.Effect<void> = Effect.void;
 /**
  * One `snorlax uninstall` (plan 3.1): unschedules refresh, then with `deleteData` removes the keychain item and
  * deletes the data directory. The data directory is checked — its path, then the snorlax marker — before the
- * scheduler looks at the job, so a refused `--data` leaves the job loaded. `dataLeftovers` are the entries kept
- * because snorlax did not write them.
+ * scheduler looks at the job, so a refused `--data` leaves the job loaded. `deleted` says the data directory was
+ * emptied of snorlax's entries; `dataLeftovers` are the entries kept because snorlax did not write them.
  */
 export const uninstallFlow = ({ deleteData }: { readonly deleteData: boolean }) =>
   Effect.gen(function* () {
@@ -30,8 +30,8 @@ export const uninstallFlow = ({ deleteData }: { readonly deleteData: boolean }) 
         : Effect.succeed(undefined)
     );
     if (toDelete === undefined) {
-      return { dataDir, dataLeftovers: [] };
+      return { dataDir, deleted: false, dataLeftovers: [] };
     }
     yield* removeKeychainItem;
-    return { dataDir, dataLeftovers: yield* deleteDataDir(platform.fs, toDelete) };
+    return { dataDir, deleted: true, dataLeftovers: yield* deleteDataDir(platform.fs, toDelete) };
   });

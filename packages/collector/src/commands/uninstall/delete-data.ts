@@ -199,14 +199,14 @@ export const deleteDataDir = (fs: Platform["fs"], dir: string): Effect.Effect<re
         catch: (error) =>
           new DataDirDeleteFailed({ message: `cannot delete the data directory ${dir}: ${errorMessage(error)}` })
       });
-    const leftovers: string[] = [];
+    const keptLogs: string[] = [];
     for (const name of KNOWN_DATA_ENTRIES) {
       if (name === "logs") {
         const logsDir = join(dir, name);
         for (const logName of KNOWN_LOG_FILES) {
           yield* remove(join(logsDir, logName));
         }
-        leftovers.push(...(yield* removeDirKeepingLeftovers(fs, logsDir, (entry) => `${name}/${entry}`)));
+        keptLogs.push(...(yield* removeDirKeepingLeftovers(fs, logsDir, (entry) => `${name}/${entry}`)));
       } else {
         yield* remove(join(dir, name));
       }
@@ -216,6 +216,7 @@ export const deleteDataDir = (fs: Platform["fs"], dir: string): Effect.Effect<re
         yield* remove(join(dir, entry.name));
       }
     }
-    leftovers.push(...(yield* removeDirKeepingLeftovers(fs, dir)));
-    return leftovers.sort();
+    // A kept `logs` directory is already named through the entries it kept (`logs/<entry>`), so it is not listed again.
+    const kept = yield* removeDirKeepingLeftovers(fs, dir);
+    return [...keptLogs, ...kept.filter((name) => keptLogs.length === 0 || name !== "logs")].sort();
   });

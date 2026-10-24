@@ -646,6 +646,23 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("writes no command log line after uninstall --data: only the user's logs/keep.txt remains, listed once", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const dataDir = dataDirOf(env.home);
+      await mkdir(join(dataDir, "logs"), { recursive: true });
+      await writeFile(join(dataDir, "logs", "keep.txt"), "unrelated\n");
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+
+      const removed = run(env, ["uninstall", "--data"]);
+      expect(removed.status).toBe(0);
+      expect(await listFiles(dataDir)).toEqual(["logs/keep.txt"]);
+      expect(removed.stdout).toBe(
+        "LaunchAgent removed\n" +
+          "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n"
+      );
+    });
+  });
+
   it("keeps ~/Library/Logs intact when SNORLAX_HOME points at ~/Library", async () => {
     await withInstallHome("darwin", async (env) => {
       const reports = join(env.home, "Library", "Logs", "DiagnosticReports");
