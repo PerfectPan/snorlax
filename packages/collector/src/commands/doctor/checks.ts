@@ -71,8 +71,11 @@ export const configCheck = (observed: ConfigObservation): DoctorCheck =>
     ? { id: "config", status: "ok", detail: "config.json parses; missing sections default" }
     : { id: "config", status: "error", detail: observed.message };
 
-/** The Node binary the CLI's job file names, as the flow found it on disk. */
-export type NodeBinary = "runnable" | "missing" | "not-executable";
+/**
+ * The Node binary the CLI's job file names, as the flow found it on disk; `unchecked` carries why the flow could not
+ * look, such as EACCES from a directory on the path this user cannot search.
+ */
+export type NodeBinary = "runnable" | "missing" | "not-executable" | { readonly unchecked: string };
 
 /** What the flow observed about the scheduled refresh; `node` is undefined when no job file names a Node binary. */
 export interface ScheduleObservation {
@@ -86,7 +89,8 @@ const REINSTALL =
 /**
  * Whether refresh runs on its own. The CLI's LaunchAgent runs the Node binary `snorlax install` ran on — often a
  * versioned path (nvm, Homebrew Cellar) that an upgrade removes, which silently stops the job — so a missing or
- * non-executable Node is an error. Not scheduling at all is a normal way to use the app (it refreshes when
+ * non-executable Node is an error. So is a Node path this user cannot check: launchd starts the job as this user,
+ * which cannot reach that Node either. Not scheduling at all is a normal way to use the app (it refreshes when
  * asked), so every state that is not broken outright is a warning, never an error that would turn `healthy` false.
  */
 export const scheduleCheck = ({ job, node }: ScheduleObservation): DoctorCheck => {
@@ -124,11 +128,17 @@ export const scheduleCheck = ({ job, node }: ScheduleObservation): DoctorCheck =
   if (cliJob.nodePath === undefined || node === undefined) {
     return check("warn", `cannot read the Node path from ${cliJob.file}; run \`snorlax install\` to rewrite it`);
   }
-  if (node !== "runnable") {
+  if (node === "missing" || node === "not-executable") {
     const problem = node === "missing" ? "does not exist" : "is not executable";
     return check(
       "error",
       `${cliJob.file} runs Node at ${cliJob.nodePath}, which ${problem}, so scheduled refresh stops; ${REINSTALL}`
+    );
+  }
+  if (node !== "runnable") {
+    return check(
+      "error",
+      `cannot check the Node at ${cliJob.nodePath} that ${cliJob.file} runs: ${node.unchecked}; ${REINSTALL}`
     );
   }
   if (loaded.from === "cli") {

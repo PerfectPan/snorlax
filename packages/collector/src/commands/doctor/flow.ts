@@ -19,7 +19,11 @@ import {
   type NodeBinary
 } from "./checks.ts";
 
-/** Runnable means a regular file, symlinks followed, with an execute bit set. */
+/**
+ * Runnable means a regular file, symlinks followed, with an execute bit set. The path comes from the plist, so it can
+ * lie where this user cannot look; a `stat` or mode read that fails there (the kit's `stat` reads only ENOENT and
+ * ENOTDIR as nothing at the path) is `unchecked` with its reason rather than a defect that ends `doctor`.
+ */
 const nodeBinaryAt = (
   platform: Pick<Platform, "fs">,
   nodeFiles: NodeFileOps,
@@ -32,7 +36,7 @@ const nodeBinaryAt = (
     }
     const mode = yield* Effect.promise(() => nodeFiles.mode(path));
     return found.kind === "file" && mode !== undefined && (mode & 0o111) !== 0 ? "runnable" : "not-executable";
-  });
+  }).pipe(Effect.catchDefect((defect) => Effect.succeed({ unchecked: errorMessage(defect) })));
 
 /**
  * Local diagnostics (plan 3.1, 3.13): Node version, data directory, config and the scheduled refresh.
@@ -40,7 +44,7 @@ const nodeBinaryAt = (
  * creates nothing and repairs nothing, so a missing data directory is a failed check in the payload, not
  * something the command fixes on the way in. Keychain and backend checks arrive with the batches that own
  * them. The command exits 0 whenever it completes; `healthy` reports whether any check failed, and a
- * failing `stat` or mode read is a defect.
+ * failing `stat` or mode read of the data directory is a defect.
  */
 export const doctorFlow = Effect.gen(function* () {
   const platform = yield* SnorlaxPlatform;

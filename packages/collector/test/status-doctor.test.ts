@@ -1,5 +1,12 @@
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { createNodePlatform } from "@rivus/agent-kit/node";
+import type { Platform } from "@rivus/agent-kit/platform";
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
-import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
+import { NodeFiles, nodeFileOps, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
 import { doctorSchema, statusSchema, type DoctorCheck } from "@rivus/snorlax-protocol";
 import { Effect, Layer } from "effect";
 import * as z from "zod/mini";
@@ -18,7 +25,8 @@ import { makeSnapshot } from "./sample.ts";
  * In-process command tests on the agent-kit memory platform: no real file system is touched and the clock is
  * fixed at 2026-10-22T12:00:00Z, so time-derived output is deterministic. They also prove the collector
  * depends only on the platform port and the `NodeFiles` seam. Output is redacted in `cli/`, so paths come
- * out spelled relative to the home (`~/…`).
+ * out spelled relative to the home (`~/…`). The one exception runs `doctor` on the Node platform over a temporary
+ * directory, because only a real file system refuses a `stat` with EACCES.
  */
 
 const DATA_DIR = "/testroot/tester/snorlax-data";
@@ -45,6 +53,25 @@ interface RunResult {
   nodeFiles: NodeFileOps & { appended: string[] };
 }
 
+const runOn = async (
+  args: readonly string[],
+  platform: Platform,
+  nodeFiles: NodeFileOps,
+  deps?: { nodeVersion?: string; inspection?: JobInspection }
+): Promise<Omit<RunResult, "nodeFiles">> => {
+  const out = createCapture();
+  const err = createCapture();
+  const base = Layer.mergeAll(
+    Layer.succeed(SnorlaxPlatform, platform),
+    Layer.succeed(NodeFiles, nodeFiles),
+    fakeScheduler([], { jobFile: "/testroot/tester/job", inspection: deps?.inspection }),
+    Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
+    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
+  );
+  const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
+  return { exitCode: exit.exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join("") };
+};
+
 const runCommand = async (
   args: readonly string[],
   files: Record<string, string>,
@@ -57,18 +84,8 @@ const runCommand = async (
     now: () => 1_792_708_800_000,
     files
   });
-  const out = createCapture();
-  const err = createCapture();
   const nodeFiles = memoryNodeFiles(deps?.mode);
-  const base = Layer.mergeAll(
-    Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform)),
-    Layer.succeed(NodeFiles, nodeFiles),
-    fakeScheduler([], { jobFile: "/testroot/tester/job", inspection: deps?.inspection }),
-    Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
-    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
-  );
-  const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
-  return { exitCode: exit.exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join(""), nodeFiles };
+  return { ...(await runOn(args, memoryKitPlatform(platform), nodeFiles, deps)), nodeFiles };
 };
 
 const failureCodeSchema = z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) });
@@ -221,6 +238,49 @@ describe("doctor", () => {
       (await runCommand(["doctor", "--json"], present, { inspection, mode: () => 0o644 })).stdout
     );
     expect(notExecutable.check?.detail).toContain("is not executable");
+  });
+
+  it("fails only the schedule check, and still exits 0, when the job's Node path cannot be checked", async () => {
+    // A real directory this user cannot search: there the kit's stat throws EACCES instead of reporting nothing.
+    const home = await mkdtemp(join(tmpdir(), "snorlax-doctor-"));
+    const locked = join(home, "locked");
+    try {
+      await mkdir(join(home, "data"), { mode: 0o700 });
+      await mkdir(locked);
+      await writeFile(join(locked, "node"), "#!", { mode: 0o755 });
+      await chmod(locked, 0o000);
+      const plist = join(home, "Library", "LaunchAgents", "job.plist");
+      const { exitCode, stdout } = await runOn(
+        ["doctor", "--json"],
+        createNodePlatform({ home, env: { SNORLAX_HOME: join(home, "data"), PATH: "/usr/bin:/bin" } }),
+        { ...nodeFileOps, append: async () => {} },
+        {
+          inspection: {
+            kind: "inspected",
+            cliJob: { file: plist, nodePath: join(locked, "node") },
+            loaded: { from: "cli", file: plist }
+          }
+        }
+      );
+      expect(exitCode).toBe(0);
+      const doctor = z.parse(doctorSchema, JSON.parse(stdout));
+      expect(doctor.checks.map((check) => [check.id, check.status])).toEqual([
+        ["node-version", "ok"],
+        ["data-dir", "ok"],
+        ["config", "ok"],
+        ["schedule", "error"]
+      ]);
+      expect(doctor.checks.at(-1)?.detail).toMatch(
+        /^cannot check the Node at ~\/locked\/node that ~\/Library\/LaunchAgents\/job\.plist runs: EACCES/
+      );
+      expect(doctor.healthy).toBe(false);
+    } finally {
+      // rm cannot empty a directory it cannot search.
+      if (existsSync(locked)) {
+        await chmod(locked, 0o700);
+      }
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 
