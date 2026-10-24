@@ -3,7 +3,7 @@ import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
 import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
 import { layerTest as stdioLayerTest } from "effect/Stdio";
 
-import { Schedule } from "../capabilities/scheduler/scheduler.ts";
+import type { Scheduler } from "../capabilities/scheduler/scheduler.ts";
 import { errorMessage } from "../core/error-message/error-message.ts";
 import { resolveDataDir } from "../modules/data-dir/data-dir.ts";
 import { appendingLogger } from "../modules/log/log.ts";
@@ -56,14 +56,16 @@ interface Outcome {
   readonly output: "json" | "human";
 }
 
+/** What the caller provides: the platform, the file ops, the scheduler implementation and the sinks. */
+type CliBase = SnorlaxPlatform | NodeFiles | Scheduler | CliEnv;
+
 /**
- * Everything one invocation runs on, around the caller's `base` (the platform, the file ops and the
- * sinks): the command handoff, the scheduler, and what effect/cli itself needs. The flows read the
- * platform and the file ops themselves; `provideMerge` keeps `base` exposed to the program.
+ * Everything one invocation runs on, around the caller's `base`: the command handoff and what effect/cli
+ * itself needs. The flows read the platform, the file ops and the scheduler themselves; `provideMerge`
+ * keeps `base` exposed to the program.
  */
-function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
+function cliLayersOf(base: Layer.Layer<CliBase>) {
   const services = Layer.mergeAll(
-    Schedule.live,
     CommandOutput.live,
     // The services effect/cli itself needs; the collector goes through the kit platform, so the
     // file system here is only the inert requirement of the parser.
@@ -96,12 +98,10 @@ function cliLayersOf(base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>) {
 /**
  * Runs one CLI invocation over `argv` (without the program name). Always fails with `CliExit`,
  * carrying the exit code; stdout and stderr carry the output. `base` provides the platform, the
- * file-ops seam and the output sinks — the Node platform in `bin.ts`, memory doubles in tests.
+ * file-ops seam, the scheduler and the output sinks — the Node platform and the system's scheduler in
+ * `bin.ts`, memory doubles and a fake scheduler in tests.
  */
-export const runCli = (
-  argv: readonly string[],
-  base: Layer.Layer<SnorlaxPlatform | NodeFiles | CliEnv>
-): Effect.Effect<never, CliExit> =>
+export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Effect.Effect<never, CliExit> =>
   Effect.gen(function* () {
     const platform = yield* SnorlaxPlatform;
     const env = yield* CliEnv;

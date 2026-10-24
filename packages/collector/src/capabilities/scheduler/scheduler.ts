@@ -1,101 +1,109 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
-import { DataDirCreateFailed, ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
-import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import type { DataDirNotAbsolute } from "../../modules/data-dir/data-dir.ts";
+import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import {
-  CollectorPathUnresolved,
-  DataDirDeleteFailed,
-  DataDirNotAbsolute,
-  DataDirNotDeletable,
   ForeignServiceLoaded,
-  installLaunchAgent,
-  LaunchctlFailed,
-  PlistRemoveFailed,
-  PlistWriteFailed,
-  SchedulerOsOverrideInvalid,
-  SchedulerUnsupportedOs,
-  uninstallLaunchAgent,
-  UserIdUnavailable,
-  type UninstallResult
+  launchdScheduler,
+  type CollectorPathUnresolved,
+  type LaunchctlFailed,
+  type PlistRemoveFailed,
+  type PlistWriteFailed,
+  type UserIdUnavailable
 } from "./launchd.ts";
 
-type ScheduleFailure =
-  | SchedulerOsOverrideInvalid
-  | SchedulerUnsupportedOs
+/** `SNORLAX_OS` names a system other than darwin, linux or win32. */
+class SchedulerOsOverrideInvalid extends Data.TaggedError("SchedulerOsOverrideInvalid")<{
+  readonly message: string;
+}> {}
+
+/** This build has no scheduler for the system (only launchd on macOS). */
+class SchedulerUnsupportedOs extends Data.TaggedError("SchedulerUnsupportedOs")<{ readonly message: string }> {}
+
+/** The job snorlax schedules: `snorlax refresh` every 300 seconds over `dataDir`, which must be absolute. */
+interface RefreshJob {
+  readonly dataDir: string;
+}
+
+type SchedulerUnavailable = SchedulerOsOverrideInvalid | SchedulerUnsupportedOs;
+
+type InstallFailure =
+  | SchedulerUnavailable
   | DataDirNotAbsolute
-  | DataDirNotDeletable
-  | DataDirDeleteFailed
-  | DataDirCreateFailed
-  | CollectorPathUnresolved
   | UserIdUnavailable
   | LaunchctlFailed
   | ForeignServiceLoaded
-  | PlistWriteFailed
+  | CollectorPathUnresolved
+  | PlistWriteFailed;
+
+type UninstallFailure =
+  | SchedulerUnavailable
+  | DataDirNotAbsolute
+  | UserIdUnavailable
+  | LaunchctlFailed
+  | ForeignServiceLoaded
   | PlistRemoveFailed;
 
-/** Keeps what `launchd.ts` throws on purpose as typed failures; any other rejection is a defect. */
-const scheduleFailure = (defect: unknown): Effect.Effect<never, ScheduleFailure> =>
-  defect instanceof SchedulerOsOverrideInvalid ||
-  defect instanceof SchedulerUnsupportedOs ||
-  defect instanceof DataDirNotAbsolute ||
-  defect instanceof DataDirNotDeletable ||
-  defect instanceof DataDirDeleteFailed ||
-  defect instanceof DataDirCreateFailed ||
-  defect instanceof CollectorPathUnresolved ||
-  defect instanceof UserIdUnavailable ||
-  defect instanceof LaunchctlFailed ||
-  defect instanceof ForeignServiceLoaded ||
-  defect instanceof PlistWriteFailed ||
-  defect instanceof PlistRemoveFailed
-    ? Effect.fail(defect)
-    : Effect.die(defect);
+/** A system without a scheduler in this build: both operations fail before anything runs. */
+const unavailable = (
+  failure: (command: "install" | "uninstall") => SchedulerUnavailable
+): Context.Service.Shape<typeof Scheduler> => ({
+  install: () => Effect.fail(failure("install")),
+  uninstall: () => Effect.fail(failure("uninstall"))
+});
 
 /**
- * The LaunchAgent as a service, over the plain orchestration in `launchd.ts`; the real `launchctl`
- * is never started by tests, which point `SNORLAX_LAUNCHCTL` at a stub. `install` prepares the data
- * directory — but only after the ownership check has accepted the loaded service, so a refused
- * install builds nothing (plan 3.13). `uninstall` prepares nothing at all: it only removes known
- * entries, and both the kit's `fs.remove` and the leftovers handling treat a missing data directory
- * or a missing `logs/` directory as already clean.
+ * The scheduled refresh (plan 3.11, 3.13 rule 5). Snorlax.app's Launch at login registers the same job under
+ * the same label, so both operations refuse, changing nothing, while the loaded job is not provably the
+ * CLI's own. Implementations: launchd (`launchd.ts`); systemd arrives with Batch 8; tests provide a fake.
  */
-export class Schedule extends Context.Service<
-  Schedule,
+export class Scheduler extends Context.Service<
+  Scheduler,
   {
-    readonly install: Effect.Effect<string, ScheduleFailure>;
-    readonly uninstall: (options: { readonly deleteData: boolean }) => Effect.Effect<UninstallResult, ScheduleFailure>;
+    /**
+     * Writes and loads the job and returns the file it was written to. `prepare` runs once the ownership
+     * check has passed and before the first write, so a refused install builds nothing.
+     */
+    readonly install: <E>(
+      job: RefreshJob,
+      prepare: Effect.Effect<void, E>
+    ) => Effect.Effect<string, InstallFailure | E>;
+    /**
+     * Unloads the job and removes its file. `guard` runs before the job is looked at, so a refusal there
+     * leaves the job loaded; its value is returned.
+     */
+    readonly uninstall: <A, E>(job: RefreshJob, guard: Effect.Effect<A, E>) => Effect.Effect<A, UninstallFailure | E>;
   }
->()("snorlax/schedule/Schedule") {
-  static readonly live = Layer.effect(
-    Schedule,
+>()("snorlax/scheduler/Scheduler") {
+  /**
+   * The scheduler of the system the CLI runs on: launchd on macOS. `SNORLAX_OS` (`darwin`, `linux` or
+   * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run the launchd path on the Linux
+   * CI job; it is not copied into the job. On other systems, and with any other `SNORLAX_OS`, install and
+   * uninstall fail while every other command runs as usual: building this layer only reads the environment.
+   */
+  static readonly live: Layer.Layer<Scheduler, never, SnorlaxPlatform> = Layer.effect(
+    Scheduler,
     Effect.gen(function* () {
       const platform = yield* SnorlaxPlatform;
-      const nodeFiles = yield* NodeFiles;
-      const dataDir = resolveDataDir(platform);
-      return Schedule.of({
-        // `Effect.runPromise` rejects with the failure itself, so a `DataDirCreateFailed` from `prepare`
-        // reaches `scheduleFailure` as the same instance.
-        install: Effect.promise(() =>
-          installLaunchAgent(platform, dataDir, () => Effect.runPromise(ensureDataDir(platform, nodeFiles, dataDir)))
-        ).pipe(Effect.catchDefect(scheduleFailure)),
-        uninstall: (options) =>
-          Effect.promise(() => uninstallLaunchAgent(platform, dataDir, options)).pipe(
-            Effect.catchDefect(scheduleFailure)
-          )
-      });
+      const override = platform.env.SNORLAX_OS;
+      const os = override === undefined || override === "" ? platform.os : override;
+      if (os === "darwin") {
+        return launchdScheduler(platform);
+      }
+      if (os === "linux" || os === "win32") {
+        return unavailable(
+          (command) =>
+            new SchedulerUnsupportedOs({
+              message: `snorlax ${command} schedules a LaunchAgent on macOS in this build; ${os} support arrives with Batch 8 (systemd user timer)`
+            })
+        );
+      }
+      // `platform.os` is always one of the three, so only the override names another system.
+      return unavailable(
+        () => new SchedulerOsOverrideInvalid({ message: "SNORLAX_OS must be darwin, linux, or win32" })
+      );
     })
   );
 }
 
-export {
-  CollectorPathUnresolved,
-  DataDirDeleteFailed,
-  DataDirNotAbsolute,
-  DataDirNotDeletable,
-  ForeignServiceLoaded,
-  LaunchctlFailed,
-  PlistRemoveFailed,
-  PlistWriteFailed,
-  SchedulerOsOverrideInvalid,
-  SchedulerUnsupportedOs,
-  UserIdUnavailable
-};
+export { ForeignServiceLoaded };

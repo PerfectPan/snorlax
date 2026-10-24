@@ -3,16 +3,18 @@ import process from "node:process";
 import { NodePlatformLive } from "@rivus/agent-kit/node/effect";
 import { Effect, Layer, Runtime } from "effect";
 
+import { Scheduler } from "../capabilities/scheduler/scheduler.ts";
 import { NodeFiles, SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
 
 /**
  * The `snorlax` bin (plan 3.13): composes the Node layers — the kit platform through
- * `NodePlatformLive`, the real file ops, the process streams — and runs one command.
+ * `NodePlatformLive`, the real file ops, the scheduler of this system, the process streams — and runs
+ * one command.
  */
 const liveLayers = Layer.mergeAll(
-  Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive),
+  Layer.provideMerge(Scheduler.live, Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive)),
   NodeFiles.live,
   Layer.succeed(
     CliEnv,

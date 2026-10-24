@@ -10,10 +10,10 @@ import { fileURLToPath } from "node:url";
 import { failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
 import * as plist from "plist";
 import * as z from "zod/mini";
+import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DataDirNotDeletable } from "../src/capabilities/scheduler/scheduler.ts";
-import { resolvedDeletableDataDir } from "../src/capabilities/scheduler/launchd.ts";
+import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/modules/data-dir/data-dir.ts";
 import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 
@@ -768,20 +768,32 @@ describe("uninstall --data path guard", () => {
   };
 
   it("refuses to delete /, the home directory, its ancestors, or a relative path", async () => {
-    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(/refusing to delete/);
-    await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home", "/tmp/home")).rejects.toThrow(/refusing to delete/);
-    await expect(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")).rejects.toThrow(/refusing to delete/);
-    await expect(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")).rejects.toThrow(/must be absolute/);
-    await expect(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")).resolves.toBe("/tmp/home/snorlax");
-    await expect(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")).rejects.toThrow(DataDirNotDeletable);
+    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home"))).rejects.toThrow(
+      /refusing to delete/
+    );
+    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp/home", "/tmp/home"))).rejects.toThrow(
+      /refusing to delete/
+    );
+    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home"))).rejects.toThrow(
+      /refusing to delete/
+    );
+    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home"))).rejects.toThrow(
+      /must be absolute/
+    );
+    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home"))).resolves.toBe(
+      "/tmp/home/snorlax"
+    );
+    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home"))).rejects.toThrow(
+      DataDirNotDeletable
+    );
   });
 
   it("compares through realpath, so a symlinked spelling of the home directory is refused too", async () => {
-    await expect(resolvedDeletableDataDir(symlinkFs, "/var/home", "/private/var/home")).rejects.toThrow(
-      /refusing to delete/
-    );
-    await expect(resolvedDeletableDataDir(symlinkFs, "/var/home/data", "/private/var/home")).resolves.toBe(
-      "/var/home/data"
-    );
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(symlinkFs, "/var/home", "/private/var/home"))
+    ).rejects.toThrow(/refusing to delete/);
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(symlinkFs, "/var/home/data", "/private/var/home"))
+    ).resolves.toBe("/var/home/data");
   });
 });

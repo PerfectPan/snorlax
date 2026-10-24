@@ -11,6 +11,7 @@ import * as z from "zod/mini";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
+import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
  * The read-only commands on a real file system under a temporary home (never a real agent home):
@@ -64,6 +65,7 @@ const runCommand = async (args: readonly string[]): Promise<RunOutcome> => {
   const base = Layer.mergeAll(
     Layer.succeed(SnorlaxPlatform, platform),
     NodeFiles.live,
+    fakeScheduler([], { jobFile: join(home, "job") }),
     Layer.succeed(
       CliEnv,
       CliEnv.of({
