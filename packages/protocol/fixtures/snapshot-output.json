@@ -1,0 +1,289 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "snapshot": {
+    "schemaVersion": 1,
+    "generatedAt": "2026-10-23T02:35:12.482Z",
+    "timeZone": "Asia/Shanghai",
+    "totals": {
+      "today": {
+        "tokens": 81234567,
+        "inputTokens": 73111110,
+        "outputTokens": 8123457,
+        "cacheReadTokens": 64987653,
+        "costUsd": 312.4,
+        "requests": 2210,
+        "sessions": 41,
+        "unpricedRequests": 0
+      },
+      "last7d": {
+        "tokens": 412345678,
+        "inputTokens": 371111110,
+        "outputTokens": 41234568,
+        "cacheReadTokens": 329876542,
+        "costUsd": 1583.2,
+        "requests": 11204,
+        "sessions": 167,
+        "unpricedRequests": 0
+      },
+      "last30d": {
+        "tokens": 1612345678,
+        "inputTokens": 1451111110,
+        "outputTokens": 161234568,
+        "cacheReadTokens": 1289876542,
+        "costUsd": 6190.7,
+        "requests": 43881,
+        "sessions": 703,
+        "unpricedRequests": 0
+      }
+    },
+    "byAgent": [
+      {
+        "agent": "claude-code",
+        "today": {
+          "tokens": 81234567,
+          "inputTokens": 73111110,
+          "outputTokens": 8123457,
+          "cacheReadTokens": 64987653,
+          "costUsd": 312.4,
+          "requests": 2210,
+          "sessions": 41,
+          "unpricedRequests": 0
+        },
+        "last7d": {
+          "tokens": 412345678,
+          "inputTokens": 371111110,
+          "outputTokens": 41234568,
+          "cacheReadTokens": 329876542,
+          "costUsd": 1583.2,
+          "requests": 11204,
+          "sessions": 167,
+          "unpricedRequests": 0
+        },
+        "last30d": {
+          "tokens": 1612345678,
+          "inputTokens": 1451111110,
+          "outputTokens": 161234568,
+          "cacheReadTokens": 1289876542,
+          "costUsd": 6190.7,
+          "requests": 43881,
+          "sessions": 703,
+          "unpricedRequests": 0
+        }
+      },
+      {
+        "agent": "codex",
+        "today": {
+          "tokens": 12345678,
+          "inputTokens": 11111110,
+          "outputTokens": 1234568,
+          "cacheReadTokens": 9876542,
+          "costUsd": 41.8,
+          "requests": 310,
+          "sessions": 6,
+          "unpricedRequests": 0
+        },
+        "last7d": {
+          "tokens": 88888888,
+          "inputTokens": 79999999,
+          "outputTokens": 8888889,
+          "cacheReadTokens": 71111110,
+          "costUsd": 260.1,
+          "requests": 1904,
+          "sessions": 33,
+          "unpricedRequests": 0
+        },
+        "last30d": {
+          "tokens": 301234567,
+          "inputTokens": 271111110,
+          "outputTokens": 30123457,
+          "cacheReadTokens": 240987653,
+          "costUsd": 890.5,
+          "requests": 7420,
+          "sessions": 121,
+          "unpricedRequests": 0
+        }
+      }
+    ],
+    "byModel": [
+      {
+        "model": "claude-opus-5-5",
+        "today": {
+          "tokens": 81234567,
+          "inputTokens": 73111110,
+          "outputTokens": 8123457,
+          "cacheReadTokens": 64987653,
+          "costUsd": 312.4,
+          "requests": 2210,
+          "sessions": 41,
+          "unpricedRequests": 0
+        },
+        "last7d": {
+          "tokens": 412345678,
+          "inputTokens": 371111110,
+          "outputTokens": 41234568,
+          "cacheReadTokens": 329876542,
+          "costUsd": 1583.2,
+          "requests": 11204,
+          "sessions": 167,
+          "unpricedRequests": 0
+        },
+        "last30d": {
+          "tokens": 1612345678,
+          "inputTokens": 1451111110,
+          "outputTokens": 161234568,
+          "cacheReadTokens": 1289876542,
+          "costUsd": 6190.7,
+          "requests": 43881,
+          "sessions": 703,
+          "unpricedRequests": 0
+        }
+      },
+      {
+        "model": "gpt-6.2",
+        "today": {
+          "tokens": 12345678,
+          "inputTokens": 11111110,
+          "outputTokens": 1234568,
+          "cacheReadTokens": 9876542,
+          "costUsd": 41.8,
+          "requests": 310,
+          "sessions": 6,
+          "unpricedRequests": 0
+        },
+        "last7d": {
+          "tokens": 88888888,
+          "inputTokens": 79999999,
+          "outputTokens": 8888889,
+          "cacheReadTokens": 71111110,
+          "costUsd": 260.1,
+          "requests": 1904,
+          "sessions": 33,
+          "unpricedRequests": 0
+        },
+        "last30d": {
+          "tokens": 301234567,
+          "inputTokens": 271111110,
+          "outputTokens": 30123457,
+          "cacheReadTokens": 240987653,
+          "costUsd": 890.5,
+          "requests": 7420,
+          "sessions": 121,
+          "unpricedRequests": 0
+        }
+      }
+    ],
+    "byDevice": [
+      {
+        "deviceId": "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
+        "name": "MacBook Pro",
+        "isThisDevice": true,
+        "lastPushAt": "2026-10-23T02:35:11.901Z",
+        "today": {
+          "tokens": 81234567,
+          "inputTokens": 73111110,
+          "outputTokens": 8123457,
+          "cacheReadTokens": 64987653,
+          "costUsd": 312.4,
+          "requests": 2210,
+          "sessions": 41,
+          "unpricedRequests": 0
+        },
+        "last7d": {
+          "tokens": 412345678,
+          "inputTokens": 371111110,
+          "outputTokens": 41234568,
+          "cacheReadTokens": 329876542,
+          "costUsd": 1583.2,
+          "requests": 11204,
+          "sessions": 167,
+          "unpricedRequests": 0
+        },
+        "last30d": {
+          "tokens": 1612345678,
+          "inputTokens": 1451111110,
+          "outputTokens": 161234568,
+          "cacheReadTokens": 1289876542,
+          "costUsd": 6190.7,
+          "requests": 43881,
+          "sessions": 703,
+          "unpricedRequests": 0
+        }
+      },
+      {
+        "deviceId": "0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3",
+        "name": "Mac mini",
+        "isThisDevice": false,
+        "lastPushAt": "2026-10-23T02:34:41.117Z",
+        "today": {
+          "tokens": 2400000,
+          "inputTokens": 2160000,
+          "outputTokens": 240000,
+          "cacheReadTokens": 1920000,
+          "costUsd": 9.6,
+          "requests": 96,
+          "sessions": 2,
+          "unpricedRequests": 0
+        },
+        "last7d": {
+          "tokens": 18000000,
+          "inputTokens": 16200000,
+          "outputTokens": 1800000,
+          "cacheReadTokens": 14400000,
+          "costUsd": 71.2,
+          "requests": 731,
+          "sessions": 15,
+          "unpricedRequests": 0
+        },
+        "last30d": {
+          "tokens": 64000000,
+          "inputTokens": 57600000,
+          "outputTokens": 6400000,
+          "cacheReadTokens": 51200000,
+          "costUsd": 255.9,
+          "requests": 2604,
+          "sessions": 58,
+          "unpricedRequests": 0
+        }
+      }
+    ],
+    "daily": [
+      {
+        "date": "2026-09-24",
+        "tokens": 41234567,
+        "costUsd": 160.2
+      },
+      {
+        "date": "2026-10-22",
+        "tokens": 81234567,
+        "costUsd": 312.4
+      },
+      {
+        "date": "2026-10-23",
+        "tokens": 12345678,
+        "costUsd": 41.8
+      }
+    ],
+    "hourlyToday": [
+      {
+        "hour": "2026-10-23T09:00:00+08:00",
+        "tokens": 9812345
+      },
+      {
+        "hour": "2026-10-23T10:00:00+08:00",
+        "tokens": 2533333
+      }
+    ],
+    "status": {
+      "lastScanAt": "2026-10-23T02:35:10.205Z",
+      "sync": {
+        "state": "ok",
+        "at": "2026-10-23T02:35:11.901Z"
+      },
+      "failuresByAgent": {
+        "grok": 2
+      },
+      "paired": true
+    }
+  }
+}

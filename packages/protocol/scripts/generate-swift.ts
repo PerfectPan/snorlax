@@ -150,11 +150,38 @@ if (schemaFiles.length === 0) {
   throw new Error(`no JSON Schemas in ${schemaDir}`);
 }
 
+const preparedByName = new Map<string, JsonObject>();
+for (const fileName of schemaFiles) {
+  const document = asObject(prepareSchema(readSchema(fileName), fileName.replace(/\.json$/, "")));
+  if (document === undefined) {
+    throw new Error(`${fileName} does not prepare into a schema object`);
+  }
+  preparedByName.set(fileName, document);
+}
+
+/**
+ * `snapshot --json` wraps the snapshot (SnapshotOutput). quicktype cannot merge two copies of a named
+ * type living in different documents, so the wrapper's `snapshot` property becomes a `$ref` to the
+ * prepared snapshot schema injected under `$defs`, and snapshot.json is not fed as its own source:
+ * one document carries Snapshot, SnapshotOutput and WindowTotal, and every Swift name stays stable.
+ */
+const snapshotDoc = preparedByName.get("snapshot.json");
+const wrapperDoc = preparedByName.get("snapshot-output.json");
+if (snapshotDoc !== undefined && wrapperDoc !== undefined) {
+  const objectField = (value: Json | undefined): JsonObject => (value === undefined ? {} : (asObject(value) ?? {}));
+  const { $defs, ...snapshotRoot } = snapshotDoc;
+  preparedByName.set("snapshot-output.json", {
+    ...wrapperDoc,
+    properties: { ...objectField(wrapperDoc.properties), snapshot: { $ref: "#/$defs/Snapshot" } },
+    $defs: { ...objectField($defs), Snapshot: snapshotRoot }
+  });
+  preparedByName.delete("snapshot.json");
+}
+
 const tempDir = mkdtempSync(join(tmpdir(), "snorlax-swift-"));
 try {
   const sources: string[] = [];
-  for (const fileName of schemaFiles) {
-    const prepared = prepareSchema(readSchema(fileName), fileName.replace(/\.json$/, ""));
+  for (const [fileName, prepared] of [...preparedByName.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const source = join(tempDir, fileName);
     writeFileSync(source, JSON.stringify(prepared));
     sources.push(source);

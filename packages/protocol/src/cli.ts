@@ -8,6 +8,7 @@ import {
   syncStateSchema,
   utcTimestampSchema
 } from "./shared.ts";
+import { snapshotSchema } from "./snapshot.ts";
 
 /**
  * The `--json` outputs of the `snorlax` CLI (plan 3.2.1). With `--json`, stdout carries exactly one JSON
@@ -46,6 +47,17 @@ export const okSchema = z.object({
   ok: z.literal(true)
 });
 export type Ok = z.output<typeof okSchema>;
+
+/**
+ * Success body of `snapshot --json` (plan 3.1): the snapshot itself is the file shape of 3.2.2, and
+ * the command wraps it in the usual output envelope.
+ */
+export const snapshotOutputSchema = z.object({
+  schemaVersion: schemaVersionSchema,
+  ok: z.literal(true),
+  snapshot: snapshotSchema
+});
+export type SnapshotOutput = z.output<typeof snapshotOutputSchema>;
 
 /** Success body of `refresh` and `rebuild`; `sync.ok: false` still exits 0. */
 export const refreshResultSchema = z.object({

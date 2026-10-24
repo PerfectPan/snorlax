@@ -135,6 +135,7 @@ const sampleDoctor: protocol.Doctor = {
 const schemas: Readonly<Record<string, z.core.$ZodType>> = {
   bucket: protocol.bucketSchema,
   snapshot: protocol.snapshotSchema,
+  "snapshot-output": protocol.snapshotOutputSchema,
   ok: protocol.okSchema,
   failure: protocol.failureSchema,
   "refresh-result": protocol.refreshResultSchema,
@@ -146,6 +147,7 @@ const schemas: Readonly<Record<string, z.core.$ZodType>> = {
 const fixtures: Readonly<Record<string, unknown>> = {
   bucket: sampleBucket,
   snapshot: sampleSnapshot,
+  "snapshot-output": { schemaVersion: 1, ok: true, snapshot: sampleSnapshot },
   ok: { schemaVersion: 1, ok: true },
   failure: {
     schemaVersion: 1,
