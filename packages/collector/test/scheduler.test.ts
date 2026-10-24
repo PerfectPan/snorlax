@@ -14,7 +14,8 @@ import { Effect, Fiber, Layer } from "effect";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
-import { Scheduler } from "../src/capabilities/scheduler/scheduler.ts";
+import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
+import { Scheduler, type JobInspection } from "../src/capabilities/scheduler/scheduler.ts";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
@@ -241,5 +242,114 @@ describe("the system's scheduler", () => {
     await Effect.runPromise(Fiber.interrupt(fiber));
     expect(bootstrap.signal?.aborted).toBe(true);
     expect(await platform.fs.stat(PLIST)).toBeUndefined();
+  });
+});
+
+describe("launchd inspect", () => {
+  const APP_PLIST =
+    "/Applications/Snorlax.app/Contents/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+  const target = `gui/${process.getuid?.()}/io.github.perfectpan.snorlax.refresh`;
+  const printing = (path: string | undefined) => ({
+    code: 0,
+    stdout: `${target} = {\n${path === undefined ? "" : `\tpath = ${path}\n`}}\n`
+  });
+
+  /** Runs `inspect` over the memory platform and returns it with every launchctl argv it ran. */
+  const inspectOn = async (
+    files: Record<string, string>,
+    print: { readonly code: number; readonly stdout?: string } | undefined
+  ): Promise<{ inspection: JobInspection; runs: (readonly string[])[] }> => {
+    const runs: (readonly string[])[] = [];
+    const platform = createMemoryPlatform({
+      home: HOME,
+      env: { SNORLAX_HOME: DATA_DIR, SNORLAX_LAUNCHCTL: LAUNCHCTL },
+      os: "darwin",
+      files,
+      // Without a script the stub path does not exist, so launchctl fails to start.
+      commands:
+        print === undefined
+          ? {}
+          : {
+              [LAUNCHCTL]: (args) => {
+                runs.push(args);
+                return print;
+              }
+            }
+    });
+    const inspection = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* Scheduler).inspect;
+      }).pipe(
+        Effect.provide(Layer.provide(Scheduler.launchd, Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform))))
+      )
+    );
+    return { inspection, runs };
+  };
+
+  const plistFor = (nodePath: string) => ({
+    [PLIST]: renderLaunchAgentPlist({ nodePath, cliPath: "/opt/snorlax/snorlax.mjs", dataDir: DATA_DIR })
+  });
+
+  it("reads the CLI's plist and its Node path, and runs only launchctl print", async () => {
+    const { inspection, runs } = await inspectOn(plistFor("/opt/node & co/bin/node"), printing(PLIST));
+    expect(inspection).toEqual({
+      kind: "inspected",
+      cliJob: { file: PLIST, nodePath: "/opt/node & co/bin/node" },
+      loaded: { from: "cli", file: PLIST }
+    });
+    expect(runs).toEqual([["print", target]]);
+  });
+
+  it("names the app as the source of a job loaded from another plist", async () => {
+    const { inspection } = await inspectOn({}, printing(APP_PLIST));
+    expect(inspection).toEqual({ kind: "inspected", cliJob: undefined, loaded: { from: "app", file: APP_PLIST } });
+  });
+
+  it("reports nothing loaded when launchctl print exits non-zero", async () => {
+    const { inspection } = await inspectOn({}, { code: 113 });
+    expect(inspection).toEqual({ kind: "inspected", cliJob: undefined, loaded: { from: "nothing" } });
+  });
+
+  it("reports an unknown source when print names no plist or launchctl cannot run", async () => {
+    const unnamed = await inspectOn({}, printing(undefined));
+    expect(unnamed.inspection).toEqual({
+      kind: "inspected",
+      cliJob: undefined,
+      loaded: { from: "unknown", reason: expect.stringContaining("names no plist") }
+    });
+    const failed = await inspectOn({}, undefined);
+    expect(failed.inspection).toEqual({
+      kind: "inspected",
+      cliJob: undefined,
+      loaded: { from: "unknown", reason: expect.stringContaining("cannot run launchctl") }
+    });
+  });
+
+  it("reads no Node path from a plist in another layout", async () => {
+    const { inspection } = await inspectOn({ [PLIST]: "<plist><dict/></plist>" }, { code: 113 });
+    expect(inspection).toEqual({
+      kind: "inspected",
+      cliJob: { file: PLIST, nodePath: undefined },
+      loaded: { from: "nothing" }
+    });
+  });
+});
+
+describe("the system's scheduler inspect", () => {
+  it("reports a system without a scheduler instead of failing", async () => {
+    const inspect = (layer: Layer.Layer<Scheduler>) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Scheduler).inspect;
+        }).pipe(Effect.provide(layer))
+      );
+    expect(await inspect(Scheduler.unsupported("linux"))).toEqual({
+      kind: "unsupported",
+      reason: expect.stringContaining("linux support arrives with Batch 8")
+    });
+    expect(await inspect(Scheduler.osOverrideInvalid)).toEqual({
+      kind: "unsupported",
+      reason: expect.stringContaining("SNORLAX_OS must be darwin, linux, or win32")
+    });
   });
 });

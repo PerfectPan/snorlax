@@ -19,10 +19,17 @@ import { makeSnapshot } from "./sample.ts";
  */
 const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 
+// `doctor` asks launchd about the scheduled job on macOS; a launchctl path that does not exist keeps the real
+// launchctl out of the tests and creates no stub file in the home whose emptiness they assert.
 const run = (args: readonly string[], home: string) =>
   spawnSync(process.execPath, [bundle, ...args], {
     encoding: "utf8",
-    env: { HOME: home, SNORLAX_HOME: join(home, "data"), PATH: "/usr/bin:/bin" }
+    env: {
+      HOME: home,
+      SNORLAX_HOME: join(home, "data"),
+      SNORLAX_LAUNCHCTL: join(home, "no-launchctl"),
+      PATH: "/usr/bin:/bin"
+    }
   });
 
 /** One JSON object and nothing else: a plain-object record, parsed at the boundary with a schema. */

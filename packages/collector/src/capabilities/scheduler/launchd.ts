@@ -6,8 +6,15 @@ import { Data, Effect, type Context } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
-import { LAUNCH_AGENT_LABEL, launchAgentPlistPath, renderLaunchAgentPlist, type LaunchAgentSpec } from "./plist.ts";
-import type { Scheduler } from "./scheduler.ts";
+import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
+import {
+  LAUNCH_AGENT_LABEL,
+  launchAgentNodePath,
+  launchAgentPlistPath,
+  renderLaunchAgentPlist,
+  type LaunchAgentSpec
+} from "./plist.ts";
+import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 
 /**
  * The scheduler on macOS: a LaunchAgent in `~/Library/LaunchAgents`.
@@ -208,6 +215,32 @@ const snorlaxHomeOverride = (platform: Pick<Platform, "env">): string | undefine
   return value;
 };
 
+/** The CLI's plist and the Node binary it names; undefined when there is no plist. */
+const readCliJob = (platform: SchedulerPlatform, plistPath: string): Effect.Effect<CliJob | undefined> =>
+  Effect.promise(() =>
+    readTextFile(platform, plistPath).then(
+      (xml) => (xml === undefined ? undefined : { file: plistPath, nodePath: launchAgentNodePath(xml) }),
+      // A plist that exists but cannot be read names no Node binary snorlax can check.
+      () => ({ file: plistPath, nodePath: undefined })
+    )
+  );
+
+/** `launchctl print` read as where the loaded job comes from; a print that cannot run is an unknown source. */
+const loadedJob = (platform: SchedulerPlatform, plistPath: string): Effect.Effect<LoadedJob> =>
+  Effect.gen(function* () {
+    const target = `${guiDomain(yield* currentUid)}/${LAUNCH_AGENT_LABEL}`;
+    const loaded = yield* loadedService(platform, target);
+    if (loaded.state === "not-loaded") {
+      return { from: "nothing" } as const;
+    }
+    if (loaded.state === "unknown") {
+      return { from: "unknown", reason: `\`launchctl print ${target}\` names no plist for the loaded job` } as const;
+    }
+    return loaded.path === plistPath
+      ? ({ from: "cli", file: loaded.path } as const)
+      : ({ from: "app", file: loaded.path } as const);
+  }).pipe(Effect.catch((error) => Effect.succeed({ from: "unknown", reason: error.message } as const)));
+
 /** The launchd implementation of the scheduler capability over `platform`. */
 export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.Shape<typeof Scheduler> => {
   const plistPath = launchAgentPlistPath(platform.home);
@@ -263,6 +296,13 @@ export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.S
           catch: (error) => new PlistRemoveFailed({ message: `cannot remove ${plistPath}: ${errorMessage(error)}` })
         });
         return guarded;
-      })
+      }),
+    inspect: Effect.gen(function* () {
+      return {
+        kind: "inspected",
+        cliJob: yield* readCliJob(platform, plistPath),
+        loaded: yield* loadedJob(platform, plistPath)
+      };
+    })
   };
 };

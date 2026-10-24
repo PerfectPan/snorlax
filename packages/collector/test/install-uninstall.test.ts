@@ -8,13 +8,13 @@ import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-import { failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
+import { doctorSchema, failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
 import * as plist from "plist";
 import * as z from "zod/mini";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
+import { launchAgentNodePath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 
@@ -639,6 +639,43 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("doctor reports a LaunchAgent whose Node is gone as an error and changes nothing", async () => {
+    await withInstallHome("darwin", async (env) => {
+      // A healthy data directory, so the schedule check is the only one that can fail.
+      const dataDir = dataDirOf(env.home);
+      await mkdir(dataDir);
+      await chmod(dataDir, 0o700);
+      const plistPath = plistPathOf(env.home);
+      const writePlist = (nodePath: string) =>
+        writeFile(
+          plistPath,
+          renderLaunchAgentPlist({ nodePath, cliPath: resolve(bundle), dataDir, snorlaxHome: dataDir })
+        );
+      await mkdir(dirname(plistPath), { recursive: true });
+      // The versioned Node `install` ran on, removed since by a Node upgrade; launchd still has the job loaded.
+      await writePlist(join(env.home, ".nvm", "versions", "node", "v22.13.0", "bin", "node"));
+      await writeFile(env.loaded, plistPath, "utf8");
+      const before = await hashTree(env.home);
+
+      const doctor = run(env, ["doctor", "--json"]);
+      expect(doctor.status).toBe(0);
+      const payload = z.parse(doctorSchema, json(doctor.stdout));
+      expect(payload.healthy).toBe(false);
+      expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
+      const schedule = payload.checks.find((check) => check.id === "schedule");
+      expect(schedule?.detail).toContain("~/.nvm/versions/node/v22.13.0/bin/node, which does not exist");
+      expect(schedule?.detail).toContain("`snorlax install`");
+      expect(await hashTree(env.home)).toBe(before);
+      expect(await readInvocations(env.record)).toEqual([["print", `gui/${uid()}/${LABEL}`]]);
+
+      // The same job on a Node that exists reads as healthy.
+      await writePlist(process.execPath);
+      const healthy = z.parse(doctorSchema, json(run(env, ["doctor", "--json"]).stdout));
+      expect(healthy.checks.find((check) => check.id === "schedule")?.status).toBe("ok");
+      expect(healthy.healthy).toBe(true);
+    });
+  });
+
   it("reports a data-dir failure when an emptied data directory cannot be removed", async () => {
     await withInstallHome("darwin", async (env) => {
       // install and a refresh create the data directory and its ledger; the read-only HOME then keeps its rmdir
@@ -809,6 +846,13 @@ describe("LaunchAgent plist", () => {
     });
     const parsed = z.safeParse(plistWithoutHomeSchema, parsePlistDocument(xml));
     expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
+  });
+
+  it("reads the Node path back from the plist it renders, and from no other layout", () => {
+    const nodePath = "/opt/node &amp; <co>/bin/node";
+    const xml = renderLaunchAgentPlist({ nodePath, cliPath: "/opt/snorlax/snorlax.mjs", dataDir: "/tmp/data" });
+    expect(launchAgentNodePath(xml)).toBe(nodePath);
+    expect(launchAgentNodePath(plist.build({ Program: "/usr/bin/node" }))).toBeUndefined();
   });
 });
 

@@ -1,12 +1,14 @@
 import { createMemoryPlatform } from "@rivus/agent-kit/testing";
 import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
-import { doctorSchema, statusSchema } from "@rivus/snorlax-protocol";
+import { doctorSchema, statusSchema, type DoctorCheck } from "@rivus/snorlax-protocol";
 import { Effect, Layer } from "effect";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { CliJob, JobInspection, LoadedJob } from "../src/capabilities/scheduler/scheduler.ts";
 import { runCli } from "../src/cli/run.ts";
 import { CliEnv } from "../src/cli/env.ts";
+import { scheduleCheck, type ScheduleObservation } from "../src/commands/doctor/checks.ts";
 import { RuntimeInfo } from "../src/modules/version/version.ts";
 import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
@@ -46,7 +48,7 @@ interface RunResult {
 const runCommand = async (
   args: readonly string[],
   files: Record<string, string>,
-  deps?: { nodeVersion?: string; mode?: () => number | undefined }
+  deps?: { nodeVersion?: string; mode?: () => number | undefined; inspection?: JobInspection }
 ): Promise<RunResult> => {
   const platform = createMemoryPlatform({
     home: "/testroot/tester",
@@ -61,7 +63,7 @@ const runCommand = async (
   const base = Layer.mergeAll(
     Layer.succeed(SnorlaxPlatform, memoryKitPlatform(platform)),
     Layer.succeed(NodeFiles, nodeFiles),
-    fakeScheduler([], { jobFile: "/testroot/tester/job" }),
+    fakeScheduler([], { jobFile: "/testroot/tester/job", inspection: deps?.inspection }),
     Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
     Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
   );
@@ -155,7 +157,7 @@ describe("doctor", () => {
     const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig());
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(true);
-    expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config"]);
+    expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config", "schedule"]);
     expect(exitCode).toBe(0);
   });
 
@@ -192,5 +194,124 @@ describe("doctor", () => {
   it("redacts the home directory out of check details", async () => {
     const { stdout } = await runCommand(["doctor", "--json"], withConfig());
     expect(stdout).not.toContain("/testroot/tester");
+  });
+
+  it("checks the Node binary the scheduler's job names on disk", async () => {
+    const nodePath = "/testroot/tester/.nvm/versions/node/v22.13.0/bin/node";
+    const inspection: JobInspection = {
+      kind: "inspected",
+      cliJob: { file: "/testroot/tester/Library/LaunchAgents/job.plist", nodePath },
+      loaded: { from: "cli", file: "/testroot/tester/Library/LaunchAgents/job.plist" }
+    };
+    const scheduleOf = (stdout: string) => {
+      const doctor = z.parse(doctorSchema, JSON.parse(stdout));
+      return { healthy: doctor.healthy, check: doctor.checks.find((check) => check.id === "schedule") };
+    };
+
+    const gone = scheduleOf((await runCommand(["doctor", "--json"], withConfig(), { inspection })).stdout);
+    expect(gone.check?.status).toBe("error");
+    expect(gone.check?.detail).toContain("~/.nvm/versions/node/v22.13.0/bin/node, which does not exist");
+    expect(gone.healthy).toBe(false);
+
+    const present = { ...withConfig(), [nodePath]: "#!" };
+    const runnable = scheduleOf((await runCommand(["doctor", "--json"], present, { inspection })).stdout);
+    expect(runnable).toEqual({ healthy: true, check: expect.objectContaining({ status: "ok" }) });
+
+    const notExecutable = scheduleOf(
+      (await runCommand(["doctor", "--json"], present, { inspection, mode: () => 0o644 })).stdout
+    );
+    expect(notExecutable.check?.detail).toContain("is not executable");
+  });
+});
+
+describe("the schedule check", () => {
+  const PLIST = "/Users/me/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+  const APP = "/Applications/Snorlax.app/Contents/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist";
+  const NODE = "/Users/me/.nvm/versions/node/v22.13.0/bin/node";
+  const cliJob: CliJob = { file: PLIST, nodePath: NODE };
+  const inspected = (job: CliJob | undefined, loaded: LoadedJob): JobInspection => ({
+    kind: "inspected",
+    cliJob: job,
+    loaded
+  });
+  const cases: [string, ScheduleObservation, DoctorCheck["status"], string][] = [
+    [
+      "a system this build cannot schedule on",
+      { job: { kind: "unsupported", reason: "no launchd here" }, node: undefined },
+      "warn",
+      "no launchd here"
+    ],
+    [
+      "the app's Launch at login",
+      { job: inspected(undefined, { from: "app", file: APP }), node: undefined },
+      "ok",
+      `Launch at login schedules refresh (${APP})`
+    ],
+    [
+      "the app's Launch at login next to the CLI's plist",
+      { job: inspected(cliJob, { from: "app", file: APP }), node: "missing" },
+      "warn",
+      "turn Launch at login off, run `snorlax uninstall`"
+    ],
+    [
+      "the CLI's job, loaded, on a runnable Node",
+      { job: inspected(cliJob, { from: "cli", file: PLIST }), node: "runnable" },
+      "ok",
+      `is loaded and runs Node at ${NODE}`
+    ],
+    [
+      "the CLI's job on a Node that is gone",
+      { job: inspected(cliJob, { from: "cli", file: PLIST }), node: "missing" },
+      "error",
+      `runs Node at ${NODE}, which does not exist`
+    ],
+    [
+      "the CLI's job on a Node that is not executable",
+      { job: inspected(cliJob, { from: "nothing" }), node: "not-executable" },
+      "error",
+      "which is not executable"
+    ],
+    [
+      "the CLI's plist that launchd has not loaded",
+      { job: inspected(cliJob, { from: "nothing" }), node: "runnable" },
+      "warn",
+      "launchd has not loaded it"
+    ],
+    [
+      "the CLI's plist when the loaded job's source is unknown",
+      { job: inspected(cliJob, { from: "unknown", reason: "launchctl did not finish" }), node: "runnable" },
+      "warn",
+      "launchctl did not finish"
+    ],
+    [
+      "the CLI's plist without a Node path snorlax can read",
+      { job: inspected({ file: PLIST, nodePath: undefined }, { from: "cli", file: PLIST }), node: undefined },
+      "warn",
+      "cannot read the Node path"
+    ],
+    [
+      "the CLI's job loaded after its plist was deleted",
+      { job: inspected(undefined, { from: "cli", file: PLIST }), node: undefined },
+      "warn",
+      `${PLIST} is gone`
+    ],
+    [
+      "a loaded job whose source is unknown",
+      { job: inspected(undefined, { from: "unknown", reason: "print names no plist" }), node: undefined },
+      "warn",
+      "print names no plist"
+    ],
+    ["nothing scheduled", { job: inspected(undefined, { from: "nothing" }), node: undefined }, "warn", "not scheduled"]
+  ];
+
+  it.each(cases)("%s", (_, observed, status, detail) => {
+    const check = scheduleCheck(observed);
+    expect(check).toEqual({ id: "schedule", status, detail: expect.stringContaining(detail) });
+  });
+
+  it("says how to recover from a Node that is gone", () => {
+    const { detail } = scheduleCheck({ job: inspected(cliJob, { from: "cli", file: PLIST }), node: "missing" });
+    expect(detail).toContain("run `snorlax install` again");
+    expect(detail).toContain("turn on Launch at login in Snorlax's Settings");
   });
 });

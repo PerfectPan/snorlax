@@ -47,7 +47,7 @@ const stringArray = (name: string, values: readonly string[], level: number): st
 export const launchAgentPlistPath = (home: string): string =>
   join(home, "Library", "LaunchAgents", LAUNCH_AGENT_PLIST_NAME);
 
-/** XML property list. Callers parse it back; do not match the text loosely. */
+/** XML property list in one fixed layout; tests parse it back with a plist parser, not by matching the text. */
 export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   const lines = [
     `<?xml version="1.0" encoding="UTF-8"?>`,
@@ -74,3 +74,16 @@ export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   lines.push(`</dict>`, `</plist>`, ``);
   return lines.join("\n");
 }
+
+const PROGRAM_NODE_PATH = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/;
+
+/**
+ * The Node binary — the first `ProgramArguments` entry — of a plist in the layout `renderLaunchAgentPlist` writes,
+ * or undefined for any other layout. This reads snorlax's own output back instead of parsing XML: the `plist`
+ * package would read every layout, but its XML parser adds about 260 KB to the single-file bundle for one string.
+ */
+export const launchAgentNodePath = (xml: string): string | undefined => {
+  const value = PROGRAM_NODE_PATH.exec(xml)?.[1];
+  // `xmlText` undone; `&amp;` goes last, so `&amp;lt;` reads as `&lt;`, not `<`.
+  return value?.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+};
