@@ -177,24 +177,23 @@ export class LedgerSchemaTooNew extends Data.TaggedError("LedgerSchemaTooNew")<{
 export class LedgerBackupFailed extends Data.TaggedError("LedgerBackupFailed")<{ readonly message: string }> {}
 
 /**
- * Opens the door for `openLedger`: reads `PRAGMA user_version`, refuses a database from a newer build, and
- * backs up before any migration runs. `isExisting` says whether the database file existed before it was
- * opened; a database this call creates has nothing to back up. A SQLite statement that throws is a defect
- * here; `openLedger` reports it as an unreadable ledger.
+ * Opens the door for `openLedger`: given the database's `PRAGMA user_version` as `from`, refuses a database from
+ * a newer build, and backs up before any migration runs. `isExisting` says whether the database file existed
+ * before it was opened; a database this call creates has nothing to back up. A SQLite statement that throws is a
+ * defect here; `openLedger` reports it as an unreadable ledger.
  */
 export const prepareMigrations = (
   fs: Platform["fs"],
   dataDir: string,
   ledgerPath: string,
   db: { exec(sql: string): void; prepare(sql: string): { get(): Record<string, unknown> | undefined } },
+  from: number,
   isExisting: boolean
 ): Effect.Effect<
   { readonly from: number; readonly backup: LedgerBackup | undefined },
   LedgerSchemaTooNew | LedgerBackupFailed
 > =>
   Effect.gen(function* () {
-    const row = db.prepare("PRAGMA user_version").get();
-    const from = Number(row?.user_version ?? 0);
     if (from > SCHEMA_VERSION) {
       return yield* new LedgerSchemaTooNew({
         message: `${ledgerPath} was written by a newer snorlax (schema version ${from}; this build knows ${SCHEMA_VERSION})`

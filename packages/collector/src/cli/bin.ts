@@ -50,6 +50,17 @@ const liveLayers = Layer.mergeAll(
 );
 
 /**
+ * A reader that closes stdout early (`snorlax status --json | head -c0`) does not make the command fail: the EPIPE
+ * is dropped without printing anything, and the exit code stays the command's own. Any other stdout error still
+ * ends the process as an uncaught exception.
+ */
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code !== "EPIPE") {
+    throw error;
+  }
+});
+
+/**
  * The runner keeps the kernel's signal semantics (plan 3.2.1: a timed-out command must end by
  * signal, which is how the app's CollectorClient tells its timeout apart from a bad result).
  * `NodeRuntime.runMain` would exit(130) instead, so this copies what it does with one difference:

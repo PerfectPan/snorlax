@@ -120,8 +120,36 @@ export interface Ledger {
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
 
+/**
+ * How long a ledger connection waits for another connection's lock before failing with SQLITE_BUSY. `status` reads
+ * without the ledger lock, so its read and a refresh's COMMIT in another process can meet: in the rollback journal
+ * the COMMIT waits for open reads to end and a read waits for the COMMIT to finish, neither longer than one
+ * statement or one commit. WAL would remove the wait, but every read-only `status` would then create and write
+ * `ledger.db-wal` and `-shm`, which plan 3.13 rule 8 forbids. `uninstall --data` relies on the rollback journal too:
+ * it does not take a WAL `ledger.db` as snorlax's.
+ */
+const BUSY_TIMEOUT_MS = 5_000;
+
+const openConnection = (
+  sqlite: PlatformSqlite,
+  path: string,
+  options?: Parameters<PlatformSqlite["open"]>[1]
+): SqliteDatabase => {
+  const db = sqlite.open(path, options);
+  try {
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  return db;
+};
+
 /** The ledger could not be opened, or holds a row or scan state this build cannot read. */
 export class LedgerUnreadable extends Data.TaggedError("LedgerUnreadable")<{ readonly message: string }> {}
+
+/** SQLite reads `ledger.db`, but the database has no `meta` table, so another program wrote it. */
+export class LedgerNotSnorlax extends Data.TaggedError("LedgerNotSnorlax")<{ readonly message: string }> {}
 
 // The ledger rows are unknown data at the read boundary: every table is parsed through a schema, and a row
 // this build cannot read fails as `LedgerUnreadable` naming the table (AGENTS.md, plan 3.6).
@@ -158,6 +186,11 @@ const remoteDeviceRowSchema = z.object({
   last_push_at: z.nullable(z.number()),
   revoked: z.number()
 });
+const scanStateRowSchema = z.object({ state: z.string() });
+const userVersionSchema = z.object({ user_version: z.number() });
+
+const cannotOpen = (path: string, error: unknown): LedgerUnreadable =>
+  new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
 
 const unreadableRow = (path: string, table: string, error: z.core.$ZodError): LedgerUnreadable =>
   new LedgerUnreadable({
@@ -200,6 +233,19 @@ const readMeta = (path: string, db: SqliteDatabase): Effect.Effect<LedgerMeta, L
       pullCursor: meta.pull_cursor,
       pricingVersion: meta.pricing_version
     });
+  });
+
+/** The schema version the database is on (plan 3.3.2). */
+const readUserVersion = (path: string, db: SqliteDatabase): Effect.Effect<number, LedgerUnreadable> =>
+  Effect.suspend(() => {
+    const parsed = z.safeParse(userVersionSchema, db.prepare("PRAGMA user_version").get());
+    return parsed.success
+      ? Effect.succeed(parsed.data.user_version)
+      : Effect.fail(
+          new LedgerUnreadable({
+            message: `${path}: the ledger's user_version pragma holds a value this build cannot read: ${z.prettifyError(parsed.error)}`
+          })
+        );
   });
 
 const bucketOf = (bucket: z.output<typeof bucketRowSchema>): BucketRow => ({
@@ -249,6 +295,22 @@ const parseScanState = (path: string, raw: string): Effect.Effect<PersistedScanS
     // The schema checks every field this collector reads; a cursor's `queue` holds the kit's own records,
     // opaque here and leniently re-parsed by the kit, so the checked shape is widened only at this one cast.
     return parsed.data as PersistedScanState;
+  });
+
+/** The saved scan state, `undefined` before the first completed scan. */
+const readScanState = (
+  path: string,
+  db: SqliteDatabase
+): Effect.Effect<PersistedScanState | undefined, LedgerUnreadable> =>
+  Effect.suspend(() => {
+    const row = db.prepare("SELECT state FROM scan_state WHERE id = 0").get();
+    if (row === undefined) {
+      return Effect.succeed(undefined);
+    }
+    const parsed = z.safeParse(scanStateRowSchema, row);
+    return parsed.success
+      ? parseScanState(path, parsed.data.state)
+      : Effect.fail(unreadableRow(path, "scan_state", parsed.error));
   });
 
 const ledgerOn = (
@@ -409,15 +471,14 @@ export const openLedger = (
 ): Effect.Effect<Ledger, LedgerUnreadable | LedgerSchemaTooNew | LedgerBackupFailed, Scope.Scope> =>
   Effect.gen(function* () {
     const path = ledgerPath(dataDir);
-    const cannotOpen = (error: unknown): LedgerUnreadable =>
-      new LedgerUnreadable({ message: `cannot open the ledger ${path}: ${errorMessage(error)}` });
     const existing = yield* Effect.promise(() => platform.fs.stat(path));
     const db = yield* Effect.acquireRelease(
-      Effect.try({ try: () => platform.sqlite.open(path), catch: cannotOpen }),
+      Effect.try({ try: () => openConnection(platform.sqlite, path), catch: (error) => cannotOpen(path, error) }),
       (opened) => Effect.sync(() => opened.close())
     );
     return yield* Effect.gen(function* () {
-      yield* prepareMigrations(platform.fs, dataDir, path, db, existing?.kind === "file");
+      const from = yield* readUserVersion(path, db);
+      yield* prepareMigrations(platform.fs, dataDir, path, db, from, existing?.kind === "file");
       db.exec("BEGIN IMMEDIATE");
       try {
         db.prepare("INSERT OR IGNORE INTO meta (id, device_id) VALUES (0, ?)").run(randomUUID());
@@ -427,24 +488,27 @@ export const openLedger = (
         throw error;
       }
       const meta = yield* readMeta(path, db);
-      const saved = db.prepare("SELECT state FROM scan_state WHERE id = 0").get();
-      const scanState = saved === undefined ? undefined : yield* parseScanState(path, String(saved.state));
+      const scanState = yield* readScanState(path, db);
       return ledgerOn(path, db, meta, scanState);
     }).pipe(
       // A SQLite statement that throws while the ledger is being opened means it cannot be opened.
-      Effect.catchDefect((defect) => Effect.fail(cannotOpen(defect)))
+      Effect.catchDefect((defect) => Effect.fail(cannotOpen(path, defect)))
     );
   });
 
 /**
  * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
- * there is no ledger yet. A `stat` or open that throws is a defect; a meta row that cannot be read is
- * `LedgerUnreadable`.
+ * there is no ledger yet. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect; a
+ * ledger that cannot be opened, or whose meta row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a
+ * database SQLite reads without a `meta` table is `LedgerNotSnorlax`.
  */
 export const readLedgerStatus = (
   platform: Pick<Platform, "fs"> & { readonly sqlite?: PlatformSqlite },
   dataDir: string
-): Effect.Effect<{ readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null, LedgerUnreadable> =>
+): Effect.Effect<
+  { readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null,
+  LedgerUnreadable | LedgerNotSnorlax
+> =>
   Effect.gen(function* () {
     const path = ledgerPath(dataDir);
     const existing = yield* Effect.promise(() => platform.fs.stat(path));
@@ -453,9 +517,19 @@ export const readLedgerStatus = (
       return null;
     }
     const meta = yield* Effect.acquireUseRelease(
-      Effect.sync(() => sqlite.open(path, { readonly: true })),
+      Effect.try({
+        try: () => openConnection(sqlite, path, { readonly: true }),
+        catch: (error) => cannotOpen(path, error)
+      }),
       (db) =>
-        readMeta(path, db).pipe(
+        Effect.gen(function* () {
+          if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get() === undefined) {
+            return yield* Effect.fail(
+              new LedgerNotSnorlax({ message: `${path} is not a snorlax ledger: it has no meta table` })
+            );
+          }
+          return yield* readMeta(path, db);
+        }).pipe(
           // A statement that throws while meta is read means the ledger cannot be read.
           Effect.catchDefect((defect) =>
             Effect.fail(new LedgerUnreadable({ message: `cannot read the ledger ${path}: ${errorMessage(defect)}` }))

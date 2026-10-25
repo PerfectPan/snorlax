@@ -1,21 +1,22 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
-import { failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
+import { doctorSchema, failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
 import * as plist from "plist";
 import * as z from "zod/mini";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
+import { launchAgentNodePath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
+import { bundle, runBundle, spawnBundle } from "./fixtures/bundle.ts";
 
 /**
  * `install` / `uninstall` against the built bundle under a temporary HOME. `SNORLAX_LAUNCHCTL`
@@ -24,7 +25,6 @@ import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/ag
  * behavior where the tests depend on it: `bootstrap` fails (exit 5) while a service is loaded, so
  * a repeat install has to boot out first, and `print` reports the loaded service's plist path.
  */
-const bundle = fileURLToPath(new URL("../dist/snorlax.mjs", import.meta.url));
 const LABEL = "io.github.perfectpan.snorlax.refresh";
 
 const plistFields = {
@@ -69,18 +69,25 @@ interface InstallEnv {
   readonly failBootstrap: string;
   /** When this file exists, `print` emits a nested block whose `path =` line names this plist first. */
   readonly nested: string;
+  /**
+   * When this FIFO exists, `bootstrap` is held: it writes its pid to `bootstrapPid`, announces itself on this FIFO,
+   * and loads the service only once a line arrives on `releaseBootstrap`. A SIGTERM ends it before that, unless
+   * `outlivesStop` exists: then it reports the signal on `bootstrapStopped` and keeps waiting, like a launchctl
+   * whose load has already reached launchd.
+   */
+  readonly bootstrapEntered: string;
+  readonly releaseBootstrap: string;
+  readonly outlivesStop: string;
+  readonly bootstrapStopped: string;
+  readonly bootstrapPid: string;
 }
 
 const run = (env: InstallEnv, args: readonly string[], overrides?: { readonly snorlaxHome?: string }) =>
-  spawnSync(process.execPath, [bundle, ...args], {
-    encoding: "utf8",
-    env: {
-      HOME: env.home,
-      SNORLAX_HOME: overrides?.snorlaxHome ?? dataDirOf(env.home),
-      SNORLAX_LAUNCHCTL: env.launchctl,
-      SNORLAX_OS: env.os,
-      PATH: "/usr/bin:/bin"
-    }
+  runBundle(args, {
+    home: env.home,
+    dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
+    launchctl: env.launchctl,
+    os: env.os
   });
 
 const writeStub = async (dir: string): Promise<string> => {
@@ -88,6 +95,7 @@ const writeStub = async (dir: string): Promise<string> => {
   const source = [
     `#!${process.execPath}`,
     `import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";`,
+    `import { readFile } from "node:fs/promises";`,
     `import { dirname, join } from "node:path";`,
     `import { fileURLToPath } from "node:url";`,
     `const dir = dirname(fileURLToPath(import.meta.url));`,
@@ -111,6 +119,17 @@ const writeStub = async (dir: string): Promise<string> => {
     `  console.log("}");`,
     `  process.exit(0);`,
     `}`,
+    `if (command === "bootstrap" && existsSync(join(dir, "bootstrap-entered"))) {`,
+    `  writeFileSync(join(dir, "bootstrap-pid"), String(process.pid));`,
+    `  if (existsSync(join(dir, "outlives-stop"))) {`,
+    `    process.on("SIGTERM", () => writeFileSync(join(dir, "bootstrap-stopped"), "SIGTERM\\n"));`,
+    `  }`,
+    `  writeFileSync(join(dir, "bootstrap-entered"), "bootstrap\\n");`,
+    `  // The read opens in the thread pool, so the event loop stays free for the SIGTERM handler.`,
+    `  await readFile(join(dir, "release-bootstrap"));`,
+    `  writeFileSync(marker, plistPath);`,
+    `  process.exit(0);`,
+    `}`,
     `if (command === "bootstrap") {`,
     `  if (existsSync(failBootstrap)) process.exit(9);`,
     `  if (existsSync(marker)) process.exit(5);`,
@@ -131,9 +150,6 @@ const writeStub = async (dir: string): Promise<string> => {
 };
 
 const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) => Promise<void>): Promise<void> => {
-  if (!existsSync(bundle)) {
-    throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
-  }
   const home = await mkdtemp(join(tmpdir(), "snorlax-install-"));
   const stubDir = await mkdtemp(join(tmpdir(), "snorlax-launchctl-"));
   try {
@@ -145,7 +161,12 @@ const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) =
       record: join(stubDir, "argv.jsonl"),
       loaded: join(stubDir, "loaded"),
       failBootstrap: join(stubDir, "fail-bootstrap"),
-      nested: join(stubDir, "nested")
+      nested: join(stubDir, "nested"),
+      bootstrapEntered: join(stubDir, "bootstrap-entered"),
+      releaseBootstrap: join(stubDir, "release-bootstrap"),
+      outlivesStop: join(stubDir, "outlives-stop"),
+      bootstrapStopped: join(stubDir, "bootstrap-stopped"),
+      bootstrapPid: join(stubDir, "bootstrap-pid")
     });
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -428,16 +449,7 @@ describe("install and uninstall", () => {
 
       const runInterrupted = (signal: NodeJS.Signals): Promise<{ readonly name: string; readonly stdout: string }> =>
         new Promise((resolve) => {
-          const child = spawn(process.execPath, [bundle, "install", "--json"], {
-            env: {
-              HOME: env.home,
-              SNORLAX_HOME: dataDirOf(env.home),
-              SNORLAX_LAUNCHCTL: stub,
-              SNORLAX_OS: "darwin",
-              PATH: "/usr/bin:/bin"
-            },
-            stdio: ["ignore", "pipe", "pipe"]
-          });
+          const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: stub, os: "darwin" });
           let stdout = "";
           child.stdout.on("data", (chunk: Buffer) => {
             stdout += String(chunk);
@@ -457,6 +469,81 @@ describe("install and uninstall", () => {
       const interrupt = await runInterrupted("SIGINT");
       expect(interrupt.name).toBe("SIGINT");
       expect(interrupt.stdout).toBe("");
+    });
+  });
+
+  describe("a SIGTERM while launchctl bootstrap runs", () => {
+    /**
+     * Runs `install` until the stub's held bootstrap announces itself, signals snorlax with SIGTERM, then lets
+     * `afterSignal` finish the stub. Every step waits on a FIFO or a process event, never on time.
+     */
+    const installSignaledInBootstrap = async (env: InstallEnv, afterSignal: () => Promise<void>) => {
+      for (const fifo of [env.bootstrapEntered, env.releaseBootstrap, env.bootstrapStopped]) {
+        execFileSync("/usr/bin/mkfifo", [fifo]);
+      }
+      const entered = readFile(env.bootstrapEntered, "utf8");
+      const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: env.launchctl, os: "darwin" });
+      let stdout = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += String(chunk);
+      });
+      const exited = new Promise<NodeJS.Signals | null>((resolve) => {
+        child.on("exit", (_code, signal) => resolve(signal));
+      });
+      expect(await entered).toBe("bootstrap\n");
+      child.kill("SIGTERM");
+      await afterSignal();
+      const signal = await exited;
+      const pid = Number(await readFile(env.bootstrapPid, "utf8"));
+      const stubAlive = (() => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      return { signal, stdout, stubAlive };
+    };
+
+    it("boots out a service the bootstrap loaded before it stopped, and removes the plist", async () => {
+      await withInstallHome("darwin", async (env) => {
+        await writeFile(env.outlivesStop, "", "utf8");
+        const outcome = await installSignaledInBootstrap(env, async () => {
+          // The stub reports the SIGTERM snorlax relayed to it, so snorlax is now waiting for it to exit; the
+          // bootstrap then completes, as one already in launchd does.
+          expect(await readFile(env.bootstrapStopped, "utf8")).toBe("SIGTERM\n");
+          await writeFile(env.releaseBootstrap, "release\n", "utf8");
+        });
+
+        expect(outcome).toEqual({ signal: "SIGTERM", stdout: "", stubAlive: false });
+        const target = `gui/${uid()}/${LABEL}`;
+        expect(await readInvocations(env.record)).toEqual([
+          ["print", target],
+          ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
+          ["print", target],
+          ["bootout", target]
+        ]);
+        expect(existsSync(env.loaded)).toBe(false);
+        expect(existsSync(plistPathOf(env.home))).toBe(false);
+      });
+    });
+
+    it("boots out nothing when the bootstrap stops before it loads, and removes the plist", async () => {
+      await withInstallHome("darwin", async (env) => {
+        // Without outlives-stop the held bootstrap ends at the SIGTERM, before it loads anything.
+        const outcome = await installSignaledInBootstrap(env, async () => {});
+
+        expect(outcome).toEqual({ signal: "SIGTERM", stdout: "", stubAlive: false });
+        const target = `gui/${uid()}/${LABEL}`;
+        expect(await readInvocations(env.record)).toEqual([
+          ["print", target],
+          ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
+          ["print", target]
+        ]);
+        expect(existsSync(env.loaded)).toBe(false);
+        expect(existsSync(plistPathOf(env.home))).toBe(false);
+      });
     });
   });
 
@@ -549,6 +636,8 @@ describe("install and uninstall", () => {
       const dataDir = dataDirOf(env.home);
       await mkdir(join(dataDir, "logs"), { recursive: true });
       await writeFile(join(dataDir, "logs", "keep.txt"), "unrelated\n");
+      // The ledger a refresh creates marks the directory as snorlax's, which --data requires.
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
 
       const removed = run(env, ["uninstall", "--data"]);
       expect(removed.status).toBe(0);
@@ -557,11 +646,29 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("writes no command log line after uninstall --data: only the user's logs/keep.txt remains, listed once", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const dataDir = dataDirOf(env.home);
+      await mkdir(join(dataDir, "logs"), { recursive: true });
+      await writeFile(join(dataDir, "logs", "keep.txt"), "unrelated\n");
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+
+      const removed = run(env, ["uninstall", "--data"]);
+      expect(removed.status).toBe(0);
+      expect(await listFiles(dataDir)).toEqual(["logs/keep.txt"]);
+      expect(removed.stdout).toBe(
+        "LaunchAgent removed\n" +
+          "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n"
+      );
+    });
+  });
+
   it("keeps ~/Library/Logs intact when SNORLAX_HOME points at ~/Library", async () => {
     await withInstallHome("darwin", async (env) => {
       const reports = join(env.home, "Library", "Logs", "DiagnosticReports");
       await mkdir(reports, { recursive: true });
       await writeFile(join(reports, "x.ips"), "crash report\n");
+      expect(run(env, ["refresh", "--json"], { snorlaxHome: join(env.home, "Library") }).status).toBe(0);
 
       // `logs` matches the user's `Logs` on a case-insensitive volume; only known log files may go.
       const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: join(env.home, "Library") });
@@ -589,10 +696,138 @@ describe("install and uninstall", () => {
     });
   });
 
+  it("refuses --data in a directory without a snorlax ledger and changes nothing in it", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const domain = `gui/${uid()}`;
+      const plistPath = plistPathOf(env.home);
+      expect(run(env, ["install", "--json"]).status).toBe(0);
+      // Entries under the names snorlax writes, none of them snorlax's.
+      const other = join(env.home, "other");
+      await mkdir(join(other, "logs"), { recursive: true });
+      await writeFile(join(other, "config.json"), '{"theirs":true}\n');
+      await writeFile(join(other, "snapshot.json"), "{}\n");
+      await writeFile(join(other, "node-path"), "/usr/bin/node\n");
+      await writeFile(join(other, "logs", "snorlax.log"), "theirs\n");
+
+      const untouched = "so nothing was deleted and the LaunchAgent was left in place";
+      const expectRefused = async (message: string): Promise<void> => {
+        const before = await hashTree(other);
+        const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: other });
+        expect(removed.status).toBe(1);
+        expect(await hashTree(other)).toBe(before);
+        const failure = z.parse(failureSchema, json(removed.stdout)).error;
+        expect(failure.code).toBe("data-dir");
+        expect(failure.message).toBe(message);
+      };
+      await expectRefused(
+        `no snorlax ledger in ~/other: it has no ledger.db, ${untouched}; to remove only the scheduled refresh, ` +
+          "run `snorlax uninstall` without --data"
+      );
+
+      // Another program's ledger.db in WAL mode: opening it, even read-only, would add -wal and -shm files.
+      const wal = new DatabaseSync(join(other, "ledger.db"));
+      wal.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (amount INTEGER)");
+      wal.close();
+      await expectRefused(
+        `~/other/ledger.db is not a snorlax ledger: it is not a SQLite database in rollback-journal mode, ${untouched}`
+      );
+
+      // No `snorlax refresh` advice here: a refresh would migrate this database into a ledger.
+      await rm(join(other, "ledger.db"));
+      const rollback = new DatabaseSync(join(other, "ledger.db"));
+      rollback.exec("CREATE TABLE entries (amount INTEGER)");
+      rollback.close();
+      await expectRefused(`~/other/ledger.db is not a snorlax ledger: it has no meta table, ${untouched}`);
+
+      // The refusals came before launchctl was asked anything: the installed service is untouched.
+      expect(existsSync(plistPath)).toBe(true);
+      expect(await readInvocations(env.record)).toEqual([
+        ["print", `${domain}/${LABEL}`],
+        ["bootstrap", domain, plistPath]
+      ]);
+    });
+  });
+
+  it("refuses --data while a crashed write leaves the ledger unreadable, and a refresh clears the way", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const dataDir = dataDirOf(env.home);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+      // A writer killed inside its transaction leaves a hot journal, which a read-only connection cannot roll
+      // back. With synchronous = OFF the journal header is complete at once; otherwise it stays zeroed until the
+      // commit syncs it, and SQLite ignores the journal.
+      const crash = spawnSync(process.execPath, [
+        "-e",
+        `const { DatabaseSync } = require("node:sqlite");
+         const db = new DatabaseSync(${JSON.stringify(join(dataDir, "ledger.db"))});
+         db.exec("PRAGMA synchronous = OFF; BEGIN IMMEDIATE; UPDATE meta SET device_name = 'crashed' WHERE id = 0");
+         process.kill(process.pid, "SIGKILL");`
+      ]);
+      expect(crash.signal).toBe("SIGKILL");
+      expect(existsSync(join(dataDir, "ledger.db-journal"))).toBe(true);
+
+      const before = await hashTree(dataDir);
+      const refused = run(env, ["uninstall", "--data", "--json"]);
+      expect(refused.status).toBe(1);
+      expect(await hashTree(dataDir)).toBe(before);
+      const failure = z.parse(failureSchema, json(refused.stdout)).error;
+      expect(failure.code).toBe("data-dir");
+      expect(failure.message).toBe(
+        "cannot tell whether ~/data/ledger.db is a snorlax ledger (cannot read the ledger ~/data/ledger.db: attempt " +
+          "to write a readonly database), so nothing was deleted and the LaunchAgent was left in place; run " +
+          "`snorlax refresh` once, then `snorlax uninstall --data` again"
+      );
+      expect(await readInvocations(env.record)).toEqual([]);
+
+      // The advice holds: refresh rolls the journal back, and the same uninstall then deletes the directory.
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+      expect(run(env, ["uninstall", "--data", "--json"]).status).toBe(0);
+      expect(existsSync(dataDir)).toBe(false);
+    });
+  });
+
+  it("doctor reports a LaunchAgent whose Node is gone as an error and changes nothing", async () => {
+    await withInstallHome("darwin", async (env) => {
+      // A healthy data directory, so the schedule check is the only one that can fail.
+      const dataDir = dataDirOf(env.home);
+      await mkdir(dataDir);
+      await chmod(dataDir, 0o700);
+      const plistPath = plistPathOf(env.home);
+      const writePlist = (nodePath: string) =>
+        writeFile(
+          plistPath,
+          renderLaunchAgentPlist({ nodePath, cliPath: resolve(bundle), dataDir, snorlaxHome: dataDir })
+        );
+      await mkdir(dirname(plistPath), { recursive: true });
+      // The versioned Node `install` ran on, removed since by a Node upgrade; launchd still has the job loaded.
+      await writePlist(join(env.home, ".nvm", "versions", "node", "v22.13.0", "bin", "node"));
+      await writeFile(env.loaded, plistPath, "utf8");
+      const before = await hashTree(env.home);
+
+      const doctor = run(env, ["doctor", "--json"]);
+      expect(doctor.status).toBe(0);
+      const payload = z.parse(doctorSchema, json(doctor.stdout));
+      expect(payload.healthy).toBe(false);
+      expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
+      const schedule = payload.checks.find((check) => check.id === "schedule");
+      expect(schedule?.detail).toContain("~/.nvm/versions/node/v22.13.0/bin/node, which does not exist");
+      expect(schedule?.detail).toContain("`snorlax install`");
+      expect(await hashTree(env.home)).toBe(before);
+      expect(await readInvocations(env.record)).toEqual([["print", `gui/${uid()}/${LABEL}`]]);
+
+      // The same job on a Node that exists reads as healthy.
+      await writePlist(process.execPath);
+      const healthy = z.parse(doctorSchema, json(run(env, ["doctor", "--json"]).stdout));
+      expect(healthy.checks.find((check) => check.id === "schedule")?.status).toBe("ok");
+      expect(healthy.healthy).toBe(true);
+    });
+  });
+
   it("reports a data-dir failure when an emptied data directory cannot be removed", async () => {
     await withInstallHome("darwin", async (env) => {
-      // install creates the data directory; the read-only HOME then keeps its rmdir from succeeding.
+      // install and a refresh create the data directory and its ledger; the read-only HOME then keeps its rmdir
+      // from succeeding.
       expect(run(env, ["install", "--json"]).status).toBe(0);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
       await chmod(env.home, 0o555);
       try {
         const removed = run(env, ["uninstall", "--data", "--json"]);
@@ -613,6 +848,7 @@ describe("install and uninstall", () => {
       await writeFixtures(env.home);
       const before = await hashAgentDirs(env.home);
       expect(run(env, ["install", "--json"]).status).toBe(0);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
 
       const removed = run(env, ["uninstall", "--data", "--json"]);
       expect(removed.status).toBe(0);
@@ -756,6 +992,13 @@ describe("LaunchAgent plist", () => {
     });
     const parsed = z.safeParse(plistWithoutHomeSchema, parsePlistDocument(xml));
     expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
+  });
+
+  it("reads the Node path back from the plist it renders, and from no other layout", () => {
+    const nodePath = "/opt/node &amp; <co>/bin/node";
+    const xml = renderLaunchAgentPlist({ nodePath, cliPath: "/opt/snorlax/snorlax.mjs", dataDir: "/tmp/data" });
+    expect(launchAgentNodePath(xml)).toBe(nodePath);
+    expect(launchAgentNodePath(plist.build({ Program: "/usr/bin/node" }))).toBeUndefined();
   });
 });
 

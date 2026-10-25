@@ -38,6 +38,11 @@ export interface CommandRender {
   readonly human: string;
   /** The parsed `--json` value: `cli/run` prints `payload` when true, `human` when false. */
   readonly json: boolean;
+  /**
+   * The command deleted what snorlax wrote in the data directory (`uninstall --data`), so the run writes nothing
+   * back into it, not even the command log line.
+   */
+  readonly deletedDataDir?: true;
 }
 
 /** The one-slot handoff from the command handler to `cli/run`: exactly one handler runs per process. */
@@ -82,8 +87,8 @@ const commandOf = <Name extends string, const Flags extends Command.Command.Conf
   Command.make(spec.name, spec.flags, (input) =>
     Effect.gen(function* () {
       const json = yield* JsonFlag;
-      const { payload, human } = yield* spec.run(input);
-      yield* (yield* CommandOutput).render({ payload, human, json });
+      const result = yield* spec.run(input);
+      yield* (yield* CommandOutput).render({ ...result, json });
     })
   ).pipe(Command.withDescription(spec.description));
 
