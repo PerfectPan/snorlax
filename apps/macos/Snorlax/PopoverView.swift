@@ -6,6 +6,7 @@ import SwiftUI
 struct PopoverView: View {
     @ObservedObject var model: MenuModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +37,13 @@ struct PopoverView: View {
                 }
                 .disabled(model.refreshing)
                 Button("Settings") {
+                    // The menu bar panel does not close on its own and floats above
+                    // normal windows, so it would cover Settings. It also does not
+                    // activate this LSUIElement app, and openWindow orders the window
+                    // front only among this app's windows, so without activation
+                    // Settings stays behind the frontmost app.
+                    dismiss()
+                    NSApplication.shared.activate()
                     openWindow(id: "settings")
                 }
                 Spacer()
