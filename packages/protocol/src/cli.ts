@@ -41,12 +41,24 @@ export type FailureCode =
   | "pricing"
   | "internal";
 
-/** Success body of commands that have nothing to report (`unpair`, `install`, `uninstall`). */
+/** Success body of commands that have nothing to report (`unpair`, `install`). */
 export const okSchema = z.object({
   schemaVersion: schemaVersionSchema,
   ok: z.literal(true)
 });
 export type Ok = z.output<typeof okSchema>;
+
+/**
+ * Success body of `uninstall`. `keptEntries` is present only when `--data` deleted the data directory's
+ * snorlax entries: the entries it kept because snorlax did not write them, relative to the data directory and
+ * sorted (`logs/<name>` for one inside `logs/`); empty when the directory itself was removed.
+ */
+export const uninstallResultSchema = z.object({
+  schemaVersion: schemaVersionSchema,
+  ok: z.literal(true),
+  keptEntries: z.optional(z.array(z.string().check(z.minLength(1))))
+});
+export type UninstallResult = z.output<typeof uninstallResultSchema>;
 
 /**
  * Success body of `snapshot --json` (plan 3.1): the snapshot itself is the file shape of 3.2.2, and
@@ -91,7 +103,11 @@ export const detectedAgentSchema = z.object({
 });
 export type DetectedAgent = z.output<typeof detectedAgentSchema>;
 
-/** Success body of `status` (plan 3.1). */
+/**
+ * Success body of `status` (plan 3.1). `pricingChanged` is true when the ledger's stored costs were not priced with
+ * this collector's pricing table — another table, or none for a ledger scanned before pricing existed (plan 3.7);
+ * `snorlax rebuild --days 30` prices them again.
+ */
 export const statusSchema = z.object({
   schemaVersion: schemaVersionSchema,
   ok: z.literal(true),
@@ -104,6 +120,7 @@ export const statusSchema = z.object({
   lastScanAt: z.nullable(utcTimestampSchema),
   sync: z.object({ state: syncStateSchema, at: z.nullable(utcTimestampSchema) }),
   failuresByAgent: z.record(agentIdSchema, nonNegativeIntSchema),
+  pricingChanged: z.boolean(),
   agents: z.array(detectedAgentSchema)
 });
 export type Status = z.output<typeof statusSchema>;

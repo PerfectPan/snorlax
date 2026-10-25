@@ -15,7 +15,7 @@ import type { LogFieldValue, Logger } from "../log/log.ts";
 import { writeSnapshot, type SnapshotWriteFailed } from "../snapshot-file/snapshot-file.ts";
 import { holdLedgerLock, LedgerLockHeld } from "./lock.ts";
 import { LedgerBackupFailed, LedgerSchemaTooNew, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
-import { commitScan, type ScanWindow } from "./commit-scan.ts";
+import { commitScan, PRICING_VERSION, type ScanWindow } from "./commit-scan.ts";
 import type { PlatformSqlite, SqliteDatabase, SqliteValue } from "./sqlite.ts";
 
 /** The `meta` row; `device_id` is generated once, here, when the ledger is created. */
@@ -109,6 +109,8 @@ export interface Ledger {
   sessionsSeen(): Effect.Effect<Map<string, Set<string>>, LedgerUnreadable>;
   setScanState(state: unknown): Effect.Effect<void>;
   setLastScanCompleted(atMs: number): Effect.Effect<void>;
+  /** Records the version of the pricing table that priced the buckets (plan 3.7). */
+  setPricingVersion(version: string): Effect.Effect<void>;
   readBuckets(): Effect.Effect<BucketRow[], LedgerUnreadable>;
   readRemoteBuckets(): Effect.Effect<RemoteBucketRow[], LedgerUnreadable>;
   readRemoteDevices(): Effect.Effect<RemoteDeviceRow[], LedgerUnreadable>;
@@ -385,6 +387,10 @@ const ledgerOn = (
     Effect.sync(() => {
       db.prepare("UPDATE meta SET last_scan_completed_at = ? WHERE id = 0").run(atMs);
     }),
+  setPricingVersion: (version) =>
+    Effect.sync(() => {
+      db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run(version);
+    }),
   readBuckets: () =>
     Effect.suspend(() =>
       parseRows(
@@ -498,15 +504,17 @@ export const openLedger = (
 
 /**
  * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
- * there is no ledger yet. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect; a
- * ledger that cannot be opened, or whose meta row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a
+ * there is no ledger yet. `pricingChanged` says a scanned ledger's buckets were not priced with this build's table
+ * (plan 3.7): another version, or none, because the ledger was scanned before pricing existed; a ledger never
+ * scanned has nothing priced. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect;
+ * a ledger that cannot be opened, or whose meta row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a
  * database SQLite reads without a `meta` table is `LedgerNotSnorlax`.
  */
 export const readLedgerStatus = (
   platform: Pick<Platform, "fs"> & { readonly sqlite?: PlatformSqlite },
   dataDir: string
 ): Effect.Effect<
-  { readonly deviceId: string; readonly lastScanCompletedAt: number | null } | null,
+  { readonly deviceId: string; readonly lastScanCompletedAt: number | null; readonly pricingChanged: boolean } | null,
   LedgerUnreadable | LedgerNotSnorlax
 > =>
   Effect.gen(function* () {
@@ -537,7 +545,11 @@ export const readLedgerStatus = (
         ),
       (db) => Effect.sync(() => db.close())
     );
-    return { deviceId: meta.deviceId, lastScanCompletedAt: meta.lastScanCompletedAt };
+    return {
+      deviceId: meta.deviceId,
+      lastScanCompletedAt: meta.lastScanCompletedAt,
+      pricingChanged: meta.lastScanCompletedAt !== null && meta.pricingVersion !== PRICING_VERSION
+    };
   });
 
 /** The platform has no SQLite, which the ledger needs. */

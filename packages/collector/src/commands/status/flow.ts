@@ -65,6 +65,7 @@ export const statusFlow = Effect.gen(function* () {
         : new Date(ledger.lastScanCompletedAt).toISOString(),
     sync: status?.sync ?? { state: "unpaired", at: null },
     failuresByAgent: status?.failuresByAgent ?? {},
+    pricingChanged: ledger?.pricingChanged ?? false,
     agents: installations.map(toDetected)
   } satisfies Status;
 }).pipe(

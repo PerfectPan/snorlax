@@ -7,7 +7,13 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
 
-import { doctorSchema, failureSchema, okSchema, refreshResultSchema } from "@rivus/snorlax-protocol";
+import {
+  doctorSchema,
+  failureSchema,
+  okSchema,
+  refreshResultSchema,
+  uninstallResultSchema
+} from "@rivus/snorlax-protocol";
 import * as plist from "plist";
 import * as z from "zod/mini";
 import { Effect } from "effect";
@@ -852,7 +858,7 @@ describe("install and uninstall", () => {
 
       const removed = run(env, ["uninstall", "--data", "--json"]);
       expect(removed.status).toBe(0);
-      expect(removed.stdout).toBe('{"schemaVersion":1,"ok":true}\n');
+      expect(removed.stdout).toBe('{"schemaVersion":1,"ok":true,"keptEntries":[]}\n');
       expect(existsSync(plistPathOf(env.home))).toBe(false);
       expect(existsSync(dataDirOf(env.home))).toBe(false);
       expect(await hashAgentDirs(env.home)).toBe(before);
@@ -896,6 +902,25 @@ describe("install and uninstall", () => {
       expect(existsSync(join(dataDir, "ledger.db"))).toBe(false);
       expect(existsSync(join(dataDir, "snapshot.json"))).toBe(false);
       expect(existsSync(join(dataDir, "logs"))).toBe(false);
+    });
+  });
+
+  it("uninstall --data --json lists the entries it kept, as the human output does (#19)", async () => {
+    await withInstallHome("darwin", async (env) => {
+      const dataDir = dataDirOf(env.home);
+      expect(run(env, ["refresh", "--json"]).status).toBe(0);
+      await writeFile(join(dataDir, "photo.jpg"), "unrelated\n");
+      await writeFile(join(dataDir, "logs", "keep.txt"), "unrelated\n");
+
+      const removed = run(env, ["uninstall", "--data", "--json"]);
+      expect(removed.stderr).toBe("");
+      expect(removed.status).toBe(0);
+      expect(z.parse(uninstallResultSchema, json(removed.stdout))).toEqual({
+        schemaVersion: 1,
+        ok: true,
+        keptEntries: ["logs/keep.txt", "photo.jpg"]
+      });
+      expect(await listFiles(dataDir)).toEqual(["logs/keep.txt", "photo.jpg"]);
     });
   });
 

@@ -1,6 +1,5 @@
+import { priceRecord, type PricedPart, type Pricing } from "@rivus/agent-kit/cost";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
-
-import { splitByModel, type UsagePortion } from "./split.ts";
 
 /** One local bucket row: the protocol's bucket fields plus the `dirty` upload flag (plan 3.3.2). */
 export interface BucketRow {
@@ -51,35 +50,35 @@ export interface Accumulator {
 
 export const createAccumulator = (): Accumulator => ({ buckets: new Map(), newSessions: [] });
 
-/** A portion's usage in the kit's `tokens` convention: input plus output. */
-const portionTokens = (portion: UsagePortion): number =>
-  (portion.usage.inputTokens ?? 0) + (portion.usage.outputTokens ?? 0);
+/** A part's usage in the kit's `tokens` convention: input plus output. */
+const partTokens = (part: PricedPart): number => (part.usage.inputTokens ?? 0) + (part.usage.outputTokens ?? 0);
 
 /**
- * How many model requests each portion of a record stands for (plan 3.4.1 step 4): every portion of a
- * `request` record counts 1; without a split, a `turn`/`session` record counts its `modelCalls`, else 1.
- * A split record that reports the record's `modelCalls`: a portion naming its own `modelCalls` keeps it,
- * and the calls left over — never below zero — go to the token-largest portion without a count of its own,
- * so the portions add back up to the record's calls; the other missing portions count 0 (a Grok turn logs
- * per-model calls only when the log carries them). Known counts that already exceed the record's leave the
- * missing portions at 0. Without the record's `modelCalls`, every portion counts its own, else 1.
+ * How many model requests each part of a priced record stands for (plan 3.4.1 step 4): every part of a
+ * `request` record counts 1; a whole `turn`/`session` record counts its `modelCalls`, else 1. The kit gives a
+ * part of a split only its own share's `modelCalls`, so a split record that reports the record's `modelCalls`
+ * divides them here: a part naming its own `modelCalls` keeps it, and the calls left over — never below zero —
+ * go to the token-largest part without a count of its own, so the parts add back up to the record's calls; the
+ * other missing parts count 0 (a Grok turn logs per-model calls only when the log carries them). Known counts
+ * that already exceed the record's leave the missing parts at 0. Without the record's `modelCalls`, every part
+ * counts its own, else 1.
  */
-export function portionRequestCounts(record: UsageRecord, portions: readonly UsagePortion[]): number[] {
+export function partRequestCounts(record: UsageRecord, parts: readonly PricedPart[]): number[] {
   if (record.granularity === "request") {
-    return portions.map(() => 1);
+    return parts.map(() => 1);
   }
   if (record.modelCalls === undefined) {
-    return portions.map((portion) => portion.modelCalls ?? 1);
+    return parts.map((part) => part.modelCalls ?? 1);
   }
   let remainder = record.modelCalls;
   let largest = -1;
-  const known: (number | undefined)[] = portions.map((portion, index) => {
-    if (portion.modelCalls !== undefined) {
-      remainder -= portion.modelCalls;
-      return portion.modelCalls;
+  const known: (number | undefined)[] = parts.map((part, index) => {
+    if (part.modelCalls !== undefined) {
+      remainder -= part.modelCalls;
+      return part.modelCalls;
     }
-    const largestSoFar = portions[largest];
-    if (largest < 0 || (largestSoFar !== undefined && portionTokens(portion) > portionTokens(largestSoFar))) {
+    const largestSoFar = parts[largest];
+    if (largest < 0 || (largestSoFar !== undefined && partTokens(part) > partTokens(largestSoFar))) {
       largest = index;
     }
     return undefined;
@@ -94,14 +93,15 @@ export function portionRequestCounts(record: UsageRecord, portions: readonly Usa
 const hourOf = (timestampMs: number): number => Math.floor(timestampMs / 3_600_000) * 3600;
 
 /**
- * Adds one record's usage into the accumulator (plan 3.4.1 step 4). A count the log does not record adds
- * 0; a portion whose cost the agent did not log adds its requests to `unpricedRequests` (until Batch 5's
- * pricing table, every portion without a logged amount is unpriced). A session first seen adds 1 to the
- * `sessionsStarted` of the hour it was first seen, on the record's first portion's bucket.
+ * Adds one record's usage into the accumulator (plan 3.4.1 step 4). The kit's `priceRecord` decides the parts
+ * and their costs — the agent's own amount, else the table's prices times the record's multiplier — so snorlax
+ * keeps only its own rules: the bucket key, the requests each part counts, and sessions. A count the log does not
+ * record adds 0; a part without a cost adds its requests to `unpricedRequests` and nothing to `costUsd`. A session
+ * first seen adds 1 to the `sessionsStarted` of the hour it was first seen, on the record's first part's bucket.
  */
-export function accumulateRecord(record: UsageRecord, into: Accumulator, seen: SeenSessions): void {
-  const portions = splitByModel(record);
-  const requests = portionRequestCounts(record, portions);
+export function accumulateRecord(record: UsageRecord, pricing: Pricing, into: Accumulator, seen: SeenSessions): void {
+  const { parts } = priceRecord(record, pricing);
+  const requests = partRequestCounts(record, parts);
   const hour = hourOf(record.timestamp);
   const bucketOf = (model: string | undefined): MutableBucket => {
     const key = `${hour}|${record.agent}|${model ?? ""}`;
@@ -134,10 +134,10 @@ export function accumulateRecord(record: UsageRecord, into: Accumulator, seen: S
     seen.set(record.agent, sessions);
     sessions.add(record.sessionId);
     into.newSessions.push({ agent: record.agent, sessionId: record.sessionId, firstHour: hour });
-    bucketOf(portions[0]?.model).sessionsStarted += 1;
+    bucketOf(parts[0]?.model).sessionsStarted += 1;
   }
 
-  for (const [index, part] of portions.entries()) {
+  for (const [index, part] of parts.entries()) {
     const bucket = bucketOf(part.model);
     bucket.inputTokens += part.usage.inputTokens ?? 0;
     bucket.cacheReadTokens += part.usage.cacheReadTokens ?? 0;
@@ -146,8 +146,8 @@ export function accumulateRecord(record: UsageRecord, into: Accumulator, seen: S
     bucket.reasoningTokens += part.usage.reasoningTokens ?? 0;
     const counted = requests[index] ?? 0;
     bucket.requests += counted;
-    if (part.costUsd !== undefined) {
-      bucket.costUsd += part.costUsd;
+    if (part.cost !== undefined) {
+      bucket.costUsd += part.cost.costUsd;
     } else {
       bucket.unpricedRequests += counted;
     }

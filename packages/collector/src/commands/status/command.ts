@@ -17,10 +17,16 @@ const humanStatus = (payload: Status): string =>
             .map(([agent, count]) => `${agent}=${count}`)
             .join(" ")
     }`,
-    `agents: ${payload.agents.map((agent) => `${agent.agent}=${agent.status}`).join(" ")}`
+    `agents: ${payload.agents.map((agent) => `${agent.agent}=${agent.status}`).join(" ")}`,
+    ...(payload.pricingChanged
+      ? ["pricing: the pricing table changed; run snorlax rebuild --days 30 to reprice the last 30 days"]
+      : [])
   ].join("\n");
 
-/** `snorlax status` (plan 3.1): version, data directory, device, last scan and sync, detected agents. */
+/**
+ * `snorlax status` (plan 3.1): version, data directory, device, last scan and sync, detected agents, and whether
+ * the pricing table changed since the stored costs were priced (3.7).
+ */
 export const statusCommand = {
   name: "status",
   description: "version, data directory, device, last scan and sync, decode failures, detected agents",

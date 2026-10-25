@@ -269,6 +269,32 @@ describe("refresh and rebuild", () => {
     expect(missing.status).toBe(2);
   });
 
+  it("status reports a changed pricing table and suggests rebuild --days 30, which clears it (plan 3.7)", async () => {
+    const pricingHome = await mkdtemp(join(tmpdir(), "snorlax-cli-pricing-"));
+    const status = () => z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], pricingHome).stdout));
+    try {
+      expect(run(["refresh", "--json"], pricingHome).status).toBe(0);
+      expect(status().pricingChanged).toBe(false);
+      expect(run(["status"], pricingHome).stdout).not.toContain("pricing:");
+
+      const db = new DatabaseSync(join(pricingHome, "data", "ledger.db"));
+      try {
+        db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run("2026-01-01+older-table");
+      } finally {
+        db.close();
+      }
+      expect(status().pricingChanged).toBe(true);
+      expect(run(["status"], pricingHome).stdout).toContain(
+        "pricing: the pricing table changed; run snorlax rebuild --days 30 to reprice the last 30 days\n"
+      );
+
+      expect(run(["rebuild", "--days", "30", "--json"], pricingHome).status).toBe(0);
+      expect(status().pricingChanged).toBe(false);
+    } finally {
+      await rm(pricingHome, { recursive: true, force: true });
+    }
+  });
+
   it("refresh and rebuild log their summary and command lines in the data directory (plan 3.9)", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-log-"));
     try {
