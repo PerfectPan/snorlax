@@ -61,6 +61,12 @@ export interface ClaudeSessionFixture {
   /** When set, the file is a subagent transcript: `<project>/<sessionId>/subagents/agent-<subagent>.jsonl`. */
   readonly subagent?: string;
   readonly requests: readonly ClaudeFixtureRequest[];
+  /**
+   * API-error assistant entries Claude Code writes itself: a `<synthetic>` model message with an all-zero
+   * usage. The entry can carry a request id even though no request reached a model, which is the shape the
+   * kit's usage decoder must skip outright.
+   */
+  readonly syntheticEntries?: readonly { readonly requestId: string; readonly timestampMs: number }[];
   readonly mtimeMs?: number;
 }
 
@@ -72,14 +78,40 @@ const claudeLine = (request: ClaudeFixtureRequest, sessionId: string): Record<st
   message: { id: `msg_${request.requestId}`, model: request.model, usage: claudeUsage(request.usage) }
 });
 
+const claudeSyntheticLine = (
+  entry: { readonly requestId: string; readonly timestampMs: number },
+  sessionId: string
+): Record<string, unknown> => ({
+  type: "assistant",
+  timestamp: iso(entry.timestampMs),
+  sessionId,
+  requestId: entry.requestId,
+  message: {
+    id: `msg_${entry.requestId}`,
+    model: "<synthetic>",
+    usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0 }
+  }
+});
+
 export async function writeClaudeSession(home: string, fixture: ClaudeSessionFixture): Promise<string> {
   const project = fixture.project ?? "-Users-tester-fixture";
   const path = fixture.subagent
     ? join(home, ".claude", "projects", project, fixture.sessionId, "subagents", `agent-${fixture.subagent}.jsonl`)
     : join(home, ".claude", "projects", project, `${fixture.sessionId}.jsonl`);
+  // The log is append-ordered, so the entries interleave by their timestamps.
+  const lines = [
+    ...fixture.requests.map((request) => ({
+      at: request.timestampMs,
+      line: claudeLine(request, request.sessionId ?? fixture.sessionId)
+    })),
+    ...(fixture.syntheticEntries ?? []).map((entry) => ({
+      at: entry.timestampMs,
+      line: claudeSyntheticLine(entry, fixture.sessionId)
+    }))
+  ].sort((first, second) => first.at - second.at);
   return writeLines(
     path,
-    fixture.requests.map((request) => claudeLine(request, request.sessionId ?? fixture.sessionId)),
+    lines.map((entry) => entry.line),
     fixture.mtimeMs ?? quietMtime(Date.now())
   );
 }
