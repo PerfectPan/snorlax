@@ -235,9 +235,13 @@ describe("accumulateRecord prices a long-context request through the kit's tier"
       throw new Error("the kit's pricing snapshot has no long-context tier for gpt-6.1-sol");
     }
     // A `request` record is one model call, so the tier applies to its total input, cache counts included.
+    // The non-cache input alone stays 50k below the threshold; only the total, cache reads counted, crosses
+    // it. The request bills whole at the tier's rates, so the expected amount — hand-computed from the
+    // snapshot's `gpt-6.1-sol` entry — is ((threshold − 50_000) × tier.input + 100_000 × tier.cacheRead +
+    // 20_000 × tier.output) / 1e6, which `snapshotTierCost` spells out from the table's own numbers.
     const above = {
-      inputTokens: tier.thresholdTokens + 100_000,
-      cacheReadTokens: 50_000,
+      inputTokens: tier.thresholdTokens + 50_000,
+      cacheReadTokens: 100_000,
       outputTokens: 20_000
     };
     // The two prices disagree by far enough that this pins the tier, not the base price.
