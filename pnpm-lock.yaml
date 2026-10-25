@@ -174,11 +174,11 @@ catalogs:
       specifier: github:PerfectPan/lint-config#v0.6.0
       version: https://codeload.github.com/PerfectPan/lint-config/tar.gz/28be8c1e152dde6a44fce9e43fdb282957959cc0
     '@rivus/agent-kit':
-      specifier: 0.22.0
-      version: 0.22.0
+      specifier: 0.23.0
+      version: 0.23.0
     '@rivus/agent-kit-collab':
-      specifier: 0.22.0
-      version: 0.22.0
+      specifier: 0.23.0
+      version: 0.23.0
     '@types/node':
       specifier: 24.19.2
       version: 24.19.2
@@ -225,10 +225,10 @@ importers:
         version: https://codeload.github.com/PerfectPan/lint-config/tar.gz/28be8c1e152dde6a44fce9e43fdb282957959cc0(oxfmt@0.72.0(vite-plus@1.3.0(@types/node@24.19.2)(@vitest/ui@5.0.5)(terser@5.51.2)(typescript@7.0.2)(yaml@2.9.1)))(oxlint-tsgolint@7.0.2004)(oxlint@1.87.0(oxlint-tsgolint@7.0.2004)(vite-plus@1.3.0(@types/node@24.19.2)(@vitest/ui@5.0.5)(terser@5.51.2)(typescript@7.0.2)(yaml@2.9.1)))(typescript@7.0.2)(vite-plus@1.3.0(@types/node@24.19.2)(@vitest/ui@5.0.5)(terser@5.51.2)(typescript@7.0.2)(yaml@2.9.1))
       '@rivus/agent-kit':
         specifier: 'catalog:'
-        version: 0.22.0(effect@4.0.5)
+        version: 0.23.0(effect@4.0.5)
       '@rivus/agent-kit-collab':
         specifier: 'catalog:'
-        version: 0.22.0(@rivus/agent-kit@0.22.0(effect@4.0.5))(effect@4.0.5)
+        version: 0.23.0(@rivus/agent-kit@0.23.0(effect@4.0.5))(effect@4.0.5)
       '@rivus/snorlax-protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -280,7 +280,7 @@ importers:
     dependencies:
       '@rivus/agent-kit':
         specifier: 'catalog:'
-        version: 0.22.0(effect@4.0.5)
+        version: 0.23.0(effect@4.0.5)
     devDependencies:
       '@perfectpan/lint-config':
         specifier: 'catalog:'
@@ -988,18 +988,18 @@ packages:
     peerDependencies:
       '@redis/client': ^6.3.0
 
-  '@rivus/agent-kit-collab@0.22.0':
-    resolution: {integrity: sha512-ZBXfxEk8VhwRLZ34pqPBTtYykXd142lO1PKWlVK2XY7HXPjFqMe4LrbiFu1DrYdHpFqNqbvaNMj+uGMJDl5K/g==}
+  '@rivus/agent-kit-collab@0.23.0':
+    resolution: {integrity: sha512-lvhzi1oGH0ET4wkVrk4iT5PSwDIqR3UhDBK+Vuw+gj2HQJWVuI8ifi3uAgqsTcKvOLRRmtUeQW1jhs06Oswwag==}
     engines: {node: '>=22.13'}
     peerDependencies:
-      '@rivus/agent-kit': ^0.22.0
+      '@rivus/agent-kit': ^0.23.0
       effect: 4.0.5
     peerDependenciesMeta:
       effect:
         optional: true
 
-  '@rivus/agent-kit@0.22.0':
-    resolution: {integrity: sha512-Tb6Ca7Z/g2JTlI+SQdeVwsvY9NZXVc5+bgmxzEaPlFYNURR/5fgLQM0wviseD6W+Xrnyd/Ui5jpyKaQeobwbYA==}
+  '@rivus/agent-kit@0.23.0':
+    resolution: {integrity: sha512-qb/TS3ZvRIKdDVzztF9V1R8Q+E/Fsu+c4Kt9PaK8R76Ibw/zOZQiaqTGJXkfEk+mKSoDW9T2TkJTDlsQw0Cv8A==}
     engines: {node: '>=22.13'}
     peerDependencies:
       effect: 4.0.5
@@ -2555,14 +2555,14 @@ snapshots:
     dependencies:
       '@redis/client': 6.3.0
 
-  '@rivus/agent-kit-collab@0.22.0(@rivus/agent-kit@0.22.0(effect@4.0.5))(effect@4.0.5)':
+  '@rivus/agent-kit-collab@0.23.0(@rivus/agent-kit@0.23.0(effect@4.0.5))(effect@4.0.5)':
     dependencies:
-      '@rivus/agent-kit': 0.22.0(effect@4.0.5)
+      '@rivus/agent-kit': 0.23.0(effect@4.0.5)
       zod: 4.6.7
     optionalDependencies:
       effect: 4.0.5
 
-  '@rivus/agent-kit@0.22.0(effect@4.0.5)':
+  '@rivus/agent-kit@0.23.0(effect@4.0.5)':
     dependencies:
       '@agentclientprotocol/sdk': 1.8.0(zod@4.6.7)
       '@decimalturn/toml-patch': 3.3.1

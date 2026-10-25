@@ -17,7 +17,7 @@ import {
 } from "./fixtures/agents.ts";
 import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
-import { snapshotCost } from "./fixtures/pricing.ts";
+import { snapshotCost, snapshotTierCost } from "./fixtures/pricing.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 
 /**
@@ -220,6 +220,41 @@ describe("accumulateRecord prices through the kit", () => {
   });
 });
 
+describe("accumulateRecord prices a long-context request through the kit's tier", () => {
+  const tierModel = "gpt-6.1-sol";
+
+  const bucketOf = (priced: UsageRecord) => {
+    const accumulator = createAccumulator();
+    accumulateRecord(priced, snapshotPricing, accumulator, new Map());
+    return [...accumulator.buckets.values()][0];
+  };
+
+  it("bills a single request whose total input strictly exceeds the threshold whole at the tier, else at the base price", () => {
+    const tier = litellmPrices[tierModel]?.longContext;
+    if (tier === undefined) {
+      throw new Error("the kit's pricing snapshot has no long-context tier for gpt-6.1-sol");
+    }
+    // A `request` record is one model call, so the tier applies to its total input, cache counts included.
+    const above = {
+      inputTokens: tier.thresholdTokens + 100_000,
+      cacheReadTokens: 50_000,
+      outputTokens: 20_000
+    };
+    // The two prices disagree by far enough that this pins the tier, not the base price.
+    expect(snapshotTierCost(tierModel, above)).not.toBeCloseTo(snapshotCost(tierModel, above), 6);
+    expect(bucketOf(record({ timestamp: 0, model: tierModel, usage: above }))?.costUsd).toBeCloseTo(
+      snapshotTierCost(tierModel, above),
+      10
+    );
+    // Equal to the threshold is not strictly above it, so the request bills at the base price.
+    const atThreshold = { inputTokens: tier.thresholdTokens, outputTokens: 20_000 };
+    expect(bucketOf(record({ timestamp: 0, model: tierModel, usage: atThreshold }))?.costUsd).toBeCloseTo(
+      snapshotCost(tierModel, atThreshold),
+      10
+    );
+  });
+});
+
 describe("S11: a model the pricing table does not list", () => {
   it("counts its tokens, leaves it out of the cost and reports its requests as unpriced", async () => {
     const setup = await createRefreshSetup({ now: NOW });
@@ -262,6 +297,39 @@ describe("S11: a model the pricing table does not list", () => {
       const totals = snapshot.kind === "ok" ? snapshot.snapshot.totals.today : undefined;
       expect(totals).toMatchObject({ tokens: 5450 + 1050, requests: 3, unpricedRequests: 2 });
       expect(totals?.costUsd).toBeCloseTo(snapshotCost("claude-opus-5-5", priced), 12);
+    } finally {
+      await setup.remove();
+    }
+  });
+});
+
+describe("a Claude Code API-error entry the CLI wrote itself (<synthetic>)", () => {
+  it("yields no record, so it counts into no request and no unpriced request", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    try {
+      await writeClaudeSession(setup.home, {
+        sessionId: "cc-synthetic",
+        mtimeMs: MTIME,
+        requests: [
+          {
+            requestId: "r1",
+            model: "claude-opus-5-5",
+            timestampMs: (HOUR_9 + 5 * 60) * 1000,
+            usage: { inputTokens: 1000, outputTokens: 50 }
+          }
+        ],
+        syntheticEntries: [{ requestId: "syn-1", timestampMs: (HOUR_9 + 10 * 60) * 1000 }]
+      });
+      const outcome = await runRefresh({
+        platform: setup.platform,
+        dataDir: setup.dataDir,
+        log: silentLog,
+        timeZone: TIME_ZONE
+      });
+
+      expect(outcome.result.records).toBe(1);
+      const rows = await readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
+      expect(rows.map((row) => [row.model, row.requests, row.unpricedRequests])).toEqual([["claude-opus-5-5", 1, 0]]);
     } finally {
       await setup.remove();
     }
