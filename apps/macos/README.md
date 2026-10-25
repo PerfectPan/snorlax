@@ -15,7 +15,7 @@ There is no Pokémon artwork. The menu bar title is today's token total as text.
 
 ## Behavior
 
-The menu title is today's tokens in short form (`812345678` is `812M`). The popover shows today, 7 days, and 30 days (tokens, and cost — `unpriced` when every request in that window is unpriced, `≥ $x.xx` when some are), the top agents and models, devices (omitted when this Mac is the only device; rows with no usage today are dropped), a 30-day bar chart with `M/d` axis labels, and the status line with scan and sync times as relative text. Buttons: Refresh now, Settings, Quit.
+The menu title is today's tokens in short form (`812345678` is `812M`). The popover shows today, 7 days, and 30 days (tokens, and cost — `unpriced` when every request in that window is unpriced, `≥ $x.xx` when some are), the top agents and models, devices (omitted when this Mac is the only device; rows with no usage today are dropped), a 30-day bar chart with `M/d` axis labels, and the status line with scan and sync times as relative text. Buttons: Refresh now, Settings, Quit. Settings activates the app and brings its window to the front, also when the window is already open behind another app.
 
 Settings shows the device name from `snorlax status`. No collector command changes the name yet, so the field is read-only; pairing sets it in a later batch. Launch at login is an `SMAppService` toggle for `io.github.perfectpan.snorlax.refresh.plist`. The toggle and `snorlax install` are mutually exclusive — both register the same launchd label — so turn the toggle off before using the CLI; `snorlax install` and `snorlax uninstall` refuse while this app owns the loaded service. Diagnostics runs `snorlax doctor --json`.
 

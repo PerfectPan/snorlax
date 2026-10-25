@@ -36,6 +36,10 @@ struct PopoverView: View {
                 }
                 .disabled(model.refreshing)
                 Button("Settings") {
+                    // The menu bar panel does not activate this LSUIElement app, and
+                    // openWindow orders the window front only among this app's windows,
+                    // so without activation Settings stays behind the frontmost app.
+                    NSApplication.shared.activate()
                     openWindow(id: "settings")
                 }
                 Spacer()
