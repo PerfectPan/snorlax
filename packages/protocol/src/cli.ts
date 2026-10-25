@@ -104,8 +104,9 @@ export const detectedAgentSchema = z.object({
 export type DetectedAgent = z.output<typeof detectedAgentSchema>;
 
 /**
- * Success body of `status` (plan 3.1). `pricingChanged` is true when the ledger's costs were priced with another
- * pricing table than this collector's (plan 3.7); `snorlax rebuild --days 30` prices them again.
+ * Success body of `status` (plan 3.1). `pricingChanged` is true when the ledger's stored costs were not priced with
+ * this collector's pricing table — another table, or none for a ledger scanned before pricing existed (plan 3.7);
+ * `snorlax rebuild --days 30` prices them again.
  */
 export const statusSchema = z.object({
   schemaVersion: schemaVersionSchema,

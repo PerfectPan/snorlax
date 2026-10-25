@@ -25,7 +25,8 @@ export interface ScanWindow {
   /**
    * The run zeroes and prices again every bucket the snapshot shows (a rebuild of the whole window), so it records
    * `PRICING_VERSION` as the version that priced the buckets. Any other run prices only new usage with the current
-   * table and keeps the recorded version, unless none is recorded yet.
+   * table and keeps the recorded version, except the ledger's first scan, whose buckets the current table prices
+   * all. A ledger scanned before pricing existed keeps its null version until such a rebuild.
    */
   readonly reprices?: boolean;
 }
@@ -58,7 +59,7 @@ export const commitScan = (
       );
       yield* ledger.addBuckets([...accumulator.buckets.values()]);
       yield* ledger.addSessionsSeen(accumulator.newSessions);
-      if (window.reprices === true || ledger.meta.pricingVersion === null) {
+      if (window.reprices === true || ledger.meta.lastScanCompletedAt === null) {
         yield* ledger.setPricingVersion(PRICING_VERSION);
       }
       yield* ledger.setScanState(outcome.state);

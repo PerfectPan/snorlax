@@ -229,18 +229,21 @@ describe("pricing_version (plan 3.7)", () => {
       (row) => row.model === "claude-opus-5-5" && row.hour < rebuildStartHour(NOW, 3)
     );
 
-  /** Stands in for a ledger an older table priced: its version is another, and the row carries no cost. */
-  const priceWithAnOlderTable = (): void => {
+  /**
+   * Stands in for a ledger another table priced (`version`), or one scanned before pricing existed (null, a ledger
+   * from before Batch 5): the version is not the current one, and the rows carry no cost.
+   */
+  const pricedBy = (version: string | null): void => {
     const db = new DatabaseSync(ledgerPath(pricing.dataDir));
     try {
-      db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run(OLD_VERSION);
+      db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run(version);
       db.prepare("UPDATE buckets SET cost_usd = 0, unpriced_requests = requests").run();
     } finally {
       db.close();
     }
   };
 
-  it("records the current table's version on the first run", async () => {
+  it("records the current table's version on a new ledger's first run", async () => {
     await writeClaudeSession(pricing.home, {
       sessionId: "priced-old",
       mtimeMs: MTIME,
@@ -260,7 +263,7 @@ describe("pricing_version (plan 3.7)", () => {
   });
 
   it("keeps a recorded version on refresh and on a shorter rebuild, and prices only new usage", async () => {
-    priceWithAnOlderTable();
+    pricedBy(OLD_VERSION);
     expect(await pricingChanged()).toBe(true);
 
     await writeClaudeSession(pricing.home, {
@@ -294,5 +297,37 @@ describe("pricing_version (plan 3.7)", () => {
     const repriced = await opusRow();
     expect(repriced).toMatchObject({ requests: 1, unpricedRequests: 0 });
     expect(repriced?.costUsd).toBeGreaterThan(0);
+  });
+
+  it("keeps a ledger scanned before pricing at no version and reports it changed until a whole-window rebuild", async () => {
+    pricedBy(null);
+    expect(await pricingChanged()).toBe(true);
+
+    await writeClaudeSession(pricing.home, {
+      sessionId: "priced-after-upgrade",
+      mtimeMs: MTIME,
+      requests: [
+        {
+          requestId: "priced-after-upgrade-r1",
+          model: "claude-haiku-4-5",
+          timestampMs: hourOf(0, -30) * 1000,
+          usage: { inputTokens: 700, outputTokens: 12 }
+        }
+      ]
+    });
+    // Not the ledger's first scan: the older rows stay unpriced, so the null version must stay too.
+    await runRefresh(deps());
+    expect(await recordedVersion()).toBeNull();
+    expect(await pricingChanged()).toBe(true);
+
+    await runRebuild(deps(), 1);
+    expect(await recordedVersion()).toBeNull();
+    expect(await pricingChanged()).toBe(true);
+    expect(await opusRow()).toMatchObject({ costUsd: 0, unpricedRequests: 1 });
+
+    await runRebuild(deps(), REBUILD_MAX_DAYS);
+    expect(await recordedVersion()).toBe(litellmPricesVersion);
+    expect(await pricingChanged()).toBe(false);
+    expect((await opusRow())?.costUsd).toBeGreaterThan(0);
   });
 });
