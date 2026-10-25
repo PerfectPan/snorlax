@@ -224,10 +224,10 @@ describe("pricing_version (plan 3.7)", () => {
     readLedger(pricing.platform, pricing.dataDir, (ledger) => Effect.succeed(ledger.meta.pricingVersion));
   const pricingChanged = async () =>
     (await Effect.runPromise(readLedgerStatus(pricing.platform, pricing.dataDir)))?.pricingChanged;
+  const bucketRows = (): Promise<BucketRow[]> =>
+    readLedger(pricing.platform, pricing.dataDir, (ledger) => ledger.readBuckets());
   const opusRow = async (): Promise<BucketRow | undefined> =>
-    (await readLedger(pricing.platform, pricing.dataDir, (ledger) => ledger.readBuckets())).find(
-      (row) => row.model === "claude-opus-5-5" && row.hour < rebuildStartHour(NOW, 3)
-    );
+    (await bucketRows()).find((row) => row.model === "claude-opus-5-5" && row.hour < rebuildStartHour(NOW, 3));
 
   /**
    * Stands in for a ledger another table priced (`version`), or one scanned before pricing existed (null, a ledger
@@ -290,7 +290,14 @@ describe("pricing_version (plan 3.7)", () => {
     expect(await pricingChanged()).toBe(true);
   });
 
-  it("records the current version after a rebuild of the whole window, which prices the old usage again", async () => {
+  it("records the current version once a rebuild of the whole window commits, which prices the old usage again", async () => {
+    // The version is written in the scan's transaction, so a rebuild that dies before the commit keeps the old one.
+    const before = await bucketRows();
+    await expect(runRebuild(deps(), REBUILD_MAX_DAYS, { failBeforeCommit: true })).rejects.toThrow(/simulated crash/);
+    expect(await recordedVersion()).toBe(OLD_VERSION);
+    expect(await pricingChanged()).toBe(true);
+    expect(await bucketRows()).toEqual(before);
+
     await runRebuild(deps(), REBUILD_MAX_DAYS);
     expect(await recordedVersion()).toBe(litellmPricesVersion);
     expect(await pricingChanged()).toBe(false);
