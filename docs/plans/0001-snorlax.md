@@ -131,7 +131,7 @@ this Mac
 | `snorlax unpair` | app settings, terminal | deletes the device token; local data stays | `Ok` |
 | `snorlax rebuild --days <n>` | owner, after a pricing change or for repair | 1 ≤ n ≤ 30: zeroes the last n days of local buckets, rescans them and marks them for upload | `RefreshResult` |
 | `snorlax doctor` | app diagnostics, terminal | checks Node version, data directory permissions, keychain access, backend reachability, scheduling (the loaded refresh job and the Node its plist names) | `Doctor` |
-| `snorlax install` / `uninstall` | Linux; macOS without the app | writes or removes the systemd user timer or `~/Library/LaunchAgents` plist; `uninstall --data` also deletes the keychain item and the entries snorlax wrote in the data directory; when that directory is non-empty and holds no snorlax ledger the CLI can read, the whole command refuses (exit 1, `data-dir`), deleting nothing and leaving the LaunchAgent in place, while a data directory that does not exist or is empty completes as usual | `Ok` |
+| `snorlax install` / `uninstall` | Linux; macOS without the app | writes or removes the systemd user timer or `~/Library/LaunchAgents` plist; `uninstall --data` also deletes the keychain item and the entries snorlax wrote in the data directory; when that directory is non-empty and holds no snorlax ledger the CLI can read, the whole command refuses (exit 1, `data-dir`), deleting nothing and leaving the LaunchAgent in place, while a data directory that does not exist or is empty completes as usual | install: `Ok`; uninstall: `UninstallResult`, whose `keptEntries` is present only with `--data` |
 | `snorlax snapshot` | terminal | prints the current snapshot | `SnapshotOutput`: `{ schemaVersion, ok, snapshot }` |
 
 Commands are defined with `effect/cli` (D12, 3.13); Batches 1–3 shipped on `node:util` `parseArgs` and Batch 4b
@@ -335,8 +335,9 @@ The same batch ends with `UPDATE devices SET last_push_at = ? WHERE id = ?`. Pul
    only its own share's `modelCalls`); add the part's cost when it has one, else add its requests to
    `unpricedRequests`; set `dirty = 1`. A new (agent, sessionId) adds 1 to `sessionsStarted` of the hour it was
    first seen.
-5. In one SQLite transaction: write the buckets, `sessions_seen`, the new `scan_state` (`scan.state` after the loop
-   ran to its end) and `last_scan_completed_at = now`. A run killed before this commit leaves the ledger as it was.
+5. In one SQLite transaction: write the buckets, `sessions_seen`, `pricing_version` when the run records it (the
+   ledger's first scan or `rebuild --days 30`, 3.7), the new `scan_state` (`scan.state` after the loop ran to its
+   end) and `last_scan_completed_at = now`. A run killed before this commit leaves the ledger as it was.
 6. If paired and sync is enabled: push dirty buckets in batches of 200; clear `dirty` for a batch after a 200
    response. Then pull from `pull_cursor` until `next` is null, upsert into `remote_buckets` (skipping this
    device's id), store the cursor, and refresh `remote_devices`. A network or HTTP failure stops the sync, keeps
