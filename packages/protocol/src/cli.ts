@@ -91,7 +91,10 @@ export const detectedAgentSchema = z.object({
 });
 export type DetectedAgent = z.output<typeof detectedAgentSchema>;
 
-/** Success body of `status` (plan 3.1). */
+/**
+ * Success body of `status` (plan 3.1). `pricingChanged` is true when the ledger's costs were priced with another
+ * pricing table than this collector's (plan 3.7); `snorlax rebuild --days 30` prices them again.
+ */
 export const statusSchema = z.object({
   schemaVersion: schemaVersionSchema,
   ok: z.literal(true),
@@ -104,6 +107,7 @@ export const statusSchema = z.object({
   lastScanAt: z.nullable(utcTimestampSchema),
   sync: z.object({ state: syncStateSchema, at: z.nullable(utcTimestampSchema) }),
   failuresByAgent: z.record(agentIdSchema, nonNegativeIntSchema),
+  pricingChanged: z.boolean(),
   agents: z.array(detectedAgentSchema)
 });
 export type Status = z.output<typeof statusSchema>;

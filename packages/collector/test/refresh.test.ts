@@ -15,6 +15,7 @@ import { appendClaudeRequests, quietMtime, writeClaudeSession, writeCodexRollout
 import { runBundle } from "./fixtures/bundle.ts";
 import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
+import { snapshotCost } from "./fixtures/pricing.ts";
 
 /**
  * Spec S1–S5 over generated fixtures under a temporary home, with the clock fixed at 2026-10-22T12:00:00Z
@@ -68,6 +69,21 @@ const claudeRequest = (
   usage: { inputTokens, outputTokens }
 });
 
+/** The usage of S1's Claude Code requests; the kit's pricing snapshot lists both models, so they carry a cost. */
+const S1_CLAUDE_USAGE = {
+  req1: { inputTokens: 5400, cacheReadTokens: 5000, cacheWriteTokens: 300, outputTokens: 50, reasoningTokens: 10 },
+  req2: { inputTokens: 1100, cacheReadTokens: 1000, outputTokens: 20 },
+  req3: { inputTokens: 600, outputTokens: 30 },
+  req4: { inputTokens: 2000, outputTokens: 100 }
+} as const;
+
+const S1_COST = {
+  opusHour9:
+    snapshotCost("claude-opus-5-5", S1_CLAUDE_USAGE.req1) + snapshotCost("claude-opus-5-5", S1_CLAUDE_USAGE.req2),
+  haikuHour9: snapshotCost("claude-haiku-4-5", S1_CLAUDE_USAGE.req3),
+  haikuHour10: snapshotCost("claude-haiku-4-5", S1_CLAUDE_USAGE.req4)
+};
+
 /** S1's fixtures: two Claude Code sessions (two models) and one Codex rollout, all inside the 09:00Z hour. */
 const writeS1Fixtures = async (): Promise<void> => {
   await writeClaudeSession(setup.home, {
@@ -78,25 +94,19 @@ const writeS1Fixtures = async (): Promise<void> => {
         requestId: "req_1",
         model: "claude-opus-5-5",
         timestampMs: (HOUR_9 + 5 * 60) * 1000,
-        usage: {
-          inputTokens: 5400,
-          cacheReadTokens: 5000,
-          cacheWriteTokens: 300,
-          outputTokens: 50,
-          reasoningTokens: 10
-        }
+        usage: S1_CLAUDE_USAGE.req1
       },
       {
         requestId: "req_2",
         model: "claude-opus-5-5",
         timestampMs: (HOUR_9 + 35 * 60) * 1000,
-        usage: { inputTokens: 1100, cacheReadTokens: 1000, outputTokens: 20 }
+        usage: S1_CLAUDE_USAGE.req2
       },
       {
         requestId: "req_3",
         model: "claude-haiku-4-5",
         timestampMs: (HOUR_9 + 50 * 60) * 1000,
-        usage: { inputTokens: 600, outputTokens: 30 }
+        usage: S1_CLAUDE_USAGE.req3
       }
     ]
   });
@@ -108,7 +118,7 @@ const writeS1Fixtures = async (): Promise<void> => {
         requestId: "req_4",
         model: "claude-haiku-4-5",
         timestampMs: (HOUR_10 + 20 * 60) * 1000,
-        usage: { inputTokens: 2000, outputTokens: 100 }
+        usage: S1_CLAUDE_USAGE.req4
       }
     ]
   });
@@ -146,8 +156,8 @@ const expectedS1Buckets = (): readonly Omit<BucketRow, "dirty">[] => [
     reasoningTokens: 0,
     requests: 1,
     sessionsStarted: 0,
-    costUsd: 0,
-    unpricedRequests: 1
+    costUsd: expect.closeTo(S1_COST.haikuHour9, 12),
+    unpricedRequests: 0
   },
   {
     hour: HOUR_9,
@@ -160,8 +170,8 @@ const expectedS1Buckets = (): readonly Omit<BucketRow, "dirty">[] => [
     reasoningTokens: 10,
     requests: 2,
     sessionsStarted: 1,
-    costUsd: 0,
-    unpricedRequests: 2
+    costUsd: expect.closeTo(S1_COST.opusHour9, 12),
+    unpricedRequests: 0
   },
   {
     hour: HOUR_9,
@@ -188,8 +198,8 @@ const expectedS1Buckets = (): readonly Omit<BucketRow, "dirty">[] => [
     reasoningTokens: 0,
     requests: 1,
     sessionsStarted: 1,
-    costUsd: 0,
-    unpricedRequests: 1
+    costUsd: expect.closeTo(S1_COST.haikuHour10, 12),
+    unpricedRequests: 0
   }
 ];
 
@@ -216,8 +226,9 @@ describe("S1: the first run counts the history", () => {
       cacheReadTokens: 6400,
       requests: 6,
       sessions: 3,
-      unpricedRequests: 6,
-      costUsd: 0
+      // Only Codex's gpt-6.2 is missing from the kit's pricing snapshot (Spec S11).
+      unpricedRequests: 2,
+      costUsd: expect.closeTo(S1_COST.opusHour9 + S1_COST.haikuHour9 + S1_COST.haikuHour10, 12)
     });
     expect(snap.totals.last30d).toMatchObject({ tokens: 11_030, requests: 6 });
     expect(snap.byAgent.map((entry) => [entry.agent, entry.today.tokens])).toEqual([

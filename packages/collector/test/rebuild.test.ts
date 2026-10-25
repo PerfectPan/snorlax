@@ -1,11 +1,14 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
+import { litellmPricesVersion } from "@rivus/agent-kit/cost/prices";
 import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import type { BucketRow } from "../src/core/buckets/buckets.ts";
 import { rebuildStartHour, REBUILD_MAX_DAYS } from "../src/commands/rebuild/flow.ts";
+import { ledgerPath, readLedgerStatus } from "../src/modules/ledger/ledger.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 import { quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
@@ -201,5 +204,95 @@ describe("rebuild", () => {
     await rebuild(30);
     await rebuild(30);
     expect(await totalsOf()).toEqual(before);
+  });
+});
+
+describe("pricing_version (plan 3.7)", () => {
+  const OLD_VERSION = "2026-01-01+0000000000000000000000000000000000000000";
+  let pricing: RefreshSetup;
+
+  beforeAll(async () => {
+    pricing = await createRefreshSetup({ now: NOW });
+  });
+
+  afterAll(async () => {
+    await pricing.remove();
+  });
+
+  const deps = () => ({ platform: pricing.platform, dataDir: pricing.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE });
+  const recordedVersion = () =>
+    readLedger(pricing.platform, pricing.dataDir, (ledger) => Effect.succeed(ledger.meta.pricingVersion));
+  const pricingChanged = async () =>
+    (await Effect.runPromise(readLedgerStatus(pricing.platform, pricing.dataDir)))?.pricingChanged;
+  const opusRow = async (): Promise<BucketRow | undefined> =>
+    (await readLedger(pricing.platform, pricing.dataDir, (ledger) => ledger.readBuckets())).find(
+      (row) => row.model === "claude-opus-5-5" && row.hour < rebuildStartHour(NOW, 3)
+    );
+
+  /** Stands in for a ledger an older table priced: its version is another, and the row carries no cost. */
+  const priceWithAnOlderTable = (): void => {
+    const db = new DatabaseSync(ledgerPath(pricing.dataDir));
+    try {
+      db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run(OLD_VERSION);
+      db.prepare("UPDATE buckets SET cost_usd = 0, unpriced_requests = requests").run();
+    } finally {
+      db.close();
+    }
+  };
+
+  it("records the current table's version on the first run", async () => {
+    await writeClaudeSession(pricing.home, {
+      sessionId: "priced-old",
+      mtimeMs: MTIME,
+      requests: [
+        {
+          requestId: "priced-old-r1",
+          model: "claude-opus-5-5",
+          timestampMs: hourOf(10, 0) * 1000,
+          usage: { inputTokens: 4000, outputTokens: 80 }
+        }
+      ]
+    });
+    await runRefresh(deps());
+    expect(await recordedVersion()).toBe(litellmPricesVersion);
+    expect(await pricingChanged()).toBe(false);
+    expect((await opusRow())?.costUsd).toBeGreaterThan(0);
+  });
+
+  it("keeps a recorded version on refresh and on a shorter rebuild, and prices only new usage", async () => {
+    priceWithAnOlderTable();
+    expect(await pricingChanged()).toBe(true);
+
+    await writeClaudeSession(pricing.home, {
+      sessionId: "priced-new",
+      mtimeMs: MTIME,
+      requests: [
+        {
+          requestId: "priced-new-r1",
+          model: "claude-haiku-4-5",
+          timestampMs: hourOf(0, -60) * 1000,
+          usage: { inputTokens: 900, outputTokens: 15 }
+        }
+      ]
+    });
+    await runRefresh(deps());
+    expect(await recordedVersion()).toBe(OLD_VERSION);
+    const rows = await readLedger(pricing.platform, pricing.dataDir, (ledger) => ledger.readBuckets());
+    expect(rows.find((row) => row.model === "claude-haiku-4-5")).toMatchObject({ unpricedRequests: 0 });
+    expect(await opusRow()).toMatchObject({ costUsd: 0, unpricedRequests: 1 });
+
+    // Ten days back is outside a 3-day window, so the older table's prices are still in the snapshot.
+    await runRebuild(deps(), 3);
+    expect(await recordedVersion()).toBe(OLD_VERSION);
+    expect(await pricingChanged()).toBe(true);
+  });
+
+  it("records the current version after a rebuild of the whole window, which prices the old usage again", async () => {
+    await runRebuild(deps(), REBUILD_MAX_DAYS);
+    expect(await recordedVersion()).toBe(litellmPricesVersion);
+    expect(await pricingChanged()).toBe(false);
+    const repriced = await opusRow();
+    expect(repriced).toMatchObject({ requests: 1, unpricedRequests: 0 });
+    expect(repriced?.costUsd).toBeGreaterThan(0);
   });
 });

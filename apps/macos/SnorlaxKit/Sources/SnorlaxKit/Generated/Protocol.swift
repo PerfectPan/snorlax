@@ -494,6 +494,7 @@ public struct Status: Codable, Equatable, Sendable {
     public let failuresByAgent: [String: Int]
     public let lastScanAt: String?
     public let ok: Bool
+    public let pricingChanged: Bool
     public let schemaVersion: Double
     public let sync: StatusSync
     public let version: String
@@ -505,18 +506,20 @@ public struct Status: Codable, Equatable, Sendable {
         case failuresByAgent = "failuresByAgent"
         case lastScanAt = "lastScanAt"
         case ok = "ok"
+        case pricingChanged = "pricingChanged"
         case schemaVersion = "schemaVersion"
         case sync = "sync"
         case version = "version"
     }
 
-    public init(agents: [Agent], dataDir: String, device: Device, failuresByAgent: [String: Int], lastScanAt: String?, ok: Bool, schemaVersion: Double, sync: StatusSync, version: String) {
+    public init(agents: [Agent], dataDir: String, device: Device, failuresByAgent: [String: Int], lastScanAt: String?, ok: Bool, pricingChanged: Bool, schemaVersion: Double, sync: StatusSync, version: String) {
         self.agents = agents
         self.dataDir = dataDir
         self.device = device
         self.failuresByAgent = failuresByAgent
         self.lastScanAt = lastScanAt
         self.ok = ok
+        self.pricingChanged = pricingChanged
         self.schemaVersion = schemaVersion
         self.sync = sync
         self.version = version

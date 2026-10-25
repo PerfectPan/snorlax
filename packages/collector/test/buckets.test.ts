@@ -1,21 +1,30 @@
 import { join } from "node:path";
 
+import { createPricing, priceRecord } from "@rivus/agent-kit/cost";
+import { litellmPrices } from "@rivus/agent-kit/cost/prices";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { accumulateRecord, createAccumulator, portionRequestCounts } from "../src/core/buckets/buckets.ts";
-import { splitByModel } from "../src/core/buckets/split.ts";
+import { accumulateRecord, createAccumulator, partRequestCounts } from "../src/core/buckets/buckets.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";
-import { quietMtime, writeGrokSession, writeOpencodeDatabase, writePiSession } from "./fixtures/agents.ts";
+import {
+  quietMtime,
+  writeClaudeSession,
+  writeGrokSession,
+  writeOpencodeDatabase,
+  writePiSession
+} from "./fixtures/agents.ts";
 import { readLedger, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
+import { snapshotCost } from "./fixtures/pricing.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 
 /**
- * Spec S12 and the bucket arithmetic of plan 3.4.1 step 4: agent-logged costs (Pi, opencode) land in the
- * buckets as logged, a `turn` record splits by `usageByModel` with the kit's rule, and every request whose
- * cost nobody logged counts as unpriced (until Batch 5's pricing table).
+ * Spec S11, S12 and the bucket arithmetic of plan 3.4.1 step 4: the kit's `priceRecord` prices each record
+ * (the agent's own amount first, else the kit's LiteLLM snapshot), a `turn` record splits by `usageByModel`
+ * with the kit's rule, a request whose model has no price counts as unpriced, and snorlax divides a record's
+ * requests among its parts.
  */
 
 const NOW = Date.UTC(2026, 9, 22, 12, 0, 0);
@@ -24,6 +33,9 @@ const HOUR_9 = Date.UTC(2026, 9, 22, 9) / 1000;
 const TIME_ZONE = "UTC";
 
 const silentLog: Logger = { event: () => Effect.void };
+
+/** The pricing every run uses: the kit's LiteLLM snapshot, without fallbacks. */
+const snapshotPricing = createPricing(litellmPrices);
 
 /** A record with only the fields the splitting and accumulation rules read. */
 const record = (overrides: Partial<UsageRecord> & Pick<UsageRecord, "timestamp" | "usage">): UsageRecord => ({
@@ -34,99 +46,7 @@ const record = (overrides: Partial<UsageRecord> & Pick<UsageRecord, "timestamp" 
   ...overrides
 });
 
-describe("splitByModel (the kit's rule until agent-kit K2)", () => {
-  it("returns the whole record as one portion when it has no model split", () => {
-    const portions = splitByModel(
-      record({
-        timestamp: 0,
-        model: "claude-opus-5-5",
-        usage: { inputTokens: 100, outputTokens: 10 },
-        costUsd: 0.5,
-        costSource: "agent"
-      })
-    );
-    expect(portions).toEqual([
-      { model: "claude-opus-5-5", usage: { inputTokens: 100, outputTokens: 10 }, modelCalls: undefined, costUsd: 0.5 }
-    ]);
-  });
-
-  it("splits by usageByModel, one portion per model with each model's own usage and cost", () => {
-    const portions = splitByModel(
-      record({
-        timestamp: 0,
-        granularity: "turn",
-        model: "grok-4",
-        modelCalls: 3,
-        costUsd: 0.03,
-        costSource: "agent",
-        usage: { inputTokens: 300, outputTokens: 60 },
-        usageByModel: {
-          "grok-4": {
-            usage: { inputTokens: 200, outputTokens: 40 },
-            modelCalls: 2,
-            costUsd: 0.02,
-            costSource: "agent"
-          },
-          "grok-4-fast": {
-            usage: { inputTokens: 100, outputTokens: 20 },
-            modelCalls: 1,
-            costUsd: 0.01,
-            costSource: "agent"
-          }
-        }
-      })
-    );
-    expect(portions).toEqual([
-      { model: "grok-4", usage: { inputTokens: 200, outputTokens: 40 }, modelCalls: 2, costUsd: 0.02 },
-      { model: "grok-4-fast", usage: { inputTokens: 100, outputTokens: 20 }, modelCalls: 1, costUsd: 0.01 }
-    ]);
-  });
-
-  it("keeps the record whole when the agent logged one amount the split does not divide among every model", () => {
-    const portions = splitByModel(
-      record({
-        timestamp: 0,
-        model: "grok-4",
-        costUsd: 0.03,
-        costSource: "agent",
-        usage: { inputTokens: 300, outputTokens: 60 },
-        usageByModel: {
-          // The fast model has no cost of its own, so charging it at table prices would replace the
-          // agent's amount for the record; the kit keeps the record whole instead.
-          "grok-4": { usage: { inputTokens: 200, outputTokens: 40 }, costUsd: 0.03, costSource: "agent" },
-          "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 } }
-        }
-      })
-    );
-    expect(portions).toEqual([
-      {
-        model: "grok-4",
-        usage: { inputTokens: 300, outputTokens: 60 },
-        modelCalls: undefined,
-        costUsd: 0.03
-      }
-    ]);
-  });
-
-  it("splits a record whose record-level cost came from a price table", () => {
-    const portions = splitByModel(
-      record({
-        timestamp: 0,
-        costUsd: 0.04,
-        costSource: "pricing-table",
-        usage: { inputTokens: 10, outputTokens: 1 },
-        usageByModel: {
-          "grok-4": { usage: { inputTokens: 6, outputTokens: 1 } },
-          "grok-4-fast": { usage: { inputTokens: 4, outputTokens: 0 } }
-        }
-      })
-    );
-    expect(portions.map((portion) => portion.model)).toEqual(["grok-4", "grok-4-fast"]);
-    expect(portions.every((portion) => portion.costUsd === undefined)).toBe(true);
-  });
-});
-
-describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
+describe("partRequestCounts (plan 3.4.1 step 4)", () => {
   const usage = { inputTokens: 1, outputTokens: 1 };
   const splitTurn = (overrides: { modelCalls?: number; usageByModel: UsageRecord["usageByModel"] }): UsageRecord =>
     record({
@@ -146,14 +66,14 @@ describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
       usage,
       usageByModel: { "grok-4": { usage } }
     });
-    expect(portionRequestCounts(request, splitByModel(request))).toEqual([1]);
+    expect(partRequestCounts(request, priceRecord(request, snapshotPricing).parts)).toEqual([1]);
   });
 
   it("counts an unsplit turn's modelCalls, else 1", () => {
     const counted = record({ granularity: "turn", timestamp: 0, modelCalls: 3, usage });
-    expect(portionRequestCounts(counted, splitByModel(counted))).toEqual([3]);
+    expect(partRequestCounts(counted, priceRecord(counted, snapshotPricing).parts)).toEqual([3]);
     const uncounted = record({ granularity: "turn", timestamp: 0, usage });
-    expect(portionRequestCounts(uncounted, splitByModel(uncounted))).toEqual([1]);
+    expect(partRequestCounts(uncounted, priceRecord(uncounted, snapshotPricing).parts)).toEqual([1]);
   });
 
   it("gives a counted record's calls to its token-largest portion when no share names its own (all missing)", () => {
@@ -164,7 +84,7 @@ describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
         "grok-4-fast": { usage: { inputTokens: 200, outputTokens: 40 } }
       }
     });
-    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([0, 3]);
+    expect(partRequestCounts(turn, priceRecord(turn, snapshotPricing).parts)).toEqual([0, 3]);
   });
 
   it("gives the leftover calls to the token-largest share without its own count (some missing)", () => {
@@ -175,7 +95,7 @@ describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
         "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 }, modelCalls: 1 }
       }
     });
-    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 1]);
+    expect(partRequestCounts(turn, priceRecord(turn, snapshotPricing).parts)).toEqual([2, 1]);
   });
 
   it("uses every share's own count when each names one (all present)", () => {
@@ -186,7 +106,7 @@ describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
         "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 }, modelCalls: 1 }
       }
     });
-    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 1]);
+    expect(partRequestCounts(turn, priceRecord(turn, snapshotPricing).parts)).toEqual([2, 1]);
   });
 
   it("keeps known counts that exceed the record's and leaves the missing shares at 0 (over)", () => {
@@ -197,7 +117,7 @@ describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
         "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 } }
       }
     });
-    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 0]);
+    expect(partRequestCounts(turn, priceRecord(turn, snapshotPricing).parts)).toEqual([2, 0]);
   });
 
   it("uses each share's own count, else 1, when the record reports no modelCalls", () => {
@@ -207,7 +127,7 @@ describe("portionRequestCounts (plan 3.4.1 step 4)", () => {
         "grok-4-fast": { usage: { inputTokens: 100, outputTokens: 20 } }
       }
     });
-    expect(portionRequestCounts(turn, splitByModel(turn))).toEqual([2, 1]);
+    expect(partRequestCounts(turn, priceRecord(turn, snapshotPricing).parts)).toEqual([2, 1]);
   });
 });
 
@@ -222,6 +142,7 @@ describe("accumulateRecord", () => {
         costUsd: 0.25,
         costSource: "agent"
       }),
+      snapshotPricing,
       accumulator,
       seen
     );
@@ -231,6 +152,7 @@ describe("accumulateRecord", () => {
         timestamp: HOUR_9 * 1000 + 120_000,
         usage: { inputTokens: 50, outputTokens: 5 }
       }),
+      snapshotPricing,
       accumulator,
       seen
     );
@@ -250,10 +172,99 @@ describe("accumulateRecord", () => {
     const accumulator = createAccumulator();
     accumulateRecord(
       record({ timestamp: HOUR_9 * 1000, usage: { inputTokens: 1, outputTokens: 1 } }),
+      snapshotPricing,
       accumulator,
       new Map()
     );
     expect(accumulator.buckets.get(`${HOUR_9}|claude-code|`)).toMatchObject({ model: "", requests: 1 });
+  });
+});
+
+describe("accumulateRecord prices through the kit", () => {
+  /** Round prices in USD per million tokens, so the expected amounts are plain numbers. */
+  const roundPricing = createPricing({
+    "round-model": { input: 2, output: 10, cacheRead: 0.5, cacheWrite: 3, cacheWrite1h: 5 }
+  });
+
+  const bucketOf = (priced: UsageRecord) => {
+    const accumulator = createAccumulator();
+    accumulateRecord(priced, roundPricing, accumulator, new Map());
+    return [...accumulator.buckets.values()][0];
+  };
+
+  it("multiplies a table price by the record's pricingMultiplier, but not an amount the agent logged", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 100_000 };
+    // (1M input × $2 + 0.1M output × $10) × 2 for Codex's priority tier.
+    expect(bucketOf(record({ timestamp: 0, model: "round-model", usage, pricingMultiplier: 2 }))).toMatchObject({
+      costUsd: 6,
+      unpricedRequests: 0
+    });
+    // The agent's own amount is what it billed, so the multiplier does not apply to it.
+    const logged = record({
+      timestamp: 0,
+      model: "round-model",
+      usage,
+      pricingMultiplier: 2,
+      costUsd: 0.5,
+      costSource: "agent"
+    });
+    expect(bucketOf(logged)).toMatchObject({ costUsd: 0.5, unpricedRequests: 0 });
+  });
+
+  it("charges one-hour cache writes at their own rate", () => {
+    const usage = { inputTokens: 1_000_000, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 400_000, outputTokens: 0 };
+    // 0.6M five-minute writes × $3 + 0.4M one-hour writes × $5; the bucket keeps one cache-write count.
+    const bucket = bucketOf(record({ timestamp: 0, model: "round-model", usage }));
+    expect(bucket?.costUsd).toBeCloseTo(3.8, 10);
+    expect(bucket).toMatchObject({ cacheWriteTokens: 1_000_000, unpricedRequests: 0 });
+  });
+});
+
+describe("S11: a model the pricing table does not list", () => {
+  it("counts its tokens, leaves it out of the cost and reports its requests as unpriced", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    try {
+      const priced = { inputTokens: 5400, cacheReadTokens: 5000, cacheWriteTokens: 300, outputTokens: 50 };
+      await writeClaudeSession(setup.home, {
+        sessionId: "cc-s11",
+        mtimeMs: MTIME,
+        requests: [
+          { requestId: "r1", model: "claude-opus-5-5", timestampMs: (HOUR_9 + 5 * 60) * 1000, usage: priced },
+          {
+            requestId: "r2",
+            model: "claude-unlisted-test",
+            timestampMs: (HOUR_9 + 10 * 60) * 1000,
+            usage: { inputTokens: 800, outputTokens: 40 }
+          },
+          {
+            requestId: "r3",
+            model: "claude-unlisted-test",
+            timestampMs: (HOUR_9 + 15 * 60) * 1000,
+            usage: { inputTokens: 200, outputTokens: 10 }
+          }
+        ]
+      });
+      await runRefresh({ platform: setup.platform, dataDir: setup.dataDir, log: silentLog, timeZone: TIME_ZONE });
+
+      const rows = await readLedger(setup.platform, setup.dataDir, (ledger) => ledger.readBuckets());
+      const listed = rows.find((row) => row.model === "claude-opus-5-5");
+      expect(listed).toMatchObject({ requests: 1, unpricedRequests: 0 });
+      expect(listed?.costUsd).toBeCloseTo(snapshotCost("claude-opus-5-5", priced), 12);
+      expect(rows.find((row) => row.model === "claude-unlisted-test")).toMatchObject({
+        inputTokens: 1000,
+        outputTokens: 50,
+        requests: 2,
+        costUsd: 0,
+        unpricedRequests: 2
+      });
+
+      const snapshot = await readSnapshotFile(setup.platform, setup.dataDir);
+      const totals = snapshot.kind === "ok" ? snapshot.snapshot.totals.today : undefined;
+      expect(totals).toMatchObject({ tokens: 5450 + 1050, requests: 3, unpricedRequests: 2 });
+      expect(totals?.costUsd).toBeCloseTo(snapshotCost("claude-opus-5-5", priced), 12);
+    } finally {
+      await setup.remove();
+    }
   });
 });
 
@@ -317,7 +328,7 @@ describe("S12: agent-logged cost over real fixture logs", () => {
     await setup.remove();
   });
 
-  it("puts the logged amounts into the buckets and prices nothing else", async () => {
+  it("puts the logged amounts into the buckets, even for a model the pricing table lists", async () => {
     const outcome = await runRefresh({
       platform: setup.platform,
       dataDir: setup.dataDir,
@@ -343,6 +354,7 @@ describe("S12: agent-logged cost over real fixture logs", () => {
     const piZeroCost = rows.find((row) => row.agent === "pi" && row.model === "gemini-3-flash");
     expect(piZeroCost).toMatchObject({ costUsd: 0, unpricedRequests: 0, requests: 1 });
 
+    // The kit's snapshot prices `anthropic/claude-sonnet-5-5`; the amounts opencode logged still win (Spec S12).
     const opencode = rows.find((row) => row.agent === "opencode" && row.model === "anthropic/claude-sonnet-5-5");
     expect(opencode).toMatchObject({
       inputTokens: 1550,

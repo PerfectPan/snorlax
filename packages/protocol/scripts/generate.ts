@@ -114,6 +114,7 @@ const sampleStatus: protocol.Status = {
   lastScanAt: "2026-10-23T02:35:10.205Z",
   sync: { state: "ok", at: "2026-10-23T02:35:11.901Z" },
   failuresByAgent: { grok: 2 },
+  pricingChanged: false,
   agents: [
     { agent: "claude-code", displayName: "Claude Code", status: "found" },
     { agent: "codex", displayName: "Codex CLI", status: "found" },

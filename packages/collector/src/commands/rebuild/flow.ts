@@ -22,7 +22,9 @@ export function rebuildStartHour(now: number, days: number): number {
  * Rebuild's part of the scan-and-commit run (plan 3.4.3): inside the run's one transaction, zeroes every bucket
  * from the window start, drops the `sessions_seen` rows inside the window, and rescans the window with no saved
  * state. Zeroed buckets that receive no usage stay as zero rows marked dirty, so a later upload replaces the
- * backend's rows with zeros.
+ * backend's rows with zeros. Only a rebuild of the longest window prices again every bucket the snapshot shows,
+ * so only that one records the current pricing version (plan 3.7); a shorter one leaves older days at the prices
+ * they had.
  */
 export const rebuildScan = (days: number): ScanRun => ({
   event: "rebuild",
@@ -32,7 +34,8 @@ export const rebuildScan = (days: number): ScanRun => ({
     return {
       since: startHour * 1000,
       state: undefined,
-      beforeScan: Effect.andThen(ledger.zeroBucketsFrom(startHour), ledger.deleteSessionsSeenFrom(startHour))
+      beforeScan: Effect.andThen(ledger.zeroBucketsFrom(startHour), ledger.deleteSessionsSeenFrom(startHour)),
+      reprices: days === REBUILD_MAX_DAYS
     };
   }
 });

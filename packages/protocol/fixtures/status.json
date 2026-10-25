@@ -15,6 +15,7 @@
   "failuresByAgent": {
     "grok": 2
   },
+  "pricingChanged": false,
   "agents": [
     {
       "agent": "claude-code",
