@@ -269,7 +269,7 @@ describe("refresh and rebuild", () => {
     expect(missing.status).toBe(2);
   });
 
-  it("status reports a changed pricing table and suggests a rebuild of 30 days, which clears it (plan 3.7)", async () => {
+  it("status reports a changed pricing table and suggests rebuild --days 30, which clears it (plan 3.7)", async () => {
     const pricingHome = await mkdtemp(join(tmpdir(), "snorlax-cli-pricing-"));
     const status = () => z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], pricingHome).stdout));
     try {

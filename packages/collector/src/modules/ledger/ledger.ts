@@ -505,9 +505,10 @@ export const openLedger = (
 /**
  * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
  * there is no ledger yet. `pricingChanged` says the buckets were priced with another table than this build's
- * (plan 3.7); a ledger that records no version yet has not been priced, so it has not changed. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect; a
- * ledger that cannot be opened, or whose meta row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a
- * database SQLite reads without a `meta` table is `LedgerNotSnorlax`.
+ * (plan 3.7); a ledger that records no version yet has not been priced, so it has not changed. `uninstall --data`
+ * reads it as the snorlax marker. A `stat` that throws is a defect; a ledger that cannot be opened, or whose meta
+ * row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a database SQLite reads without a `meta` table is
+ * `LedgerNotSnorlax`.
  */
 export const readLedgerStatus = (
   platform: Pick<Platform, "fs"> & { readonly sqlite?: PlatformSqlite },

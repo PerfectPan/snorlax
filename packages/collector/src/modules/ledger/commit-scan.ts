@@ -33,9 +33,9 @@ export interface ScanWindow {
 /**
  * Steps 3–5 of a run (plan 3.4.1): scan only what was written since `since`, price every record with the
  * current table and fold it into hourly buckets, then — in one transaction — write the buckets, the sessions
- * first seen, the pricing version (3.7), the new scan state and `last_scan_completed_at`. The scan iterates inside the transaction, so a run that fails or is interrupted
- * anywhere before the commit leaves the ledger exactly as it was (Spec S3), and a rebuild's zeroing rolls back
- * with it.
+ * first seen, the pricing version (3.7), the new scan state and `last_scan_completed_at`. The scan iterates inside
+ * the transaction, so a run that fails or is interrupted anywhere before the commit leaves the ledger exactly as it
+ * was (Spec S3), and a rebuild's zeroing rolls back with it.
  */
 export const commitScan = (
   platform: Platform,
