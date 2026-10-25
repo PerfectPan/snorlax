@@ -18,6 +18,8 @@ final class FixtureDecodingTests: XCTestCase {
         XCTAssertEqual(snapshot.timeZone, "Asia/Shanghai")
         XCTAssertEqual(snapshot.totals.today.tokens, 81_234_567)
         _ = try JSONDecoder().decode(Status.self, from: Fixtures.data("status"))
+        let uninstall = try JSONDecoder().decode(UninstallResult.self, from: Fixtures.data("uninstall-result"))
+        XCTAssertEqual(uninstall.keptEntries, ["logs/notes.txt", "photos"])
     }
 
     func testRefusesANewerSchemaVersionWithThePlanMessage() throws {

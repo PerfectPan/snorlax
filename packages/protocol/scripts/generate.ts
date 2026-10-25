@@ -142,7 +142,8 @@ const schemas: Readonly<Record<string, z.core.$ZodType>> = {
   "refresh-result": protocol.refreshResultSchema,
   "pair-result": protocol.pairResultSchema,
   status: protocol.statusSchema,
-  doctor: protocol.doctorSchema
+  doctor: protocol.doctorSchema,
+  "uninstall-result": protocol.uninstallResultSchema
 };
 
 const fixtures: Readonly<Record<string, unknown>> = {
@@ -170,7 +171,8 @@ const fixtures: Readonly<Record<string, unknown>> = {
     name: "MacBook Pro"
   },
   status: sampleStatus,
-  doctor: sampleDoctor
+  doctor: sampleDoctor,
+  "uninstall-result": { schemaVersion: 1, ok: true, keptEntries: ["logs/notes.txt", "photos"] }
 };
 
 async function writeGenerated(subdir: string, documents: Readonly<Record<string, unknown>>): Promise<number> {

@@ -41,12 +41,24 @@ export type FailureCode =
   | "pricing"
   | "internal";
 
-/** Success body of commands that have nothing to report (`unpair`, `install`, `uninstall`). */
+/** Success body of commands that have nothing to report (`unpair`, `install`). */
 export const okSchema = z.object({
   schemaVersion: schemaVersionSchema,
   ok: z.literal(true)
 });
 export type Ok = z.output<typeof okSchema>;
+
+/**
+ * Success body of `uninstall`. `keptEntries` is present only when `--data` deleted the data directory's
+ * snorlax entries: the entries it kept because snorlax did not write them, relative to the data directory and
+ * sorted (`logs/<name>` for one inside `logs/`); empty when the directory itself was removed.
+ */
+export const uninstallResultSchema = z.object({
+  schemaVersion: schemaVersionSchema,
+  ok: z.literal(true),
+  keptEntries: z.optional(z.array(z.string().check(z.minLength(1))))
+});
+export type UninstallResult = z.output<typeof uninstallResultSchema>;
 
 /**
  * Success body of `snapshot --json` (plan 3.1): the snapshot itself is the file shape of 3.2.2, and

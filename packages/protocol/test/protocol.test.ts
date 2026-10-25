@@ -17,7 +17,8 @@ const schemas: Readonly<Record<string, z.core.$ZodType>> = {
   "refresh-result": protocol.refreshResultSchema,
   "pair-result": protocol.pairResultSchema,
   status: protocol.statusSchema,
-  doctor: protocol.doctorSchema
+  doctor: protocol.doctorSchema,
+  "uninstall-result": protocol.uninstallResultSchema
 };
 
 const readJson = (dir: string, name: string): unknown =>

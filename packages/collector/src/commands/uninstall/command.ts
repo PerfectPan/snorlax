@@ -1,3 +1,4 @@
+import type { UninstallResult } from "@rivus/snorlax-protocol";
 import { Flag } from "effect/cli";
 import { Effect } from "effect";
 
@@ -23,7 +24,11 @@ export const uninstallCommand = {
   },
   run: ({ data }: { readonly data: boolean }) =>
     Effect.map(uninstallFlow({ deleteData: data }), ({ dataDir, deleted, dataLeftovers }) => ({
-      payload: { schemaVersion: 1, ok: true },
+      payload: {
+        schemaVersion: 1,
+        ok: true,
+        ...(deleted ? { keptEntries: [...dataLeftovers] } : {})
+      } satisfies UninstallResult,
       human: humanResult(data, dataDir, dataLeftovers),
       ...(deleted ? { deletedDataDir: true as const } : {})
     }))

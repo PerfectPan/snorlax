@@ -583,3 +583,22 @@ public struct StatusSync: Codable, Equatable, Sendable {
         self.state = state
     }
 }
+
+// MARK: - UninstallResult
+public struct UninstallResult: Codable, Equatable, Sendable {
+    public let keptEntries: [String]?
+    public let ok: Bool
+    public let schemaVersion: Double
+
+    public enum CodingKeys: String, CodingKey {
+        case keptEntries = "keptEntries"
+        case ok = "ok"
+        case schemaVersion = "schemaVersion"
+    }
+
+    public init(keptEntries: [String]?, ok: Bool, schemaVersion: Double) {
+        self.keptEntries = keptEntries
+        self.ok = ok
+        self.schemaVersion = schemaVersion
+    }
+}
