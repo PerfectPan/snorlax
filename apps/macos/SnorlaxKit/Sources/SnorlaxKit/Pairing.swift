@@ -88,8 +88,9 @@ public final class PairingModel: ObservableObject {
         }
     }
 
-    /// Settings calls this from `onDisappear`. Closing the window must not leave
-    /// the admin token in the process.
+    /// Settings calls this from `onDisappear`, which is the window closing.
+    /// Minimizing, hiding, or switching apps does not dismiss the view, so
+    /// those leave the field as it is.
     public func settingsDisappeared() {
         adminToken = ""
     }
@@ -101,9 +102,11 @@ public final class PairingModel: ObservableObject {
         guard !running, !url.isEmpty, !name.isEmpty, !token.isEmpty else { return }
         running = true
         defer {
-            // A token typed after this attempt copied `token` belongs to the
-            // next attempt. Clearing unconditionally would discard it when
-            // Settings was closed and opened again during the refresh.
+            // Clear the field only when it still holds the token this attempt
+            // copied. A different value belongs to something else (the window
+            // closing, a paired snapshot) and must not be wiped on the way out.
+            // The SecureField is disabled while `running`, so this is not a
+            // path where the user types a replacement.
             if adminToken == token {
                 adminToken = ""
             }

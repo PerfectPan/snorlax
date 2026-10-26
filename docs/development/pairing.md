@@ -36,8 +36,9 @@ Open Settings and use the Sync section.
 When this Mac is not paired, the section asks for the backend URL, the device name, and the admin token. The
 device name starts as the name `snorlax status` reports, and is left empty when status has none. Pair stays
 disabled until all three fields are filled, and while a command is already running. The admin token is used only
-for that attempt. It is not saved. The field is cleared when the attempt finishes, when Settings closes, when
-Unpair starts, and when the snapshot shows this Mac as paired.
+for that attempt. It is not saved. Closing the Settings window, finishing pairing, or unpairing clears it.
+Minimizing or hiding the window, or switching to another app, does not, so close the window when you are not
+using the token. A snapshot that shows this Mac as paired clears it too.
 
 When this Mac is paired, the section shows that it is paired, the sync state (`ok`, `failed`, `unpaired`, or
 `revoked`), and the last sync time. Those three come from the snapshot. Unpair removes the pairing and keeps the

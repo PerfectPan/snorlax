@@ -110,6 +110,17 @@ final class CollectorClientTests: XCTestCase {
         }
     }
 
+    func testTheTimeoutMessageNamesTheBudgetThatExpired() {
+        XCTAssertEqual(
+            CollectorClientError.timedOut(.seconds(120)).errorDescription,
+            "The collector did not finish within 120 seconds."
+        )
+        XCTAssertEqual(
+            CollectorClientError.timedOut(.seconds(300)).errorDescription,
+            "The collector did not finish within 300 seconds."
+        )
+    }
+
     func testTimeoutPlanFollowsTheTerminationReason() {
         XCTAssertEqual(CollectorClient.timeoutPlan(terminatedBySignal: false), .collect)
         XCTAssertEqual(CollectorClient.timeoutPlan(terminatedBySignal: true), .reportTimeout)
@@ -147,7 +158,8 @@ final class CollectorClientTests: XCTestCase {
             _ = try await client.run(["refresh"], as: RefreshResult.self)
             XCTFail("a killed child is a timeout")
         } catch let error as CollectorClientError {
-            XCTAssertEqual(error, .timedOut)
+            XCTAssertEqual(error, .timedOut(.seconds(2)))
+            XCTAssertEqual(error.errorDescription, "The collector did not finish within 2 seconds.")
         }
 
         // The SIGKILLed child is gone, not lingering unreaped.

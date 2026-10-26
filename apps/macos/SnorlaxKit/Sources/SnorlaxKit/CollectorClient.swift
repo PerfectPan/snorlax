@@ -20,7 +20,8 @@ public protocol ProcessRunning: Sendable {
 public enum CollectorClientError: Error, Equatable {
     case failed(Failure)
     case newerCollector
-    case timedOut
+    /// `timeout` is the budget this run actually used, not the client's default.
+    case timedOut(Duration)
     case launchFailed(String)
     case unreadable(exitCode: Int32, stdout: String, stderr: String)
 }
@@ -32,8 +33,8 @@ extension CollectorClientError: LocalizedError {
             return failure.error.message
         case .newerCollector:
             return SchemaGate.newerCollectorMessage
-        case .timedOut:
-            return "The collector did not finish within 120 seconds."
+        case let .timedOut(timeout):
+            return "The collector did not finish within \(Self.seconds(timeout)) seconds."
         case let .launchFailed(message):
             return message
         case let .unreadable(_, stdout, stderr):
@@ -41,6 +42,16 @@ extension CollectorClientError: LocalizedError {
             if !stdout.isEmpty { return stdout }
             return "The collector returned an unreadable result."
         }
+    }
+
+    /// Whole seconds when the budget is whole. A fractional budget keeps its
+    /// fraction so the sentence cannot name a shorter timeout than the one used.
+    private static func seconds(_ timeout: Duration) -> String {
+        let (seconds, attoseconds) = timeout.components
+        if attoseconds == 0 {
+            return String(seconds)
+        }
+        return String(Double(seconds) + Double(attoseconds) / 1e18)
     }
 }
 
@@ -180,7 +191,7 @@ public struct FoundationProcessRunner: ProcessRunning {
                     if terminated.wait(timeout: .now() + 1) == .timedOut {
                         kill(process.processIdentifier, SIGKILL)
                         if terminated.wait(timeout: .now() + 1) == .timedOut {
-                            once.resume(throwing: CollectorClientError.timedOut)
+                            once.resume(throwing: CollectorClientError.timedOut(timeout))
                             return
                         }
                     }
@@ -197,7 +208,7 @@ public struct FoundationProcessRunner: ProcessRunning {
                         : ProcessOutput(status: process.terminationStatus, stdout: out.drain(), stderr: err.drain())
                     once.resume(returning: output)
                 case .reportTimeout:
-                    once.resume(throwing: CollectorClientError.timedOut)
+                    once.resume(throwing: CollectorClientError.timedOut(timeout))
                 }
             }
             let writer = standardInput.fileHandleForWriting

@@ -172,7 +172,7 @@ private struct SyncSection: View {
                     .disabled(pairing.running)
                 SecureField("Admin token", text: $pairing.adminToken)
                     .disabled(pairing.running)
-                Text("The admin token is used only for this pairing. It is not saved, and closing Settings clears it.")
+                Text("The admin token is used only for this pairing. It is not saved. Closing this window, finishing pairing, or unpairing clears it. Minimizing, hiding, or switching apps does not, so close the window when you are done.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Pair") {

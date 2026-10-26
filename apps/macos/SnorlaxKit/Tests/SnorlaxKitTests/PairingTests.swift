@@ -195,20 +195,46 @@ final class PairingModelTests: XCTestCase {
         XCTAssertEqual(model.lastSyncText, "3 min ago")
     }
 
-    func testATokenTypedDuringAnAttemptIsKeptWhenThatAttemptEnds() async {
+    func testPairDoesNotClearAFieldValueItDidNotCopy() async {
         let runner = HoldingRunner()
-        let model = prepared(runner, token: "first-token")
+        let model = prepared(runner, token: "copied-token")
         let first = Task { await model.pair() }
         await runner.waitForCalls(1)
 
-        model.settingsDisappeared()
-        XCTAssertEqual(model.adminToken, "")
-        model.adminToken = "second-token"
+        // The field no longer holds the token this attempt copied. The
+        // SecureField is disabled while the command runs, so this is another
+        // value, not a second token the user typed into it.
+        model.adminToken = "other-value"
         runner.resume(output(pairResult(name: "MacBook Pro"), status: 0))
         await first.value
 
-        XCTAssertEqual(model.adminToken, "second-token")
+        XCTAssertEqual(model.adminToken, "other-value")
         XCTAssertFalse(model.running)
+    }
+
+    func testPairAndUnpairWriteNoUserDefaultsKeys() async {
+        let domain = Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName
+        let saved = UserDefaults.standard.persistentDomain(forName: domain)
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        defer {
+            if let saved {
+                UserDefaults.standard.setPersistentDomain(saved, forName: domain)
+            } else {
+                UserDefaults.standard.removePersistentDomain(forName: domain)
+            }
+        }
+        let before = UserDefaults.standard.dictionaryRepresentation()
+
+        let runner = ScriptedRunner()
+        runner.enqueue(output(pairResult(name: "MacBook Pro"), status: 0))
+        runner.enqueue(output(Ok(ok: true, schemaVersion: 1), status: 0))
+        let model = prepared(runner, token: "snorlax-test-admin-token")
+        await model.pair()
+        await model.unpair()
+
+        let written = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
+        XCTAssertTrue(written.isEmpty)
+        XCTAssertEqual(Set(UserDefaults.standard.dictionaryRepresentation().keys), Set(before.keys))
     }
 
     func testPairAndUnpairApplyTheReloadedSnapshot() async {
@@ -251,7 +277,7 @@ final class PairingModelTests: XCTestCase {
 
     func testTimeoutAndUnreadableResultsHaveTheirOwnSentences() async {
         let timedOut = ScriptedRunner()
-        timedOut.enqueue(throwing: CollectorClientError.timedOut)
+        timedOut.enqueue(throwing: CollectorClientError.timedOut(.seconds(300)))
         let timed = prepared(timedOut, token: "snorlax-test-admin-token")
         await timed.pair()
         XCTAssertEqual(
