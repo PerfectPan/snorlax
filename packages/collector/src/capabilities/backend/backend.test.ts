@@ -37,6 +37,29 @@ const run = <A>(
     }).pipe(Effect.provide(Backend.layer(fetchImpl)))
   );
 
+describe("request construction", () => {
+  it("reports an illegal device token as a local token and does not print it", async () => {
+    for (const token of ["probe-secret-123\nhidden", "probe-other-456\rhidden"]) {
+      const error = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Backend).listDevices(BASE, token);
+          }).pipe(
+            Effect.provide(
+              Backend.layer(() => Promise.reject(new Error("a bad device token must not call the backend")))
+            )
+          )
+        )
+      );
+      expect(error._tag).toBe("LocalTokenInvalid");
+      expect(error.message).toContain("device token");
+      expect(error.message).toContain("pair");
+      expect(error.message).not.toContain(token);
+      expect(error.message).not.toContain("probe-secret");
+    }
+  });
+});
+
 describe("request timeout", () => {
   it("is still running at 14s and fails as unreachable when the clock reaches 15s", async () => {
     const error = await Effect.runPromise(

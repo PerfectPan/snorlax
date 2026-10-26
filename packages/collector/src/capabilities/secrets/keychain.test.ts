@@ -9,7 +9,7 @@ import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
-import { Secrets } from "./secrets.ts";
+import { Secrets, storeProgramMissingNotice } from "./secrets.ts";
 
 /**
  * `security -i` and `secret-tool` through stub scripts. The token is written on stdin and must not appear in
@@ -194,7 +194,7 @@ describe("macOS keychain through security -i", () => {
     }
   });
 
-  it("treats a missing security binary as an absent item and does not call /usr/bin/security", async () => {
+  it("reports a missing security binary instead of an absent item and does not call /usr/bin/security", async () => {
     const home = await mkdtemp(join(tmpdir(), "snorlax-keychain-missing-"));
     const missing = join(home, "missing-security");
     try {
@@ -218,16 +218,31 @@ describe("macOS keychain through security -i", () => {
       };
       const provide = Layer.provide(Secrets.keychain, Layer.succeed(SnorlaxPlatform, platform));
       const read = await Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* (yield* Secrets).read(DEVICE);
-        }).pipe(Effect.provide(provide))
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).read(DEVICE);
+          }).pipe(Effect.provide(provide))
+        )
       );
-      expect(read).toBeUndefined();
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* (yield* Secrets).delete(DEVICE);
-        }).pipe(Effect.provide(provide))
+      expect(read._tag).toBe("StoreBinaryMissing");
+      if (read._tag !== "StoreBinaryMissing") {
+        return;
+      }
+      expect(read.command).toBe(missing);
+      expect(storeProgramMissingNotice(read.command)).toContain(missing);
+      expect(read.message).not.toContain(TOKEN);
+      const removed = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).delete(DEVICE);
+          }).pipe(Effect.provide(provide))
+        )
       );
+      expect(removed._tag).toBe("StoreBinaryMissing");
+      if (removed._tag !== "StoreBinaryMissing") {
+        return;
+      }
+      expect(removed.command).toBe(missing);
       const stored = await Effect.runPromise(
         Effect.flip(
           Effect.gen(function* () {
@@ -396,7 +411,7 @@ process.exit(1);
     }
   });
 
-  it("treats a missing secret-tool binary as an absent item and does not call secret-tool", async () => {
+  it("reports a missing secret-tool binary instead of an absent item and does not call secret-tool", async () => {
     const home = await mkdtemp(join(tmpdir(), "snorlax-libsecret-enoent-"));
     const missing = join(home, "missing-secret-tool");
     try {
@@ -420,16 +435,31 @@ process.exit(1);
       };
       const provide = Layer.provide(Secrets.libsecret, Layer.succeed(SnorlaxPlatform, platform));
       const read = await Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* (yield* Secrets).read(DEVICE);
-        }).pipe(Effect.provide(provide))
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).read(DEVICE);
+          }).pipe(Effect.provide(provide))
+        )
       );
-      expect(read).toBeUndefined();
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* (yield* Secrets).delete(DEVICE);
-        }).pipe(Effect.provide(provide))
+      expect(read._tag).toBe("StoreBinaryMissing");
+      if (read._tag !== "StoreBinaryMissing") {
+        return;
+      }
+      expect(read.command).toBe(missing);
+      expect(storeProgramMissingNotice(read.command)).toContain("missing-secret-tool");
+      expect(read.message).not.toContain(TOKEN);
+      const removed = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).delete(DEVICE);
+          }).pipe(Effect.provide(provide))
+        )
       );
+      expect(removed._tag).toBe("StoreBinaryMissing");
+      if (removed._tag !== "StoreBinaryMissing") {
+        return;
+      }
+      expect(removed.command).toBe(missing);
       const stored = await Effect.runPromise(
         Effect.flip(
           Effect.gen(function* () {

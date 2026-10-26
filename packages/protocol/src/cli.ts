@@ -84,7 +84,10 @@ export const refreshResultSchema = z.object({
     state: syncStateSchema,
     pushed: nonNegativeIntSchema,
     pulled: nonNegativeIntSchema,
-    /** Plain-text reason for `failed` or `revoked`. Omitted when the sync has nothing to explain. */
+    /**
+     * Plain-text reason for `failed` or `revoked`, and for `unpaired` when the store program is missing.
+     * Omitted when the sync has nothing to explain.
+     */
     message: z.optional(z.string())
   })
 });

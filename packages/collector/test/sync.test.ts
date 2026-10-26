@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   httpDeviceRegisterRequestSchema,
   httpDeviceRegisterResponseSchema,
-  httpPushRequestSchema
+  httpPushRequestSchema,
+  refreshResultSchema
 } from "@rivus/snorlax-protocol";
 import { createApp } from "@rivus/snorlax-worker";
 import { createSqliteD1 } from "@rivus/snorlax-worker/sqlite-d1";
@@ -629,7 +630,7 @@ describe("collector sync", () => {
     }
   });
 
-  it("does not start security when unpaired, and a missing security binary is an absent item", async () => {
+  it("does not start security when unpaired, and a missing security binary explains the unpaired refresh", async () => {
     const setup = await createRefreshSetup({ now: NOW });
     const stub = join(setup.home, "security-stub");
     const logPath = join(setup.home, "security.log");
@@ -694,9 +695,13 @@ describe("collector sync", () => {
         )
       );
       expect(exit.exitCode).toBe(0);
-      expect(stdout.join("")).toContain("sync: not paired");
-      expect(stdout.join("")).not.toContain("/usr/bin/security");
-      expect(stdout.join("")).not.toContain("missing-security");
+      const text = stdout.join("");
+      expect(text).toContain("sync: not paired");
+      expect(text).toContain("was not deleted");
+      expect(text).not.toContain("/usr/bin/security");
+      expect(text).not.toContain(setup.home);
+      const log = await readFile(join(setup.dataDir, "logs", "snorlax.log"), "utf8");
+      expect(log).toContain("was not deleted");
       const snap = await readSnapshotFile(setup.platform, setup.dataDir);
       expect(snap.kind === "ok" && snap.snapshot.generatedAt).toBe(new Date(NOW + 60_000).toISOString());
       expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("unpaired");
@@ -792,6 +797,74 @@ describe("collector sync", () => {
       expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("failed");
     } finally {
       await setup.remove();
+    }
+  });
+
+  it("reports sync failed when the device token cannot be a header, and does not print it", async () => {
+    for (const token of ["probe-secret-123\nhidden", "probe-other-456\rhidden"]) {
+      const setup = await createRefreshSetup({ now: NOW });
+      try {
+        const platform = {
+          ...setup.platform,
+          env: {
+            ...setup.platform.env,
+            PATH: "/usr/bin:/bin",
+            SNORLAX_HOME: setup.dataDir,
+            SNORLAX_DEVICE_TOKEN: token
+          }
+        };
+        const layers = Layer.mergeAll(
+          Layer.succeed(SnorlaxPlatform, platform),
+          NodeFiles.live,
+          Secrets.memory(platform.env),
+          Backend.layer(() => Promise.reject(new Error("a bad device token must not call the backend"))),
+          Layer.succeed(TimeZone, TIME_ZONE)
+        );
+        await Effect.runPromise(refreshFlow.pipe(Effect.provide(layers)));
+        await writeFile(join(setup.dataDir, "config.json"), JSON.stringify({ backendUrl: BASE, deviceName: "Desk" }));
+        const run = async (args: readonly string[]) => {
+          const stdout: string[] = [];
+          const stderr: string[] = [];
+          const exit = await Effect.runPromise(
+            Effect.flip(
+              runCli(
+                args,
+                Layer.mergeAll(
+                  layers,
+                  fakeScheduler([], { jobFile: join(setup.home, "job") }),
+                  Layer.succeed(
+                    CliEnv,
+                    CliEnv.of({
+                      stdout: { write: (text) => void stdout.push(text) },
+                      stderr: { write: (text) => void stderr.push(text) },
+                      colors: false
+                    })
+                  )
+                )
+              )
+            )
+          );
+          return { exitCode: exit.exitCode, stdout: stdout.join(""), stderr: stderr.join("") };
+        };
+        const json = await run(["refresh", "--json"]);
+        const human = await run(["refresh"]);
+        const log = await readFile(join(setup.dataDir, "logs", "snorlax.log"), "utf8");
+        expect(json.exitCode).toBe(0);
+        const body = z.parse(refreshResultSchema, JSON.parse(json.stdout));
+        expect(body.sync.state).toBe("failed");
+        expect(body.sync.message).toContain("device token");
+        expect(body.sync.message).toContain("pair");
+        expect(human.stdout).toContain("sync: failed");
+        expect(human.stdout).toContain("device token");
+        for (const surface of [json.stdout, json.stderr, human.stdout, human.stderr, log]) {
+          expect(surface).not.toContain(token);
+          expect(surface).not.toContain("probe-secret");
+          expect(surface).not.toContain("probe-other");
+        }
+        expect(log).toContain("device token");
+      } finally {
+        await setup.remove();
+      }
     }
   });
 });

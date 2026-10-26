@@ -1,17 +1,20 @@
 import { Effect } from "effect";
 
-import { Secrets } from "../../capabilities/secrets/secrets.ts";
+import { Secrets, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
 import { buildSnapshot } from "../../core/snapshot/snapshot.ts";
 import { readConfig, writeConfig } from "../../modules/config/config.ts";
 import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readLedgerStatus, withLedger } from "../../modules/ledger/ledger.ts";
-import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import { appendingLogger } from "../../modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { writeSnapshot } from "../../modules/snapshot-file/snapshot-file.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
 
 /**
  * One `snorlax unpair` (plan 3.1, 3.4.2). The device token is deleted first; a keychain failure changes
- * nothing else, so a retry can still delete the token. Then `backendUrl` is removed and `deviceName` stays.
+ * nothing else, so a retry can still delete the token. A missing store program does not abort the command:
+ * the human output and the log say a stored token was not deleted. Then `backendUrl` is removed and
+ * `deviceName` stays.
  * Under the ledger lock the remote rows are cleared and `snapshot.json` is rebuilt from the ledger, without
  * a scan, so the app sees `paired: false` immediately. Scan failure counts are not stored, so that rewrite
  * leaves `failuresByAgent` empty until the next scan. Local buckets stay. No ledger means there is no
@@ -22,9 +25,22 @@ export const unpairFlow = Effect.gen(function* () {
   const dataDir = resolveDataDir(platform);
   const status = yield* readLedgerStatus(platform, dataDir);
   if (status === null) {
-    return;
+    return undefined;
   }
-  yield* (yield* Secrets).delete(status.deviceId);
+  const deleted = yield* (yield* Secrets).delete(status.deviceId).pipe(
+    Effect.match({
+      onFailure: (error) => error,
+      onSuccess: () => undefined
+    })
+  );
+  let notice: string | undefined;
+  if (deleted !== undefined) {
+    if (deleted._tag !== "StoreBinaryMissing") {
+      return yield* deleted;
+    }
+    notice = storeProgramMissingNotice(deleted.command);
+    yield* appendingLogger(platform, yield* NodeFiles, dataDir).event("keychain", { message: notice });
+  }
   const existing = yield* readConfig(platform, dataDir);
   if (existing.backendUrl !== undefined) {
     yield* writeConfig(platform, dataDir, existing.deviceName === undefined ? {} : { deviceName: existing.deviceName });
@@ -48,4 +64,5 @@ export const unpairFlow = Effect.gen(function* () {
       yield* writeSnapshot(platform, dataDir, snapshot);
     })
   );
+  return notice;
 });

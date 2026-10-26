@@ -9,6 +9,7 @@ import {
   BackendInvalidResponse,
   BackendUnauthorized,
   BackendUnreachable,
+  LocalTokenInvalid,
   type BackendFailure,
   pairedSync
 } from "../../capabilities/backend/backend.ts";
@@ -147,6 +148,8 @@ const explainRevoked = (error: BackendFailure): BackendFailure => {
       return new BackendForbidden({ message });
     case "BackendInvalidResponse":
       return new BackendInvalidResponse({ message });
+    case "LocalTokenInvalid":
+      return new LocalTokenInvalid({ message });
   }
 };
 

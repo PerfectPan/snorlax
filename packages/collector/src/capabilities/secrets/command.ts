@@ -13,11 +13,14 @@ export class KeychainUnavailable extends Data.TaggedError("KeychainUnavailable")
 }> {}
 
 /**
- * The store tool's program does not exist (`ENOENT`). No item can be stored, so `read` and `delete` treat it
- * as an absent item. `store` still fails: pairing needs the program.
+ * The store tool's program does not exist (`ENOENT`). An item stored earlier can still be in the keychain:
+ * the tool may have been removed after pairing, or the configured path may have changed. `read` and `delete`
+ * surface this instead of answering "no item". `store` still fails: pairing needs the program.
  */
 export class StoreBinaryMissing extends Data.TaggedError("StoreBinaryMissing")<{
   readonly message: string;
+  /** The path that could not be started. The notice names it and does not name a token. */
+  readonly command: string;
 }> {}
 
 /** Node's spawn error carries `code`. A hand-written shape check would duplicate this schema. */
@@ -26,14 +29,14 @@ const enoentSchema = z.object({ code: z.literal("ENOENT") });
 const isEnoent = (error: unknown): boolean => z.safeParse(enoentSchema, error).success;
 
 const missingBinary = (command: string): StoreBinaryMissing =>
-  new StoreBinaryMissing({ message: `cannot run ${command}: the program does not exist` });
+  new StoreBinaryMissing({ command, message: `cannot run ${command}: the program does not exist` });
 
-/** `read` and `delete` answer "no item" when the program is missing. */
-export const absentWhenBinaryMissing = <A>(
-  effect: Effect.Effect<A, KeychainUnavailable | StoreBinaryMissing>,
-  absent: A
-): Effect.Effect<A, KeychainUnavailable> =>
-  effect.pipe(Effect.catchTag("StoreBinaryMissing", () => Effect.succeed(absent)));
+/**
+ * What `unpair`, `uninstall --data`, `doctor` and a paired refresh say when the program cannot be started.
+ * The item may still be stored; this command did not delete it.
+ */
+export const storeProgramMissingNotice = (command: string): string =>
+  `cannot find ${command}. If the keychain has this device's token, it was not deleted`;
 
 /** `store` stays a failure when the program is missing. The message names the path and not a secret. */
 export const unavailableWhenBinaryMissing = <A>(
@@ -85,8 +88,8 @@ const cannotRun = (command: string, error: unknown): KeychainUnavailable =>
 
 /**
  * Runs `command` with `args` and writes `stdin` to the child, then closes it. The token a caller puts in
- * `stdin` is never placed in `args` (plan 3.4.2). `ENOENT` is `StoreBinaryMissing`: the program is not
- * installed, so no item exists. Any other failure to start, a signal, or no answer within 15s on the Effect
+ * `stdin` is never placed in `args` (plan 3.4.2). `ENOENT` is `StoreBinaryMissing`: the program was not
+ * started, which does not prove that no item exists. Any other failure to start, a signal, or no answer within 15s on the Effect
  * clock is `KeychainUnavailable`. A non-zero exit is still a result, because "not found" is an exit code the
  * caller knows and a broken keychain is a different one.
  */

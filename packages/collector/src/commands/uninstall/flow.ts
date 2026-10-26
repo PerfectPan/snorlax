@@ -2,10 +2,11 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import { Data, Effect } from "effect";
 
 import { Scheduler } from "../../capabilities/scheduler/scheduler.ts";
-import { Secrets } from "../../capabilities/secrets/secrets.ts";
+import { Secrets, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
 import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readLedgerStatus } from "../../modules/ledger/ledger.ts";
-import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import { appendingLogger } from "../../modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { deleteDataDir, requireSnorlaxDataDir, resolvedDeletableDataDir } from "./delete-data.ts";
 
 /**
@@ -17,8 +18,10 @@ class UninstallKeychainFailed extends Data.TaggedError("UninstallKeychainFailed"
 /**
  * `uninstall --data` deletes the keychain item after the scheduler has removed the job and before the data
  * directory is deleted. A keychain failure stops there: the job is already gone, the data directory stays,
- * and the command exits 1 with `keychain`. A missing item is success. Without `--data` the item is left in
- * place. No ledger means there is no device id, so the delete is skipped.
+ * and the command exits 1 with `keychain`. A missing item is success. A missing store program does not stop
+ * the delete: the returned notice says a stored token was not deleted, and the caller logs it before the
+ * directory goes. Without `--data` the item is left in place. No ledger means there is no device id, so the
+ * delete is skipped.
  */
 const removeKeychainItem = (platform: Platform, dataDir: string) =>
   Effect.gen(function* () {
@@ -33,18 +36,25 @@ const removeKeychainItem = (platform: Platform, dataDir: string) =>
       )
     );
     if (status === null) {
-      return;
+      return undefined;
     }
-    yield* (yield* Secrets).delete(status.deviceId).pipe(
-      Effect.mapError(
-        (error) =>
-          new UninstallKeychainFailed({
-            message:
-              "the scheduled job is already removed, and the data directory was kept because the keychain item " +
-              `could not be deleted (${error.message})`
-          })
-      )
+    const deleted = yield* (yield* Secrets).delete(status.deviceId).pipe(
+      Effect.match({
+        onFailure: (error) => error,
+        onSuccess: () => undefined
+      })
     );
+    if (deleted === undefined) {
+      return undefined;
+    }
+    if (deleted._tag === "StoreBinaryMissing") {
+      return storeProgramMissingNotice(deleted.command);
+    }
+    return yield* new UninstallKeychainFailed({
+      message:
+        "the scheduled job is already removed, and the data directory was kept because the keychain item " +
+        `could not be deleted (${deleted.message})`
+    });
   });
 
 /**
@@ -67,8 +77,12 @@ export const uninstallFlow = ({ deleteData }: { readonly deleteData: boolean }) 
         : Effect.succeed(undefined)
     );
     if (toDelete === undefined) {
-      return { dataDir, deleted: false, dataLeftovers: [] };
+      return { dataDir, deleted: false, dataLeftovers: [], keychainNotice: undefined };
     }
-    yield* removeKeychainItem(platform, toDelete);
-    return { dataDir, deleted: true, dataLeftovers: yield* deleteDataDir(platform.fs, toDelete) };
+    const keychainNotice = yield* removeKeychainItem(platform, toDelete);
+    // The data directory, including this log, is deleted next. The line is still written first.
+    if (keychainNotice !== undefined) {
+      yield* appendingLogger(platform, yield* NodeFiles, toDelete).event("keychain", { message: keychainNotice });
+    }
+    return { dataDir, deleted: true, dataLeftovers: yield* deleteDataDir(platform.fs, toDelete), keychainNotice };
   });

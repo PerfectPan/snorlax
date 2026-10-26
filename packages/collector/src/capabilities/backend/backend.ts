@@ -50,7 +50,21 @@ export class BackendConflict extends Data.TaggedError("BackendConflict")<{
   readonly message: string;
 }> {}
 
-export type BackendFailure = BackendUnreachable | BackendUnauthorized | BackendForbidden | BackendInvalidResponse;
+/**
+ * The request could not be built because the token is not a legal header value. The token is the one stored
+ * on this machine (the keychain or `SNORLAX_DEVICE_TOKEN`), so this is a keychain failure, not a network
+ * failure. The message names no token.
+ */
+export class LocalTokenInvalid extends Data.TaggedError("LocalTokenInvalid")<{
+  readonly message: string;
+}> {}
+
+export type BackendFailure =
+  | BackendUnreachable
+  | BackendUnauthorized
+  | BackendForbidden
+  | BackendInvalidResponse
+  | LocalTokenInvalid;
 
 /** Every failure one HTTP call can return. `BackendConflict` stays out of `cli/failures.ts`; `pair` catches it. */
 export type BackendCallFailure = BackendFailure | BackendConflict;
@@ -148,16 +162,19 @@ const endpoint = (baseUrl: string, path: string): Effect.Effect<URL, BackendUnre
  * interrupted, so a successful response can still be parsed. The 15s limit is the Effect clock
  * (`Effect.timeoutOrElse`), never `AbortSignal.timeout`, so tests advance `TestClock`.
  */
+const LOCAL_TOKEN_INVALID = "the device token on this machine is not a legal token; run `snorlax pair` again";
+
 const send = (
   fetchImpl: BackendFetch,
   url: string,
   method: string,
   token: string | undefined,
   json: unknown
-): Effect.Effect<RawResponse, BackendUnreachable> =>
+): Effect.Effect<RawResponse, BackendUnreachable | LocalTokenInvalid> =>
   // `Headers.set` throws a TypeError whose message contains the header value when the token has a newline,
   // a carriage return, or a NUL. That throw must not become a defect: `catchDefect` would print it, and
   // redaction cannot hide a value it has not been shown. The message here is fixed and names no token.
+  // Building the request failed because that token is illegal, which is not a network failure.
   Effect.try({
     try: () => {
       const controller = new AbortController();
@@ -172,7 +189,7 @@ const send = (
       }
       return { controller, request: new Request(url, { method, headers, body, signal: controller.signal }) };
     },
-    catch: () => new BackendUnreachable({ message: "cannot build the backend request" })
+    catch: () => new LocalTokenInvalid({ message: LOCAL_TOKEN_INVALID })
   }).pipe(
     Effect.flatMap(({ controller, request }) =>
       Effect.callback<RawResponse, BackendUnreachable>((resume) => {

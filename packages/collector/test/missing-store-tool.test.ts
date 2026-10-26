@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { okSchema, refreshResultSchema, snapshotOutputSchema } from "@rivus/snorlax-protocol";
+import { doctorSchema, refreshResultSchema, snapshotOutputSchema } from "@rivus/snorlax-protocol";
 import type { Platform } from "@rivus/agent-kit/platform";
 import { Effect, Layer } from "effect";
 import * as z from "zod/mini";
@@ -13,15 +13,15 @@ import { Secrets } from "../src/capabilities/secrets/secrets.ts";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { configSchema } from "../src/modules/config/config.ts";
-import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
+import { NodeFiles, nodeFileOps, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 import { TimeZone } from "../src/modules/time-zone/time-zone.ts";
 import { createRefreshSetup, type TestPlatform } from "./fixtures/platform.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
- * A missing `security` or `secret-tool` program is an absent item for read and delete. uninstall, unpair and
- * refresh then finish. The spawn wrapper refuses the real binaries, so a fall-through fails the test before
- * they start.
+ * A missing `security` or `secret-tool` program does not mean the item is absent. uninstall, unpair and
+ * refresh still finish, and they say a stored token was not deleted. The spawn wrapper refuses the real
+ * binaries, so a fall-through fails the test before they start.
  */
 
 const NOW = Date.UTC(2026, 9, 22, 12, 0, 0);
@@ -41,6 +41,7 @@ const open = async (store: "keychain" | "libsecret") => {
   const missingSecurity = join(setup.home, "missing-security");
   const missingSecretTool = join(setup.home, "missing-secret-tool");
   const spawned: string[] = [];
+  const logged: string[] = [];
   const env = {
     ...setup.platform.env,
     PATH: "/usr/bin:/bin",
@@ -73,7 +74,13 @@ const open = async (store: "keychain" | "libsecret") => {
           args,
           Layer.mergeAll(
             Layer.succeed(SnorlaxPlatform, platform),
-            NodeFiles.live,
+            Layer.succeed(NodeFiles, {
+              ...nodeFileOps,
+              append: async (path, data) => {
+                logged.push(data);
+                await nodeFileOps.append(path, data);
+              }
+            }),
             fakeScheduler([], { jobFile: join(setup.home, "job") }),
             Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
             secrets,
@@ -88,6 +95,7 @@ const open = async (store: "keychain" | "libsecret") => {
   return {
     setup,
     spawned,
+    logged,
     missing: store === "keychain" ? missingSecurity : missingSecretTool,
     run,
     close: () => setup.remove()
@@ -100,14 +108,17 @@ const assertNoRealTool = (spawned: readonly string[]): void => {
 };
 
 describe.each(["keychain", "libsecret"] as const)("missing %s program", (store) => {
-  it("uninstall --data finishes and deletes the data directory", async () => {
+  it("uninstall --data finishes, deletes the data directory, and says the token was not deleted", async () => {
     const harness = await open(store);
     try {
       expect((await harness.run(["refresh", "--json"])).exitCode).toBe(0);
-      const removed = await harness.run(["uninstall", "--data", "--json"]);
+      const removed = await harness.run(["uninstall", "--data"]);
       expect(removed.stderr).toBe("");
       expect(removed.exitCode).toBe(0);
-      expect(z.parse(okSchema, JSON.parse(removed.stdout)).ok).toBe(true);
+      expect(removed.stdout).toContain("data directory deleted");
+      expect(removed.stdout).toContain("was not deleted");
+      expect(removed.stdout).not.toContain(harness.setup.home);
+      expect(harness.logged.join("")).toContain("was not deleted");
       expect(existsSync(harness.setup.dataDir)).toBe(false);
       expect(harness.spawned).toContain(harness.missing);
       assertNoRealTool(harness.spawned);
@@ -124,9 +135,14 @@ describe.each(["keychain", "libsecret"] as const)("missing %s program", (store) 
         join(harness.setup.dataDir, "config.json"),
         `${JSON.stringify({ backendUrl: BASE, deviceName: "Desk" })}\n`
       );
-      const unpaired = await harness.run(["unpair", "--json"]);
+      const unpaired = await harness.run(["unpair"]);
       expect(unpaired.exitCode).toBe(0);
-      expect(z.parse(okSchema, JSON.parse(unpaired.stdout)).ok).toBe(true);
+      expect(unpaired.stdout).toContain("local data is kept");
+      expect(unpaired.stdout).toContain("was not deleted");
+      expect(unpaired.stdout).not.toContain(harness.setup.home);
+      const log = await readFile(join(harness.setup.dataDir, "logs", "snorlax.log"), "utf8");
+      expect(log).toContain("was not deleted");
+      expect(log).not.toContain(harness.setup.home);
       const snapshot = await harness.run(["snapshot", "--json"]);
       expect(snapshot.exitCode).toBe(0);
       const body = z.parse(snapshotOutputSchema, JSON.parse(snapshot.stdout)).snapshot;
@@ -156,15 +172,44 @@ describe.each(["keychain", "libsecret"] as const)("missing %s program", (store) 
       const refreshed = await harness.run(["refresh", "--json"]);
       expect(refreshed.stderr).toBe("");
       expect(refreshed.exitCode).toBe(0);
-      expect(z.parse(refreshResultSchema, JSON.parse(refreshed.stdout)).sync.state).toBe("unpaired");
+      const sync = z.parse(refreshResultSchema, JSON.parse(refreshed.stdout)).sync;
+      expect(sync.state).toBe("unpaired");
+      expect(sync.message).toContain("was not deleted");
+      expect(refreshed.stdout).not.toContain(harness.setup.home);
+      const log = await readFile(join(harness.setup.dataDir, "logs", "snorlax.log"), "utf8");
+      expect(log).toContain("was not deleted");
       const snapshot = await harness.run(["snapshot", "--json"]);
       const body = z.parse(snapshotOutputSchema, JSON.parse(snapshot.stdout)).snapshot;
       expect(body.status.paired).toBe(false);
       expect(body.status.sync.state).toBe("unpaired");
       expect(harness.spawned).toContain(harness.missing);
       assertNoRealTool(harness.spawned);
-      expect(refreshed.stdout).not.toContain(REAL_SECURITY);
-      expect(refreshed.stdout).not.toContain(REAL_SECRET_TOOL);
+      expect(refreshed.stdout).toContain(store === "keychain" ? "missing-security" : "missing-secret-tool");
+      expect(refreshed.stdout).not.toContain("/usr/bin/security");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("doctor gives the same explanation when the program cannot be started", async () => {
+    const harness = await open(store);
+    try {
+      expect((await harness.run(["refresh", "--json"])).exitCode).toBe(0);
+      await writeFile(
+        join(harness.setup.dataDir, "config.json"),
+        `${JSON.stringify({ backendUrl: BASE, deviceName: "Desk" })}\n`
+      );
+      const diagnosed = await harness.run(["doctor", "--json"]);
+      expect(diagnosed.exitCode).toBe(0);
+      const doctor = z.parse(doctorSchema, JSON.parse(diagnosed.stdout));
+      const keychain = doctor.checks.find((check) => check.id === "keychain");
+      expect(keychain?.status).toBe("error");
+      expect(keychain?.detail).toContain("was not deleted");
+      expect(diagnosed.stdout).not.toContain(harness.setup.home);
+      const human = await harness.run(["doctor"]);
+      expect(human.stdout).toContain("was not deleted");
+      expect(human.stdout).not.toContain(harness.setup.home);
+      assertNoRealTool(harness.spawned);
     } finally {
       await harness.close();
     }

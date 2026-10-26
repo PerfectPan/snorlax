@@ -37,7 +37,7 @@ export type HttpDeviceRegisterRequest = z.output<typeof httpDeviceRegisterReques
  * RFC 6750 `b64token` (plan 3.2.4). The hyphen sits at the end of the class so it is not a range, and `=` is
  * only a suffix. A space or a newline cannot pass and later be spliced into a `security -i` command.
  */
-const b64TokenSchema = z.string().check(z.regex(/^[A-Za-z0-9._~+/-]+=*$/));
+export const b64TokenSchema = z.string().check(z.regex(/^[A-Za-z0-9._~+/-]+=*$/));
 
 /** Response body of `POST /v1/devices`; the token is shown once and stored only as its SHA-256 (plan 3.8). */
 export const httpDeviceRegisterResponseSchema = z.object({

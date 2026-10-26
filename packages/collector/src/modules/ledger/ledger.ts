@@ -139,7 +139,8 @@ export interface Ledger {
 
 /**
  * What one sync attempt reports. `at` is null when the device is not paired, so no sync was tried.
- * `message` is the plain-text reason for `failed` and `revoked`, and is omitted when there is none.
+ * `message` is the plain-text reason for `failed` and `revoked`, and for `unpaired` when the store program
+ * is missing. It is omitted when there is none.
  */
 export interface SyncReport {
   readonly state: SyncState;

@@ -6,7 +6,7 @@ import { Effect } from "effect";
 import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../../core/buckets/buckets.ts";
 import { readConfig, type ConfigInvalid } from "../../modules/config/config.ts";
 import { type Ledger, type LedgerUnreadable, type SyncReport } from "../../modules/ledger/ledger.ts";
-import type { Secrets } from "../secrets/secrets.ts";
+import { storeProgramMissingNotice, type Secrets } from "../secrets/secrets.ts";
 import { BackendInvalidResponse, type Backend, type BackendCallFailure } from "./backend.ts";
 
 /**
@@ -77,10 +77,19 @@ export const synchronize = (
         onSuccess: (value) => ({ kind: "value" as const, value })
       })
     );
-    // A missing item is "not paired", including when the store program itself is not installed (`ENOENT`).
-    // A keychain that cannot be read is a failed sync: the snapshot is still written, and the `keychain`
-    // failure code stays for pair, unpair and doctor.
+    // A missing item is "not paired". A missing store program is also unpaired, but the item may still be
+    // stored, so the reason says it was not deleted. A keychain that cannot be read is a failed sync: the
+    // snapshot is still written, and the `keychain` failure code stays for pair, unpair and doctor.
     if (read.kind === "error") {
+      if (read.error._tag === "StoreBinaryMissing") {
+        return {
+          state: "unpaired",
+          pushed: 0,
+          pulled: 0,
+          at: null,
+          message: storeProgramMissingNotice(read.error.command)
+        };
+      }
       return {
         state: "failed",
         pushed: 0,

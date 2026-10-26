@@ -9,17 +9,19 @@ const humanResult = (
   deleteData: boolean,
   dataDir: string,
   dataLeftovers: readonly string[],
-  kind: SchedulerKind
+  kind: SchedulerKind,
+  keychainNotice: string | undefined
 ): string => {
   const removed = kind === "systemd" ? "systemd user timer removed" : "LaunchAgent removed";
-  if (dataLeftovers.length > 0) {
-    return (
-      `${removed}\n` +
-      `the data directory ${dataDir} is kept; entries snorlax did not write remain: ` +
-      `${dataLeftovers.join(", ")}\n`
-    );
-  }
-  return deleteData ? `${removed} and data directory deleted\n` : `${removed}\n`;
+  const base =
+    dataLeftovers.length > 0
+      ? `${removed}\n` +
+        `the data directory ${dataDir} is kept; entries snorlax did not write remain: ` +
+        `${dataLeftovers.join(", ")}\n`
+      : deleteData
+        ? `${removed} and data directory deleted\n`
+        : `${removed}\n`;
+  return keychainNotice === undefined ? base : `${base}${keychainNotice}\n`;
 };
 
 /** Removes the scheduled refresh. `--data` also deletes the data directory and, from Batch 7, the keychain item. */
@@ -31,14 +33,14 @@ export const uninstallCommand = {
   },
   run: ({ data }: { readonly data: boolean }) =>
     Effect.gen(function* () {
-      const { dataDir, deleted, dataLeftovers } = yield* uninstallFlow({ deleteData: data });
+      const { dataDir, deleted, dataLeftovers, keychainNotice } = yield* uninstallFlow({ deleteData: data });
       return {
         payload: {
           schemaVersion: 1,
           ok: true,
           ...(deleted ? { keptEntries: [...dataLeftovers] } : {})
         } satisfies UninstallResult,
-        human: humanResult(data, dataDir, dataLeftovers, (yield* Scheduler).kind),
+        human: humanResult(data, dataDir, dataLeftovers, (yield* Scheduler).kind, keychainNotice),
         ...(deleted ? { deletedDataDir: true as const } : {})
       };
     })

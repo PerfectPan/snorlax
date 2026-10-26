@@ -2,17 +2,17 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import { Context, Effect, Layer } from "effect";
 
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
-import { KeychainUnavailable } from "./command.ts";
+import { KeychainUnavailable, StoreBinaryMissing, storeProgramMissingNotice } from "./command.ts";
 import { keychainSecrets } from "./keychain.ts";
 import { libsecretSecrets } from "./libsecret.ts";
 
-export { KeychainUnavailable };
+export { KeychainUnavailable, StoreBinaryMissing, storeProgramMissingNotice };
 
 type SecretsShape = {
   /** The device token, or undefined when none is stored. `SNORLAX_DEVICE_TOKEN` overrides the store. */
-  readonly read: (deviceId: string) => Effect.Effect<string | undefined, KeychainUnavailable>;
+  readonly read: (deviceId: string) => Effect.Effect<string | undefined, KeychainUnavailable | StoreBinaryMissing>;
   readonly store: (deviceId: string, token: string) => Effect.Effect<void, KeychainUnavailable>;
-  readonly delete: (deviceId: string) => Effect.Effect<void, KeychainUnavailable>;
+  readonly delete: (deviceId: string) => Effect.Effect<void, KeychainUnavailable | StoreBinaryMissing>;
 };
 
 /**

@@ -38,6 +38,14 @@ import { bundle, runBundle, runBundleAsync, spawnBundle } from "./fixtures/bundl
 import { writeSecretStubs } from "./fixtures/secret-stubs.ts";
 
 /**
+ * `bundleEnv` points the host's store tool at a path under the temporary home that is not there.
+ * Redaction prints that home as `~`. A ledger plus `uninstall --data` then says the token was not deleted.
+ */
+const missingStoreNotice =
+  `cannot find ~/${process.platform === "linux" ? "no-secret-tool" : "no-security"}. ` +
+  "If the keychain has this device's token, it was not deleted\n";
+
+/**
  * `install` / `uninstall` against the built bundle under a temporary HOME. `SNORLAX_LAUNCHCTL`
  * points at a stub that records argv, so the real launchctl never runs. `SNORLAX_OS=darwin` runs
  * the LaunchAgent path on the Linux CI job as well as on a Mac. The stub mirrors launchctl's own
@@ -704,7 +712,8 @@ describe("install and uninstall", () => {
       expect(await listFiles(dataDir)).toEqual(["logs/keep.txt"]);
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
-          "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n"
+          "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n" +
+          missingStoreNotice
       );
     });
   });
@@ -935,7 +944,8 @@ describe("install and uninstall", () => {
       // Human output is redacted in cli/, so the data directory is spelled relative to the home.
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
-          "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n"
+          "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n" +
+          missingStoreNotice
       );
       expect(existsSync(join(dataDir, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
@@ -1535,7 +1545,8 @@ describe("systemd user timer", () => {
       expect(removed.status).toBe(0);
       expect(removed.stdout).toBe(
         "systemd user timer removed\n" +
-          "the data directory ~/data is kept; entries snorlax did not write remain: photo.jpg\n"
+          "the data directory ~/data is kept; entries snorlax did not write remain: photo.jpg\n" +
+          missingStoreNotice
       );
       expect(removed.stdout).not.toContain("LaunchAgent");
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);

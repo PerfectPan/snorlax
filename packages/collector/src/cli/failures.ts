@@ -69,6 +69,7 @@ export const FAILURES = {
   UnitWriteFailed: { code: "internal", exit: 1 },
   UnitRemoveFailed: { code: "internal", exit: 1 },
   KeychainUnavailable: { code: "keychain", exit: 1 },
+  LocalTokenInvalid: { code: "keychain", exit: 1 },
   BackendUnreachable: { code: "network", exit: 1 },
   BackendUnauthorized: { code: "unauthorized", exit: 1 },
   BackendForbidden: { code: "forbidden", exit: 1 },

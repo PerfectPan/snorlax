@@ -4,7 +4,7 @@ import { Effect } from "effect";
 
 import { Backend } from "../../capabilities/backend/backend.ts";
 import { Scheduler } from "../../capabilities/scheduler/scheduler.ts";
-import { Secrets } from "../../capabilities/secrets/secrets.ts";
+import { Secrets, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { readConfig, type ConfigValue } from "../../modules/config/config.ts";
 import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
@@ -72,7 +72,12 @@ const pairedObservation = (
         ? undefined
         : yield* secrets.read(deviceId).pipe(
             Effect.map((value) => ({ ok: true as const, value })),
-            Effect.catch((error) => Effect.succeed({ ok: false as const, message: error.message })),
+            Effect.catch((error) =>
+              Effect.succeed({
+                ok: false as const,
+                message: error._tag === "StoreBinaryMissing" ? storeProgramMissingNotice(error.command) : error.message
+              })
+            ),
             Effect.catchDefect((defect) => Effect.succeed({ ok: false as const, message: errorMessage(defect) }))
           );
     const token = read?.ok === true ? read.value : undefined;

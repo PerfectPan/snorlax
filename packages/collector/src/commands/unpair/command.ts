@@ -13,8 +13,8 @@ export const unpairCommand = {
   description: "remove the local pairing; the backend device stays until it is revoked",
   flags: {},
   run: () =>
-    Effect.map(unpairFlow, () => ({
+    Effect.map(unpairFlow, (notice) => ({
       payload: { schemaVersion: 1, ok: true } satisfies Ok,
-      human: HUMAN
+      human: notice === undefined ? HUMAN : `${HUMAN}${notice}\n`
     }))
 };
