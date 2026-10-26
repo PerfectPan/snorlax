@@ -146,12 +146,16 @@ const finishSwift = (generated: string): string => {
 const schemaFiles = readdirSync(schemaDir)
   .filter((name) => name.endsWith(".json"))
   .sort();
-if (schemaFiles.length === 0) {
+// The app has no HTTP client (plan 2.1): it reads the snapshot file and runs one-shot CLI commands, so the
+// HTTP wire shapes (plan 3.2.4, committed as `http-*.json`) get no Swift types. Skipping by this explicit
+// prefix keeps a newly added HTTP shape from leaking into SnorlaxKit.
+const swiftSchemaFiles = schemaFiles.filter((name) => !name.startsWith("http-"));
+if (swiftSchemaFiles.length === 0) {
   throw new Error(`no JSON Schemas in ${schemaDir}`);
 }
 
 const preparedByName = new Map<string, JsonObject>();
-for (const fileName of schemaFiles) {
+for (const fileName of swiftSchemaFiles) {
   const document = asObject(prepareSchema(readSchema(fileName), fileName.replace(/\.json$/, "")));
   if (document === undefined) {
     throw new Error(`${fileName} does not prepare into a schema object`);

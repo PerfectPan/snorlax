@@ -21,6 +21,10 @@ catalog:
   '@rivus/agent-kit': 0.23.0
   '@rivus/agent-kit-collab': 0.23.0
   '@types/node': 24.19.2
+  # Pinned exactly (plan 2.4 D13): `cf` takes over from Wrangler as Cloudflare's CLI and delegates its
+  # bundling to the package's Wrangler; both upgrade on purpose, not through a floating range.
+  cf: 1.0.0-beta.21
+  wrangler: 4.152.0
   date-fns: 4.4.0
   plist: 5.0.0
   quicktype: 26.0.0
@@ -53,6 +57,8 @@ autoInstallPeers: true
 allowBuilds:
   # Its postinstall verifies the platform binary that the bundled vite runs.
   esbuild: true
+  # Its postinstall installs the Workers runtime binary that `cf dev` and the Worker tests run on.
+  workerd: true
 
 versioning:
   # `pnpm version -r` must delete consumed changesets and write each package's CHANGELOG.md immediately.

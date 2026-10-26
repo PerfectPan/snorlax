@@ -29,3 +29,8 @@ apps/macos/DerivedData/
 apps/macos/SnorlaxKit/.build/
 apps/macos/SnorlaxKit/.swiftpm/
 /.build/
+
+# packages/worker: cf build output, local dev state and the throwaway .dev.vars secrets file (plan 3.12)
+.cloudflare/
+.wrangler/
+.dev.vars

@@ -1,0 +1,16 @@
+{
+  "devices": [
+    {
+      "id": "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
+      "name": "MacBook Pro",
+      "lastPushAt": "2026-10-23T02:35:11.901Z",
+      "revoked": false
+    },
+    {
+      "id": "0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3",
+      "name": "Mac mini",
+      "lastPushAt": null,
+      "revoked": true
+    }
+  ]
+}

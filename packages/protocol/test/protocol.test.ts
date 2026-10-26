@@ -18,7 +18,17 @@ const schemas: Readonly<Record<string, z.core.$ZodType>> = {
   "pair-result": protocol.pairResultSchema,
   status: protocol.statusSchema,
   doctor: protocol.doctorSchema,
-  "uninstall-result": protocol.uninstallResultSchema
+  "uninstall-result": protocol.uninstallResultSchema,
+  "http-bucket": protocol.strictBucketSchema,
+  "http-device": protocol.httpDeviceSchema,
+  "http-devices-response": protocol.httpDevicesResponseSchema,
+  "http-device-register-request": protocol.httpDeviceRegisterRequestSchema,
+  "http-device-register-response": protocol.httpDeviceRegisterResponseSchema,
+  "http-push-request": protocol.httpPushRequestSchema,
+  "http-push-response": protocol.httpPushResponseSchema,
+  "http-pull-response": protocol.httpPullResponseSchema,
+  "http-health-response": protocol.httpHealthResponseSchema,
+  "http-error": protocol.httpErrorSchema
 };
 
 const readJson = (dir: string, name: string): unknown =>
@@ -36,6 +46,76 @@ describe("committed generated output", () => {
       const parsed = z.safeParse(schema, readJson("fixtures", name));
       expect(parsed.success, `${name} fixture must parse`).toBe(true);
     }
+  });
+});
+
+describe("httpPushRequestSchema (Spec R10, S15)", () => {
+  const validBucket: protocol.StrictBucket = {
+    deviceId: "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
+    hour: 1_792_658_000,
+    agent: "claude-code",
+    model: "claude-opus-5-5",
+    inputTokens: 10,
+    cacheReadTokens: 4,
+    cacheWriteTokens: 2,
+    outputTokens: 5,
+    reasoningTokens: 1,
+    requests: 1,
+    sessionsStarted: 0,
+    costUsd: 0,
+    unpricedRequests: 0
+  };
+  const validBody: protocol.HttpPushRequest = { buckets: [validBucket] };
+
+  it("accepts the fixture and a 200-row push, and rejects 0 or 201 rows", () => {
+    expect(z.safeParse(protocol.httpPushRequestSchema, readJson("fixtures", "http-push-request")).success).toBe(true);
+    expect(z.safeParse(protocol.httpPushRequestSchema, { buckets: Array(200).fill(validBucket) }).success).toBe(true);
+    expect(z.safeParse(protocol.httpPushRequestSchema, { buckets: [] }).success).toBe(false);
+    expect(z.safeParse(protocol.httpPushRequestSchema, { buckets: Array(201).fill(validBucket) }).success).toBe(false);
+  });
+
+  it("rejects a push body with an unknown key, so prompts and paths cannot ride along", () => {
+    expect(z.safeParse(protocol.httpPushRequestSchema, { ...validBody, prompt: "summarize this diff" }).success).toBe(
+      false
+    );
+    expect(z.safeParse(protocol.httpPushRequestSchema, { ...validBody, projectPath: "repo" }).success).toBe(false);
+  });
+
+  it("rejects a row carrying a session id or any other field beyond the bucket fields", () => {
+    expect(
+      z.safeParse(protocol.httpPushRequestSchema, { buckets: [{ ...validBucket, sessionId: "s-1" }] }).success
+    ).toBe(false);
+    expect(
+      z.safeParse(protocol.httpPushRequestSchema, { buckets: [{ ...validBucket, cwd: "/tmp/repo" }] }).success
+    ).toBe(false);
+  });
+
+  it("keeps the lenient bucket schema dropping unknown keys for pull results", () => {
+    const parsed = z.parse(protocol.bucketSchema, { ...validBucket, newMetric: 7 });
+    expect(parsed).toEqual(validBucket);
+    expect(
+      z.parse(protocol.httpPullResponseSchema, { buckets: [{ ...validBucket, newMetric: 7 }], next: null })
+    ).toEqual({
+      buckets: [validBucket],
+      next: null
+    });
+  });
+});
+
+describe("httpErrorSchema", () => {
+  it("accepts every enumerated code and rejects an unknown one", () => {
+    for (const code of [
+      "invalid-body",
+      "unauthorized",
+      "forbidden",
+      "not-found",
+      "conflict",
+      "payload-too-large",
+      "internal"
+    ]) {
+      expect(z.safeParse(protocol.httpErrorSchema, { error: { code, message: "x" } }).success).toBe(true);
+    }
+    expect(z.safeParse(protocol.httpErrorSchema, { error: { code: "teapot", message: "x" } }).success).toBe(false);
   });
 });
 
