@@ -1,6 +1,11 @@
 import { Effect, Layer } from "effect";
 
-import { ForeignServiceLoaded, Scheduler, type JobInspection } from "../../src/capabilities/scheduler/scheduler.ts";
+import {
+  ForeignServiceLoaded,
+  Scheduler,
+  type JobInspection,
+  type SchedulerKind
+} from "../../src/capabilities/scheduler/scheduler.ts";
 
 /** One operation the fake scheduler completed, with the data directory of the job it was given. */
 export interface SchedulerCall {
@@ -11,6 +16,11 @@ export interface SchedulerCall {
 export interface FakeSchedulerOptions {
   /** The file an install reports. */
   readonly jobFile: string;
+  /**
+   * The job this fake manages. Commands take their text from it, not from the host. Omitted means launchd,
+   * the same default as an inspection that leaves `scheduler` out.
+   */
+  readonly kind?: SchedulerKind;
   /** Refuse both operations the way launchd refuses a job that Snorlax.app registered. */
   readonly ownedElsewhere?: boolean;
   /** What `inspect` reports; by default no job file and nothing loaded. */
@@ -31,6 +41,7 @@ export const fakeScheduler = (calls: SchedulerCall[], options: FakeSchedulerOpti
   return Layer.succeed(
     Scheduler,
     Scheduler.of({
+      kind: options.kind ?? "launchd",
       install: (job, prepare) =>
         Effect.gen(function* () {
           yield* refusal;

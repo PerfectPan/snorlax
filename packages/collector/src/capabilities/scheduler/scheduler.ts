@@ -33,6 +33,12 @@ class SchedulerUnsupportedOs extends Data.TaggedError("SchedulerUnsupportedOs")<
 export type SchedulerOs = "darwin" | "linux" | "win32";
 
 /**
+ * The job a scheduler manages. `install` and `uninstall` name this in their text. They do not read
+ * `platform.os`: `SNORLAX_OS` can select a scheduler the host is not, and a test's fake declares its own.
+ */
+export type SchedulerKind = "launchd" | "systemd";
+
+/**
  * The system whose scheduler `cli/bin.ts` installs. `SNORLAX_OS`, when set, stands in for `platform.os`
  * so the bundled CLI can run either scheduler on any CI job. An override that names nothing is undefined.
  */
@@ -112,6 +118,8 @@ const unavailable = (
   failure: (command: "install" | "uninstall") => SchedulerUnavailable,
   reason: string
 ): Context.Service.Shape<typeof Scheduler> => ({
+  // Both operations fail before a command formats text, so this value is never printed.
+  kind: "launchd",
   install: () => Effect.fail(failure("install")),
   uninstall: () => Effect.fail(failure("uninstall")),
   inspect: Effect.succeed({ kind: "unsupported", reason })
@@ -126,6 +134,11 @@ const unavailable = (
 export class Scheduler extends Context.Service<
   Scheduler,
   {
+    /**
+     * Which job this implementation manages. The commands name it; an implementation that manages none still
+     * carries `launchd` because its operations fail before that text is formatted.
+     */
+    readonly kind: SchedulerKind;
     /**
      * Writes and loads the job and returns the file it was written to. `prepare` runs once the ownership
      * check has passed and before the first write, so a refused install builds nothing.

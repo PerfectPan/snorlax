@@ -35,6 +35,8 @@ import { fakeScheduler, type SchedulerCall } from "./fixtures/scheduler.ts";
 const HOME = "/testroot/tester";
 const DATA_DIR = `${HOME}/snorlax-data`;
 const JOB_FILE = `${HOME}/Library/LaunchAgents/fake.plist`;
+
+const jobName = (kind: "launchd" | "systemd"): string => (kind === "systemd" ? "systemd user timer" : "LaunchAgent");
 const LAUNCHCTL = "/stub/launchctl";
 const PLIST = `${HOME}/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist`;
 
@@ -91,8 +93,9 @@ describe("install and uninstall on a fake scheduler", () => {
     expect(calls).toEqual([{ operation: "install", dataDir: DATA_DIR }]);
     expect((await platform.fs.stat(`${DATA_DIR}/logs`))?.kind).toBe("dir");
 
-    const human = await runCommand(["install"], platform, fakeScheduler([], { jobFile: JOB_FILE }));
-    expect(human.stdout).toBe("LaunchAgent installed at ~/Library/LaunchAgents/fake.plist\n");
+    const kind = "launchd" as const;
+    const human = await runCommand(["install"], platform, fakeScheduler([], { jobFile: JOB_FILE, kind }));
+    expect(human.stdout).toBe(`${jobName(kind)} installed at ~/Library/LaunchAgents/fake.plist\n`);
   });
 
   it("a refused install fails as internal and builds nothing", async () => {
@@ -130,11 +133,13 @@ describe("install and uninstall on a fake scheduler", () => {
       await readLedger({ fs: platform.fs, sqlite }, dataDir, Effect.succeed);
 
       const calls: SchedulerCall[] = [];
-      const kept = await runOn(["uninstall", "--data"], platform, fakeScheduler(calls, { jobFile: JOB_FILE }));
+      const kind = "launchd" as const;
+      const kept = await runOn(["uninstall", "--data"], platform, fakeScheduler(calls, { jobFile: JOB_FILE, kind }));
       expect(kept).toEqual({
         exitCode: 0,
         stdout:
-          "LaunchAgent removed\nthe data directory ~/snorlax-data is kept; entries snorlax did not write remain: notes.txt\n",
+          `${jobName(kind)} removed\n` +
+          "the data directory ~/snorlax-data is kept; entries snorlax did not write remain: notes.txt\n",
         stderr: ""
       });
       expect(calls).toEqual([{ operation: "uninstall", dataDir }]);
@@ -143,8 +148,8 @@ describe("install and uninstall on a fake scheduler", () => {
 
       // The ledger went with the first run; the directory left empty passes without it.
       await platform.fs.remove(join(dataDir, "notes.txt"));
-      const deleted = await runOn(["uninstall", "--data"], platform, fakeScheduler([], { jobFile: JOB_FILE }));
-      expect(deleted.stdout).toBe("LaunchAgent removed and data directory deleted\n");
+      const deleted = await runOn(["uninstall", "--data"], platform, fakeScheduler([], { jobFile: JOB_FILE, kind }));
+      expect(deleted.stdout).toBe(`${jobName(kind)} removed and data directory deleted\n`);
       expect(await platform.fs.stat(dataDir)).toBeUndefined();
     } finally {
       await rm(home, { recursive: true, force: true });
@@ -163,6 +168,28 @@ describe("install and uninstall on a fake scheduler", () => {
     expect(failureOf(refused.stdout).code).toBe("data-dir");
     expect(calls).toEqual([]);
     expect((await platform.fs.stat(`${HOME}/config.json`))?.kind).toBe("file");
+  });
+
+  it("names a LaunchAgent or a systemd user timer from the kind the same fake scheduler declares", async () => {
+    // The platform says linux while this process is whatever host runs the test. The sentences follow `kind`.
+    const jobFile = `${HOME}/refresh-job`;
+    for (const kind of ["launchd", "systemd"] as const) {
+      const platform = createMemoryPlatform({
+        home: HOME,
+        env: { SNORLAX_HOME: DATA_DIR },
+        os: "linux"
+      });
+      const name = jobName(kind);
+      const scheduler = fakeScheduler([], { jobFile, kind });
+      const installed = await runCommand(["install"], platform, scheduler);
+      expect(installed).toEqual({
+        exitCode: 0,
+        stdout: `${name} installed at ~/refresh-job\n`,
+        stderr: ""
+      });
+      const removed = await runCommand(["uninstall"], platform, scheduler);
+      expect(removed).toEqual({ exitCode: 0, stdout: `${name} removed\n`, stderr: "" });
+    }
   });
 });
 

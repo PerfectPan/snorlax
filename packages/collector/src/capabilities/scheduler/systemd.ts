@@ -329,6 +329,7 @@ const loadedJob = (platform: SchedulerPlatform, timerPath: string): Effect.Effec
 
 /** The systemd implementation of the scheduler capability over `platform`. */
 export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.Shape<typeof Scheduler> => ({
+  kind: "systemd",
   install: (job, prepare) =>
     Effect.gen(function* () {
       yield* requireAbsoluteDataDir(job.dataDir);

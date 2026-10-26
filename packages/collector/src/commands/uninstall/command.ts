@@ -2,15 +2,16 @@ import type { UninstallResult } from "@rivus/snorlax-protocol";
 import { Flag } from "effect/cli";
 import { Effect } from "effect";
 
+import { Scheduler, type SchedulerKind } from "../../capabilities/scheduler/scheduler.ts";
 import { uninstallFlow } from "./flow.ts";
 
 const humanResult = (
   deleteData: boolean,
   dataDir: string,
   dataLeftovers: readonly string[],
-  os: "darwin" | "linux" | "win32" | undefined
+  kind: SchedulerKind
 ): string => {
-  const removed = os === "linux" ? "systemd user timer removed" : "LaunchAgent removed";
+  const removed = kind === "systemd" ? "systemd user timer removed" : "LaunchAgent removed";
   if (dataLeftovers.length > 0) {
     return (
       `${removed}\n` +
@@ -29,13 +30,16 @@ export const uninstallCommand = {
     data: Flag.Boolean("data").pipe(Flag.withDefault(false), Flag.withDescription("also delete the data directory"))
   },
   run: ({ data }: { readonly data: boolean }) =>
-    Effect.map(uninstallFlow({ deleteData: data }), ({ dataDir, deleted, dataLeftovers, os }) => ({
-      payload: {
-        schemaVersion: 1,
-        ok: true,
-        ...(deleted ? { keptEntries: [...dataLeftovers] } : {})
-      } satisfies UninstallResult,
-      human: humanResult(data, dataDir, dataLeftovers, os),
-      ...(deleted ? { deletedDataDir: true as const } : {})
-    }))
+    Effect.gen(function* () {
+      const { dataDir, deleted, dataLeftovers } = yield* uninstallFlow({ deleteData: data });
+      return {
+        payload: {
+          schemaVersion: 1,
+          ok: true,
+          ...(deleted ? { keptEntries: [...dataLeftovers] } : {})
+        } satisfies UninstallResult,
+        human: humanResult(data, dataDir, dataLeftovers, (yield* Scheduler).kind),
+        ...(deleted ? { deletedDataDir: true as const } : {})
+      };
+    })
 };
