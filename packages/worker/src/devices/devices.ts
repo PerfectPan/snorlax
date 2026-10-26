@@ -1,6 +1,6 @@
 import type { D1Database } from "../db.ts";
 import { generateDeviceToken, hashToken } from "../tokens.ts";
-import { deviceExists, findByTokenHash, insertUnlessActive, markRevoked, readDevices } from "./store.ts";
+import { findByTokenHash, insertUnlessActive, markRevoked, readDevices } from "./store.ts";
 
 /**
  * Device use cases (plan 3.2.4, 3.8): registration, revocation, listing and device-token authentication.
@@ -75,12 +75,14 @@ export const registerDevice = async (
   return deviceToken;
 };
 
-/** Marks a device revoked and keeps its buckets (Spec S9); an unknown id is `DeviceNotFound`. */
+/**
+ * Marks a device revoked and keeps its buckets (Spec S9); revoking it again changes nothing. An unknown id is
+ * `DeviceNotFound`; the store decides that in the same statement that writes.
+ */
 export const revokeDevice = async ({ db, now }: DevicesDeps, deviceId: string): Promise<void> => {
-  if (!(await deviceExists(db, deviceId))) {
+  if (!(await markRevoked(db, deviceId, now()))) {
     throw new DeviceNotFound(deviceId);
   }
-  await markRevoked(db, deviceId, now());
 };
 
 export const listDevices = async (db: D1Database): Promise<Device[]> =>

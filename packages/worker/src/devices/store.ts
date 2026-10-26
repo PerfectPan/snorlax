@@ -53,14 +53,17 @@ export const findByTokenHash = async (
   return parsed === null || !parsed.success ? null : { id: parsed.data.id, revokedAt: parsed.data.revoked_at };
 };
 
-/** Whether a device row with this id exists, revoked or not. */
-export const deviceExists = async (db: D1Database, id: string): Promise<boolean> => {
-  const row = await db.prepare("SELECT id FROM devices WHERE id = ?1").bind(id).first();
-  return row !== null && z.safeParse(z.object({ id: z.string() }), row).success;
-};
-
-export const markRevoked = async (db: D1Database, id: string, revokedAt: number): Promise<void> => {
-  await db.prepare("UPDATE devices SET revoked_at = ?1 WHERE id = ?2").bind(revokedAt, id).run();
+/**
+ * Marks a device revoked, in one statement, and reports whether a row with this id exists. A device already
+ * revoked keeps its first `revoked_at`; the row still matches and counts in `changes`, as SQLite counts every
+ * row an `UPDATE` matches.
+ */
+export const markRevoked = async (db: D1Database, id: string, revokedAt: number): Promise<boolean> => {
+  const { meta } = await db
+    .prepare("UPDATE devices SET revoked_at = COALESCE(revoked_at, ?1) WHERE id = ?2")
+    .bind(revokedAt, id)
+    .run();
+  return meta.changes !== 0;
 };
 
 const deviceRowSchema = z.object({

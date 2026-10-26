@@ -260,6 +260,21 @@ describe("DELETE /v1/devices/:id", () => {
       (await call(handler, jsonRequest("DELETE", `/v1/devices/${deviceAId}`, { token: ADMIN_TOKEN }))).status
     ).toBe(204);
   });
+
+  it("a second revocation keeps the first revoked_at", async () => {
+    let now = NOW_MS;
+    const { handler, database } = createTestBackend({ now: () => now });
+    await registerDevice(handler, deviceAId, "Device A");
+    await call(handler, jsonRequest("DELETE", `/v1/devices/${deviceAId}`, { token: ADMIN_TOKEN }));
+    now += 60_000;
+    const again = await call(handler, jsonRequest("DELETE", `/v1/devices/${deviceAId}`, { token: ADMIN_TOKEN }));
+    expect(again.status).toBe(204);
+    const row = z.parse(
+      z.object({ revoked_at: z.int() }),
+      database.prepare("SELECT revoked_at FROM devices WHERE id = ?").get(deviceAId)
+    );
+    expect(row.revoked_at).toBe(NOW_MS);
+  });
 });
 
 describe("GET /v1/devices", () => {
