@@ -7,7 +7,7 @@ import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../../core/buc
 import { readConfig, type ConfigInvalid } from "../../modules/config/config.ts";
 import { type Ledger, type LedgerUnreadable, type SyncReport } from "../../modules/ledger/ledger.ts";
 import type { Secrets } from "../secrets/secrets.ts";
-import type { Backend, BackendFailure } from "./backend.ts";
+import type { Backend, BackendCallFailure } from "./backend.ts";
 
 /**
  * How many dirty rows one push sends. Plan 3.2.4 allows 1–200; the client never sends more, and it does not
@@ -96,7 +96,7 @@ export const synchronize = (
     const deviceId = input.ledger.meta.deviceId;
     let pushed = 0;
     let pulled = 0;
-    const reportFor = (error: BackendFailure): SyncReport => ({
+    const reportFor = (error: BackendCallFailure): SyncReport => ({
       state: error._tag === "BackendUnauthorized" ? "revoked" : "failed",
       pushed,
       pulled,

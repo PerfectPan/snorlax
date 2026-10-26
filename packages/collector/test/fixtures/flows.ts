@@ -3,9 +3,9 @@ import { basename } from "node:path";
 import { Effect } from "effect";
 
 import { rebuildScan } from "../../src/commands/rebuild/flow.ts";
-import { refreshScan } from "../../src/commands/refresh/flow.ts";
 import {
   openLedger,
+  refreshScan,
   scanAndCommit,
   type Ledger,
   type LedgerPlatform,

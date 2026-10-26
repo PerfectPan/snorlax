@@ -1,3 +1,5 @@
+import process from "node:process";
+
 import { ChildProcessSpawner } from "effect/process";
 import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
 import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
@@ -6,6 +8,7 @@ import { layerTest as stdioLayerTest } from "effect/Stdio";
 import type { Backend } from "../capabilities/backend/backend.ts";
 import type { Scheduler } from "../capabilities/scheduler/scheduler.ts";
 import type { Secrets } from "../capabilities/secrets/secrets.ts";
+import { PairStdin } from "../commands/pair/stdin.ts";
 import { errorMessage } from "../core/error-message/error-message.ts";
 import { resolveDataDir } from "../modules/data-dir/data-dir.ts";
 import { appendingLogger } from "../modules/log/log.ts";
@@ -38,6 +41,15 @@ export class CliExit extends Error {
     this[Runtime.errorExitCode] = exitCode;
   }
 }
+
+/** The bundled CLI's stdin. The promise starts when `pair` yields it, not when another command runs. */
+const processStdin = Effect.promise(async () => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+});
 
 const COMMAND_NAMES = new Set<string>([
   "status",
@@ -183,7 +195,8 @@ export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Eff
       })
     );
 
-    const outcome = yield* program;
+    const stdinText = env.stdin === undefined ? processStdin : Effect.succeed(env.stdin);
+    const outcome = yield* program.pipe(Effect.provideService(PairStdin, PairStdin.of({ text: stdinText })));
 
     if (outcome.output === "human") {
       for (const text of buffered.out) {

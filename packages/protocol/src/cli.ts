@@ -36,6 +36,7 @@ export type FailureCode =
   | "keychain"
   | "network"
   | "unauthorized"
+  | "conflict"
   | "forbidden"
   | "invalid-response"
   | "pricing"

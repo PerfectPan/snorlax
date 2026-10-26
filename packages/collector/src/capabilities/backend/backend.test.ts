@@ -2,7 +2,7 @@ import { Duration, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
-import { Backend, type BackendFailure, type BackendFetch } from "./backend.ts";
+import { Backend, type BackendCallFailure, type BackendFetch } from "./backend.ts";
 
 /**
  * The HTTP client against an injected fetch. The 15s limit runs on the Effect clock: 14s leaves the request
@@ -27,7 +27,10 @@ const hanging: BackendFetch = (request) =>
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const run = <A>(fetchImpl: BackendFetch, effect: (backend: Backend["Service"]) => Effect.Effect<A, BackendFailure>) =>
+const run = <A>(
+  fetchImpl: BackendFetch,
+  effect: (backend: Backend["Service"]) => Effect.Effect<A, BackendCallFailure>
+) =>
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* effect(yield* Backend);
@@ -80,7 +83,7 @@ describe("status mapping", () => {
 
   const fail = async (
     fetchImpl: BackendFetch,
-    effect: (backend: Backend["Service"]) => Effect.Effect<unknown, BackendFailure>
+    effect: (backend: Backend["Service"]) => Effect.Effect<unknown, BackendCallFailure>
   ) => {
     const error = await Effect.runPromise(
       Effect.flip(
@@ -125,7 +128,7 @@ describe("status mapping", () => {
           (backend) => backend.registerDevice(BASE, TOKEN, device)
         )
       )._tag
-    ).toBe("BackendInvalidResponse");
+    ).toBe("BackendConflict");
     expect(
       (
         await fail(

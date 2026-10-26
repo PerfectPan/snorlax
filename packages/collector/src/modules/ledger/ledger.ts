@@ -722,6 +722,50 @@ export interface ScanRun {
   readonly window: (ledger: Ledger, now: number) => ScanWindow;
 }
 
+/** The scan margin: records and sources this much before the last completed scan are read again, so the
+ *  kit's 30-minute quiet window cannot leave a late record outside the scan (plan 3.4.1 step 3). */
+const RESCAN_MARGIN_MS = 2 * 3_600_000;
+
+/**
+ * Refresh's and `pair`'s scan window: incremental from the saved scan state. It lives here so `pair` can run
+ * the same window as `refresh` without importing another command (plan 3.13 rule 2).
+ */
+export const refreshScan: ScanRun = {
+  event: "refresh",
+  window: (ledger) => {
+    const lastScan = ledger.meta.lastScanCompletedAt;
+    return { since: lastScan === null ? 0 : lastScan - RESCAN_MARGIN_MS, state: ledger.scanState };
+  }
+};
+
+/**
+ * Holds the ledger lock and opens the ledger for `body`. The lock and the connection stay in a scope, so a
+ * failure or an interrupt closes the ledger and releases the lock. `pair` uses this to read the device id
+ * before it registers, which creates the ledger when this data directory does not have one yet (plan 3.4.2).
+ */
+export const withLedger = <A, E, R>(
+  platform: Platform,
+  dataDir: string,
+  body: (ledger: Ledger) => Effect.Effect<A, E, R>
+): Effect.Effect<
+  A,
+  LedgerPlatformUnsupported | LedgerLockHeld | LedgerUnreadable | LedgerSchemaTooNew | LedgerBackupFailed | E,
+  R
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { sqlite } = platform;
+      if (sqlite === undefined) {
+        return yield* new LedgerPlatformUnsupported({
+          message: "this platform has no SQLite; the ledger cannot run here"
+        });
+      }
+      yield* holdLedgerLock(platform, dataDir);
+      const ledger = yield* openLedger({ fs: platform.fs, sqlite }, dataDir);
+      return yield* body(ledger);
+    })
+  );
+
 export interface ScanAndCommitOutcome {
   readonly result: RefreshResult;
   readonly failuresByAgent: Record<string, number>;

@@ -17,10 +17,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { Backend, pairedSync, PUSH_BATCH, type BackendFetch } from "../src/capabilities/backend/backend.ts";
 import { rebuildFlow } from "../src/commands/rebuild/flow.ts";
-import { refreshFlow, refreshScan } from "../src/commands/refresh/flow.ts";
+import { refreshFlow } from "../src/commands/refresh/flow.ts";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
-import { scanAndCommit } from "../src/modules/ledger/ledger.ts";
+import { refreshScan, scanAndCommit } from "../src/modules/ledger/ledger.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 import { readSnapshotFile } from "../src/modules/snapshot-file/snapshot-file.ts";

@@ -37,14 +37,22 @@ export class BackendForbidden extends Data.TaggedError("BackendForbidden")<{
 }> {}
 
 /**
- * The response is not one this client can use: any other 4xx (400, 404, 409 included — plan 3.2.4 has no
- * separate conflict failure), or a 2xx whose body does not match the interface definition.
+ * The response is not one this client can use: any other 4xx (400 and 404 included), or a 2xx whose body
+ * does not match the interface definition. HTTP 409 is `BackendConflict`, which `pair` reports as `conflict`.
  */
 export class BackendInvalidResponse extends Data.TaggedError("BackendInvalidResponse")<{
   readonly message: string;
 }> {}
 
+/** The id is already registered and has not been revoked (HTTP 409). `pair` turns this into `conflict`. */
+export class BackendConflict extends Data.TaggedError("BackendConflict")<{
+  readonly message: string;
+}> {}
+
 export type BackendFailure = BackendUnreachable | BackendUnauthorized | BackendForbidden | BackendInvalidResponse;
+
+/** Every failure one HTTP call can return. `BackendConflict` stays out of `cli/failures.ts`; `pair` catches it. */
+export type BackendCallFailure = BackendFailure | BackendConflict;
 
 /** How long one request may run, on the Effect clock, before it is aborted (plan 3.6). */
 const REQUEST_TIMEOUT = Duration.seconds(15);
@@ -79,12 +87,15 @@ const looseBody = (text: string): unknown => {
   }
 };
 
-const failureForStatus = (status: number, body: unknown): BackendFailure | undefined => {
+const failureForStatus = (status: number, body: unknown): BackendCallFailure | undefined => {
   if (status === 401) {
     return new BackendUnauthorized({ message: described(status, body, "the backend refused the token") });
   }
   if (status === 403) {
     return new BackendForbidden({ message: described(status, body, "the backend forbade the request") });
+  }
+  if (status === 409) {
+    return new BackendConflict({ message: described(status, body, "the backend reported a conflict") });
   }
   if (status >= 500) {
     return new BackendUnreachable({ message: described(status, body, `the backend returned ${status}`) });
@@ -96,7 +107,7 @@ const parseSuccess = <S extends z.core.$ZodType>(
   raw: RawResponse,
   status: number,
   schema: S
-): Effect.Effect<z.output<S>, BackendFailure> =>
+): Effect.Effect<z.output<S>, BackendCallFailure> =>
   Effect.gen(function* () {
     const body = looseBody(raw.text);
     const failed = failureForStatus(raw.status, body);
@@ -184,31 +195,38 @@ const send = (
 
 type BackendShape = {
   /** `GET /v1/health`. The route takes no token. */
-  readonly health: (baseUrl: string) => Effect.Effect<HttpHealthResponse, BackendFailure>;
+  readonly health: (baseUrl: string) => Effect.Effect<HttpHealthResponse, BackendCallFailure>;
   /** `POST /v1/devices` with the admin token. The device token is returned once. */
   readonly registerDevice: (
     baseUrl: string,
     adminToken: string,
     device: { readonly deviceId: string; readonly name: string }
-  ) => Effect.Effect<{ readonly deviceToken: string }, BackendFailure>;
+  ) => Effect.Effect<{ readonly deviceToken: string }, BackendCallFailure>;
   /** `PUT /v1/devices/:id/buckets`. `buckets` is 1–200 rows for this device. */
   readonly pushBuckets: (
     baseUrl: string,
     deviceToken: string,
     deviceId: string,
     buckets: readonly Bucket[]
-  ) => Effect.Effect<{ readonly seq: number }, BackendFailure>;
+  ) => Effect.Effect<{ readonly seq: number }, BackendCallFailure>;
   /** `GET /v1/buckets?after&limit`. `limit` defaults to the API maximum, 1000. */
   readonly pullBuckets: (
     baseUrl: string,
     deviceToken: string,
     after: number,
     limit?: number
-  ) => Effect.Effect<HttpPullResponse, BackendFailure>;
+  ) => Effect.Effect<HttpPullResponse, BackendCallFailure>;
   /** `GET /v1/devices`. */
-  readonly listDevices: (baseUrl: string, deviceToken: string) => Effect.Effect<readonly HttpDevice[], BackendFailure>;
-  /** `DELETE /v1/devices/:id` with the admin token. 204 has no body. */
-  readonly revokeDevice: (baseUrl: string, adminToken: string, deviceId: string) => Effect.Effect<void, BackendFailure>;
+  readonly listDevices: (
+    baseUrl: string,
+    deviceToken: string
+  ) => Effect.Effect<readonly HttpDevice[], BackendCallFailure>;
+  /** `DELETE /v1/devices/:id` with the admin token. 204 has no body. A missing id stays `BackendInvalidResponse`. */
+  readonly revokeDevice: (
+    baseUrl: string,
+    adminToken: string,
+    deviceId: string
+  ) => Effect.Effect<void, BackendCallFailure>;
 };
 
 const createClient = (fetchImpl: BackendFetch): Context.Service.Shape<typeof Backend> => ({

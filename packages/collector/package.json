@@ -32,6 +32,7 @@
   "devDependencies": {
     "@date-fns/tz": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@hono/node-server": "catalog:",
     "@perfectpan/lint-config": "catalog:",
     "@rivus/agent-kit": "catalog:",
     "@rivus/agent-kit-collab": "catalog:",

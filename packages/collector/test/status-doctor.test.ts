@@ -176,7 +176,12 @@ describe("doctor", () => {
     const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig());
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(true);
-    expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config", "schedule"]);
+    expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config", "schedule", "sync"]);
+    expect(doctor.checks.find((check) => check.id === "sync")).toEqual({
+      id: "sync",
+      status: "ok",
+      detail: "not paired; sync is off"
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -207,6 +212,7 @@ describe("doctor", () => {
     const { stdout } = await runCommand(["doctor", "--json"], withConfig("{oops"));
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.checks.find((check) => check.id === "config")?.status).toBe("error");
+    expect(doctor.checks.find((check) => check.id === "sync")).toBeUndefined();
     expect(doctor.healthy).toBe(false);
   });
 
@@ -270,9 +276,10 @@ describe("doctor", () => {
         ["node-version", "ok"],
         ["data-dir", "ok"],
         ["config", "ok"],
-        ["schedule", "error"]
+        ["schedule", "error"],
+        ["sync", "ok"]
       ]);
-      expect(doctor.checks.at(-1)?.detail).toMatch(
+      expect(doctor.checks.find((check) => check.id === "schedule")?.detail).toMatch(
         /^cannot check the Node at ~\/locked\/node that ~\/Library\/LaunchAgents\/job\.plist runs: EACCES/
       );
       expect(doctor.healthy).toBe(false);

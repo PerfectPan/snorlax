@@ -84,11 +84,11 @@ describe("calling convention (plan 3.2.1)", () => {
     expect(result.status).toBe(2);
   });
 
-  it("exits 1 with the failure shape for a command this build does not implement", () => {
+  it("exits 2 when pair is missing --url and --name", () => {
     const result = run(["pair", "--json"], home);
     const failure = z.parse(failureSchema, parseOneJsonObject(result.stdout));
-    expect(failure.error.code).toBe("internal");
-    expect(result.status).toBe(1);
+    expect(failure.error.code).toBe("invalid-arguments");
+    expect(result.status).toBe(2);
   });
 
   it("can be repeated safely", () => {

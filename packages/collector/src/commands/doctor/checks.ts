@@ -150,6 +150,62 @@ export const scheduleCheck = ({ job, node }: ScheduleObservation): DoctorCheck =
   return check("warn", `${cliJob.file} exists, but launchd has not loaded it; run \`snorlax install\` to load it`);
 };
 
+/** What the flow observed about a paired backend. Unpaired is a separate check and adds none of these. */
+export interface PairedBackendObservation {
+  readonly keychain:
+    | { readonly kind: "present" }
+    | { readonly kind: "missing" }
+    | { readonly kind: "unavailable"; readonly message: string };
+  readonly health: { readonly kind: "ok" } | { readonly kind: "error"; readonly message: string };
+  readonly devices:
+    | { readonly kind: "ok" }
+    | { readonly kind: "unauthorized" }
+    | { readonly kind: "error"; readonly message: string }
+    | { readonly kind: "not-called" };
+}
+
+/** Unpaired when config was readable and has no `backendUrl`. An invalid config is not this observation. */
+export type SyncObservation = { readonly paired: false } | ({ readonly paired: true } & PairedBackendObservation);
+
+const keychainCheck = (observed: PairedBackendObservation["keychain"]): DoctorCheck => {
+  if (observed.kind === "present") {
+    return { id: "keychain", status: "ok", detail: "the device token can be read" };
+  }
+  if (observed.kind === "missing") {
+    return { id: "keychain", status: "error", detail: "the device token is missing; run `snorlax pair` again" };
+  }
+  return { id: "keychain", status: "error", detail: observed.message };
+};
+
+const healthCheck = (observed: PairedBackendObservation["health"]): DoctorCheck =>
+  observed.kind === "ok"
+    ? { id: "backend", status: "ok", detail: "GET /v1/health answered" }
+    : { id: "backend", status: "error", detail: observed.message };
+
+const devicesCheck = (observed: PairedBackendObservation["devices"]): DoctorCheck => {
+  if (observed.kind === "ok") {
+    return { id: "devices", status: "ok", detail: "GET /v1/devices answered" };
+  }
+  if (observed.kind === "unauthorized") {
+    return { id: "devices", status: "error", detail: "the device was revoked or the token is not valid" };
+  }
+  if (observed.kind === "not-called") {
+    return { id: "devices", status: "error", detail: "GET /v1/devices was not called" };
+  }
+  return { id: "devices", status: "error", detail: observed.message };
+};
+
+/**
+ * Backend verdicts (plan 3.1). Unpaired is one ok check. Paired is the keychain, `GET /v1/health`, and
+ * `GET /v1/devices`. The flow gathers the observation; this function only decides status and detail.
+ */
+export const backendChecks = (observed: SyncObservation): DoctorCheck[] => {
+  if (!observed.paired) {
+    return [{ id: "sync", status: "ok", detail: "not paired; sync is off" }];
+  }
+  return [keychainCheck(observed.keychain), healthCheck(observed.health), devicesCheck(observed.devices)];
+};
+
 /** The whole `doctor` verdict from the per-check results (plan 3.2.1: the command still exits 0). */
 export const doctorPayload = (checks: readonly DoctorCheck[]): { healthy: boolean; checks: DoctorCheck[] } => ({
   healthy: checks.every((check) => check.status !== "error"),

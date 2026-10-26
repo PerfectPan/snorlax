@@ -2,10 +2,10 @@ import process from "node:process";
 
 import { Context } from "effect";
 
-import packageJson from "../../../package.json" with { type: "json" };
+import { version as packageVersion } from "../../../package.json" with { type: "json" };
 
 /** The collector's own version, inlined from package.json at build time. */
-export const version: string = packageJson.version;
+export const version: string = packageVersion;
 
 /**
  * Build- and runtime-identifiers the CLI outputs carry: the collector version and the running Node's

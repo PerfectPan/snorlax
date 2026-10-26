@@ -49,6 +49,9 @@ export type ConfigValue = z.output<typeof configSchema>;
 /** `config.json` is present but is not JSON or does not match `configSchema`. */
 export class ConfigInvalid extends Data.TaggedError("ConfigInvalid")<{ readonly message: string }> {}
 
+/** `config.json` could not be written. The previous file stays in place. */
+export class ConfigWriteFailed extends Data.TaggedError("ConfigWriteFailed")<{ readonly message: string }> {}
+
 export const configFilePath = (dataDir: string): string => join(dataDir, "config.json");
 
 /** Reads `config.json`; a missing file is an empty config, and a read that fails for another reason is a defect. */
@@ -74,3 +77,19 @@ export const readConfig = (
     }
     return parsed.data;
   });
+
+/**
+ * Rewrites `config.json` whole through the platform's atomic write. `JSON.stringify` drops `undefined`, so a
+ * config without `backendUrl` keeps only the fields that are set (`unpair` leaves `deviceName`).
+ */
+export const writeConfig = (
+  platform: Pick<Platform, "fs">,
+  dataDir: string,
+  config: ConfigValue
+): Effect.Effect<void, ConfigWriteFailed> => {
+  const path = configFilePath(dataDir);
+  return Effect.tryPromise({
+    try: () => platform.fs.writeAtomic(path, `${JSON.stringify(config)}\n`),
+    catch: (error) => new ConfigWriteFailed({ message: `cannot write ${path}: ${errorMessage(error)}` })
+  });
+};
