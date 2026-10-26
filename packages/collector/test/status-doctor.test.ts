@@ -437,7 +437,7 @@ describe("the schedule check", () => {
       "a loaded timer whose source is unknown",
       { job: systemd(undefined, { from: "unknown", reason: "show did not parse" }), node: undefined },
       "warn",
-      "its owner cannot be confirmed: show did not parse"
+      "cannot confirm the timer's state: show did not parse"
     ],
     [
       "a timer reported as the app's",

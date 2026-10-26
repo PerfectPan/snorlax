@@ -31,12 +31,15 @@ snorlax install
    - `<manager-config>/systemd/user/snorlax-refresh.service`
    - `<manager-config>/systemd/user/snorlax-refresh.timer`
 
-   `<manager-config>` is `XDG_CONFIG_HOME` from `systemctl --user show-environment` when that value is an absolute
-   path, and `~/.config` otherwise. A relative or empty value is ignored, which is the XDG base-directory rule. The
-   shell's `XDG_CONFIG_HOME` is not used: the user manager does not inherit a shell rc, and `daemon-reload` and
-   `enable` look the units up in the manager's own environment.
+   `<manager-config>/systemd/user` is the user configuration entry in `systemctl --user show --property=UnitPath`:
+   the first path under the user's home whose last two segments are `systemd` and `user`. The XDG data entry
+   (`…/share/systemd/user`), `user.control`, generator and transient directories, and any path outside the home are
+   not used. There is no fallback to `~/.config` or to the shell's `XDG_CONFIG_HOME`. If that entry is missing, or
+   the query fails or does not parse, install writes nothing.
 4. The service is `Type=oneshot`, because `refresh` exits. `ExecStart` is three arguments: the absolute path of the
-   Node that ran `snorlax install`, the absolute path of that install's `snorlax.mjs`, and `refresh`. The service
+   Node that ran `snorlax install`, the absolute path of that install's `snorlax.mjs`, and `refresh`. systemd does
+   not expand `$` in the program (the Node path) and does not collapse `$$` there, so that word leaves `$` as
+   written. The `snorlax.mjs` argument doubles `$`, because later arguments expand `$VAR` and `${VAR}`. The service
    always sets `Environment=SNORLAX_HOME` to the absolute data directory this install resolved, so the timer and
    that CLI use the same directory whether it came from `SNORLAX_HOME`, `XDG_DATA_HOME`, or the default. Standard
    output and standard error are discarded. The refresh summary is appended to `<data-directory>/logs/snorlax.log`.
@@ -50,9 +53,10 @@ start up to a minute after it was due. `Persistent` defaults to false, so a time
 manager is stopped does not run a catch-up when the manager starts again.
 
 Repeating `snorlax install` rewrites both units, reloads, and enables the timer again. If enable fails, snorlax
-disables the timer when this install is the unit systemd loaded, deletes the units just written, and reloads.
-`enable --now` enables and then starts, so a start failure or a timeout can leave the timer enabled; the disable
-removes that before the unit files go.
+disables the timer when this install is the unit systemd loaded. When that check cannot run, it still runs
+`disable --now`: ownership was confirmed before the units were written, and a stuck manager will likely time the
+check out too. It then deletes the units just written and reloads. `enable --now` enables and then starts, so a
+start failure or a timeout can leave the timer enabled; the disable removes that before the unit files go.
 
 The `systemctl` binary is `/usr/bin/systemctl` unless `SNORLAX_SYSTEMCTL` names another path.
 

@@ -9,14 +9,14 @@ import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
 import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 import {
-  parseSystemctlEnvironment,
   parseSystemctlShow,
+  parseSystemctlUnitPath,
   renderRefreshService,
   renderRefreshTimer,
   SERVICE_NAME,
   serviceNodePath,
-  systemdUserConfigDir,
   TIMER_NAME,
+  userConfigUnitDir,
   type SystemctlShow,
   type SystemdUnitSpec
 } from "./units.ts";
@@ -25,12 +25,12 @@ import {
  * The scheduler on Linux: a systemd user timer.
  *
  * Nothing else on Linux registers `snorlax-refresh.timer`, so a loaded unit whose fragment path is not
- * the CLI's own file is refused rather than replaced. The unit directory comes from the user manager's
- * environment (`systemctl --user show-environment`), not from this process's `XDG_CONFIG_HOME`: the
- * manager does not inherit a shell rc, and it is the manager that looks the units up. The service always
- * sets `SNORLAX_HOME` to the data directory install already resolved. `SNORLAX_SYSTEMCTL`, when set, is
- * the `systemctl` binary. Tests point it at a stub so they never start the real one and never enable a
- * timer in the caller's user manager.
+ * the CLI's own file is refused rather than replaced. The unit directory is the user configuration entry
+ * under the home directory in `systemctl --user show --property=UnitPath`, the list the manager actually
+ * searches. The process's `XDG_CONFIG_HOME` is not used, and a missing entry is a failure: nothing is
+ * written. The service always sets `SNORLAX_HOME` to the data directory install already resolved.
+ * `SNORLAX_SYSTEMCTL`, when set, is the `systemctl` binary. Tests point it at a stub so they never start
+ * the real one and never enable a timer in the caller's user manager.
  */
 
 /** The Node binary or the `snorlax.mjs` entry this process runs from has no absolute path. */
@@ -79,7 +79,7 @@ const SHOW_ARGS = [
 const RELOAD_ARGS = ["--user", "daemon-reload"] as const;
 const ENABLE_ARGS = ["--user", "enable", "--now", TIMER_NAME] as const;
 const DISABLE_ARGS = ["--user", "disable", "--now", TIMER_NAME] as const;
-const SHOW_ENVIRONMENT_ARGS = ["--user", "show-environment"] as const;
+const SHOW_UNIT_PATH_ARGS = ["--user", "show", "--property=UnitPath", "--no-pager"] as const;
 
 /** `run` is the only process operation install uses. */
 type SchedulerPlatform = Pick<Platform, "env" | "fs" | "home"> & {
@@ -164,21 +164,19 @@ const systemctlFailure = (result: SystemctlResult, action: string): SystemctlFai
 };
 
 /**
- * The user manager's environment. A non-zero exit or a report that is not `KEY=value` lines fails instead
- * of being replaced with this process's environment.
+ * The manager's unit search path. A non-zero exit or a report that is not one `UnitPath=` line fails
+ * instead of being replaced with this process's `XDG_CONFIG_HOME`.
  */
-const showEnvironment = (
-  platform: SchedulerPlatform
-): Effect.Effect<Readonly<Record<string, string>>, SystemctlFailed> =>
-  Effect.flatMap(runSystemctl(platform, SHOW_ENVIRONMENT_ARGS), (result) => {
+const showUnitPath = (platform: SchedulerPlatform): Effect.Effect<readonly string[], SystemctlFailed> =>
+  Effect.flatMap(runSystemctl(platform, SHOW_UNIT_PATH_ARGS), (result) => {
     if (result.code !== 0) {
-      return Effect.fail(systemctlFailure(result, "show-environment"));
+      return Effect.fail(systemctlFailure(result, "show UnitPath"));
     }
-    const environment = parseSystemctlEnvironment(result.stdout);
-    if (environment === undefined) {
-      return Effect.fail(new SystemctlFailed({ message: "systemctl show-environment did not report KEY=value lines" }));
+    const paths = parseSystemctlUnitPath(result.stdout);
+    if (paths === undefined) {
+      return Effect.fail(new SystemctlFailed({ message: "systemctl show UnitPath did not report a path list" }));
     }
-    return Effect.succeed(environment);
+    return Effect.succeed(paths);
   });
 
 interface UnitPaths {
@@ -187,15 +185,22 @@ interface UnitPaths {
   readonly timerPath: string;
 }
 
-/** Where the user manager looks up user units. Never this process's `XDG_CONFIG_HOME`. */
+/** Where the user manager looks up this user's configuration units. Never a guessed `~/.config`. */
 const resolveUnitPaths = (platform: SchedulerPlatform): Effect.Effect<UnitPaths, SystemctlFailed> =>
-  Effect.map(showEnvironment(platform), (environment) => {
-    const unitDir = systemdUserConfigDir(platform.home, environment.XDG_CONFIG_HOME);
-    return {
+  Effect.flatMap(showUnitPath(platform), (paths) => {
+    const unitDir = userConfigUnitDir(platform.home, paths);
+    if (unitDir === undefined) {
+      return Effect.fail(
+        new SystemctlFailed({
+          message: `systemctl show UnitPath has no user configuration directory under ${platform.home}`
+        })
+      );
+    }
+    return Effect.succeed({
       unitDir,
       servicePath: join(unitDir, SERVICE_NAME),
       timerPath: join(unitDir, TIMER_NAME)
-    };
+    });
   });
 
 /** `systemctl show` of the timer. A non-zero exit or an unexpected report fails instead of being guessed. */
@@ -260,6 +265,19 @@ const disableIfLoadedFrom = (
       yield* disable(platform);
     }
   });
+
+/**
+ * Cleanup after a failed enable. Ownership was confirmed before the units were written, so a `show` that
+ * fails — a 15 s timeout usually means the manager is stuck, and this `show` will time out too — still runs
+ * `disable --now`. A `show` that succeeds disables only when this file is the loaded fragment.
+ */
+const disableForCleanup = (platform: SchedulerPlatform, timerPath: string): Effect.Effect<void, SystemctlFailed> =>
+  showTimer(platform).pipe(
+    Effect.matchEffect({
+      onFailure: () => disable(platform),
+      onSuccess: (shown) => (shown.FragmentPath === timerPath ? disable(platform) : Effect.void)
+    })
+  );
 
 const removeUnitFiles = (
   platform: SchedulerPlatform,
@@ -342,14 +360,15 @@ export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.S
       // `enable --now` is idempotent, so a repeat install rewrites the units, reloads and enables again.
       // It is not atomic: enable can install the symlink before start fails or the 15 s limit fires.
       // Any failed or interrupted enable therefore disables the timer when this file is the one loaded,
-      // then deletes the unit files and reloads. An interrupt has already waited, inside runSystemctl, for
-      // the child to exit before this cleanup reads systemd. The cleanup's own failures are dropped: the
-      // command reports the enable failure or the interruption, not the cleanup.
+      // and still disables when that check cannot run, then deletes the unit files and reloads. An
+      // interrupt has already waited, inside runSystemctl, for the child to exit before this cleanup
+      // reads systemd. The cleanup's own failures are dropped: the command reports the enable failure
+      // or the interruption, not the cleanup.
       yield* reload(platform).pipe(
         Effect.andThen(enable(platform)),
         Effect.onError(() =>
           Effect.andThen(
-            Effect.ignore(disableIfLoadedFrom(platform, paths.timerPath)),
+            Effect.ignore(disableForCleanup(platform, paths.timerPath)),
             Effect.andThen(
               Effect.ignore(removeUnitFiles(platform, [paths.servicePath, paths.timerPath])),
               Effect.ignore(reload(platform))
@@ -372,8 +391,8 @@ export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.S
       return guarded;
     }),
   inspect: Effect.gen(function* () {
-    // A manager environment we cannot read does not fall back to this process's `XDG_CONFIG_HOME`: that
-    // would inspect a directory the manager is not using.
+    // A UnitPath we cannot read does not fall back to `~/.config` or this process's `XDG_CONFIG_HOME`:
+    // that would inspect a directory the manager is not using.
     const located = yield* resolveUnitPaths(platform).pipe(
       Effect.map((paths) => ({ located: true, paths }) as const),
       Effect.catch((error) => Effect.succeed({ located: false, reason: error.message } as const))

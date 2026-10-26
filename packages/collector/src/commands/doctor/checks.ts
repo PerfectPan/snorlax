@@ -176,8 +176,9 @@ const systemdSchedule = (job: InspectedJob, node: NodeBinary | undefined): Docto
           "`snorlax install` to restore it or `snorlax uninstall` to stop it"
       );
     }
+    // A failed unit-directory query is not evidence that a timer is loaded.
     if (loaded.from === "unknown") {
-      return checkOf("warn", `a refresh job is loaded, but its owner cannot be confirmed: ${loaded.reason}`);
+      return checkOf("warn", `cannot confirm the timer's state: ${loaded.reason}`);
     }
     return checkOf(
       "warn",

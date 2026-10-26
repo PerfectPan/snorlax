@@ -463,7 +463,7 @@ describe("an install interrupted inside systemctl enable", () => {
   const UNIT_DIR = `${HOME}/.config/systemd/user`;
   const SERVICE = `${UNIT_DIR}/snorlax-refresh.service`;
   const TIMER = `${UNIT_DIR}/snorlax-refresh.timer`;
-  const SHOW_ENV = ["--user", "show-environment"];
+  const SHOW_UNIT_PATH = ["--user", "show", "--property=UnitPath", "--no-pager"];
   const SHOW = [
     "--user",
     "show",
@@ -477,6 +477,7 @@ describe("an install interrupted inside systemctl enable", () => {
   const RELOAD = ["--user", "daemon-reload"];
   const ENABLE = ["--user", "enable", "--now", "snorlax-refresh.timer"];
   const DISABLE = ["--user", "disable", "--now", "snorlax-refresh.timer"];
+  const UNIT_PATH_STDOUT = `UnitPath=${HOME}/.config/systemd/user.control ${HOME}/.config/systemd/user /etc/systemd/user ${HOME}/.local/share/systemd/user /usr/lib/systemd/user\n`;
 
   const showOf = (fragment: string): string =>
     fragment === ""
@@ -504,8 +505,8 @@ describe("an install interrupted inside systemctl enable", () => {
     const answer = (stdout: string) => ({ code: 0, signal: null, stdout, stderr: "", timedOut: false });
     const run: Platform["process"]["run"] = async (_command, args, options) => {
       runs.push(args);
-      if (args[1] === "show-environment") {
-        return answer("");
+      if (args[1] === "show" && args[2] === "--property=UnitPath") {
+        return answer(UNIT_PATH_STDOUT);
       }
       if (args[1] === "show") {
         return answer(showOf(state.fragment));
@@ -514,6 +515,9 @@ describe("an install interrupted inside systemctl enable", () => {
         if (args[1] === "disable") {
           state.fragment = "";
         }
+        return answer("");
+      }
+      if (args[1] !== "enable") {
         return answer("");
       }
       signals.entered();
@@ -554,7 +558,7 @@ describe("an install interrupted inside systemctl enable", () => {
     systemctl.exitEnable();
     await interrupted;
 
-    expect(systemctl.runs).toEqual([SHOW_ENV, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
+    expect(systemctl.runs).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
     expect(await platform.fs.stat(SERVICE)).toBeUndefined();
     expect(await platform.fs.stat(TIMER)).toBeUndefined();
   });
@@ -574,7 +578,40 @@ describe("an install interrupted inside systemctl enable", () => {
       }).pipe(Effect.provide(TestClock.layer()))
     );
 
-    expect(systemctl.runs).toEqual([SHOW_ENV, SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
+    expect(systemctl.runs).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
+    expect(await platform.fs.stat(SERVICE)).toBeUndefined();
+    expect(await platform.fs.stat(TIMER)).toBeUndefined();
+  });
+
+  it("disables the timer when enable fails and the cleanup show fails", async () => {
+    const runs: (readonly string[])[] = [];
+    let enabled = false;
+    const platform = platformFor();
+    const run: Platform["process"]["run"] = async (_command, args) => {
+      runs.push(args);
+      const refused = (stderr: string) => ({ code: 1, signal: null, stdout: "", stderr, timedOut: false });
+      const ok = (stdout: string) => ({ code: 0, signal: null, stdout, stderr: "", timedOut: false });
+      if (args[1] === "show" && args[2] === "--property=UnitPath") {
+        return ok(UNIT_PATH_STDOUT);
+      }
+      if (args[1] === "show") {
+        return enabled ? refused("show refused") : ok(showOf(""));
+      }
+      if (args[1] === "daemon-reload") {
+        return ok("");
+      }
+      if (args[1] === "enable") {
+        enabled = true;
+        return refused("enable refused");
+      }
+      if (args[1] === "disable") {
+        enabled = false;
+        return ok("");
+      }
+      return refused("unexpected");
+    };
+    await expect(Effect.runPromise(installOn(run, platform))).rejects.toThrow(/enable --now/);
+    expect(runs).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
     expect(await platform.fs.stat(SERVICE)).toBeUndefined();
     expect(await platform.fs.stat(TIMER)).toBeUndefined();
   });
@@ -584,7 +621,8 @@ describe("systemd inspect", () => {
   const SYSTEMCTL = "/stub/systemctl";
   const SERVICE = `${HOME}/.config/systemd/user/snorlax-refresh.service`;
   const TIMER = `${HOME}/.config/systemd/user/snorlax-refresh.timer`;
-  const SHOW_ENV = ["--user", "show-environment"];
+  const SHOW_UNIT_PATH = ["--user", "show", "--property=UnitPath", "--no-pager"];
+  const UNIT_PATH_STDOUT = `UnitPath=${HOME}/.config/systemd/user.control ${HOME}/.config/systemd/user /etc/systemd/user ${HOME}/.local/share/systemd/user /usr/lib/systemd/user\n`;
   const SHOW = [
     "--user",
     "show",
@@ -603,7 +641,8 @@ describe("systemd inspect", () => {
   /** Runs `inspect` over the memory platform and returns it with every systemctl argv it ran. */
   const inspectOn = async (
     files: Record<string, string>,
-    stdout: string | undefined
+    stdout: string | undefined,
+    unitPath?: { readonly code: number; readonly stdout: string }
   ): Promise<{ inspection: JobInspection; runs: (readonly string[])[] }> => {
     const runs: (readonly string[])[] = [];
     const platform = createMemoryPlatform({
@@ -613,15 +652,15 @@ describe("systemd inspect", () => {
       files,
       // Without a script the stub path does not exist, so systemctl fails to start.
       commands:
-        stdout === undefined
+        stdout === undefined && unitPath === undefined
           ? {}
           : {
               [SYSTEMCTL]: (args) => {
                 runs.push(args);
-                if (args[1] === "show-environment") {
-                  return { code: 0, stdout: "" };
+                if (args[1] === "show" && args[2] === "--property=UnitPath") {
+                  return { code: unitPath?.code ?? 0, stdout: unitPath?.stdout ?? UNIT_PATH_STDOUT };
                 }
-                return { code: 0, stdout };
+                return { code: 0, stdout: stdout ?? "" };
               }
             }
     });
@@ -643,7 +682,7 @@ describe("systemd inspect", () => {
       cliJob: { file: SERVICE, nodePath: "/opt/node home/bin/node" },
       loaded: { from: "cli", file: TIMER }
     });
-    expect(runs).toEqual([SHOW_ENV, SHOW]);
+    expect(runs).toEqual([SHOW_UNIT_PATH, SHOW]);
   });
 
   it("reports nothing when the unit is missing, and unknown for a fragment this install did not write", async () => {
@@ -674,6 +713,26 @@ describe("systemd inspect", () => {
       cliJob: { file: SERVICE, nodePath: "/usr/bin/node" },
       loaded: { from: "nothing" }
     });
+  });
+
+  it("returns no cli job when the UnitPath query exits non-zero or does not parse", async () => {
+    const planted = { [SERVICE]: serviceFor("/usr/bin/node") };
+    const failed = await inspectOn(planted, undefined, { code: 1, stdout: "" });
+    expect(failed.inspection).toEqual({
+      kind: "inspected",
+      scheduler: "systemd",
+      cliJob: undefined,
+      loaded: { from: "unknown", reason: expect.stringContaining("UnitPath") }
+    });
+    expect(failed.runs).toEqual([SHOW_UNIT_PATH]);
+    const garbled = await inspectOn(planted, undefined, { code: 0, stdout: "not a property\n" });
+    expect(garbled.inspection).toEqual({
+      kind: "inspected",
+      scheduler: "systemd",
+      cliJob: undefined,
+      loaded: { from: "unknown", reason: expect.stringContaining("did not report a path list") }
+    });
+    expect(garbled.runs).toEqual([SHOW_UNIT_PATH]);
   });
 
   it("reports an unknown source when systemctl cannot run or its report does not parse", async () => {

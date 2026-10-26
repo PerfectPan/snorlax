@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  parseSystemctlEnvironment,
   parseSystemctlShow,
+  parseSystemctlUnitPath,
   quoteSystemdWord,
   renderRefreshService,
   renderRefreshTimer,
   serviceEnvironment,
   serviceNodePath,
-  systemdUserConfigDir,
-  unquoteSystemdWord
+  unquoteSystemdWord,
+  userConfigUnitDir
 } from "./units.ts";
 
 const HOME = "/opt/snorlax-test/home";
@@ -44,6 +44,7 @@ describe("systemd unit text", () => {
       'C:\\100% "odd"\\node'
     ];
     for (const value of values) {
+      expect(unquoteSystemdWord(quoteSystemdWord(value, "program"), "program")).toBe(value);
       expect(unquoteSystemdWord(quoteSystemdWord(value, "assign"), "assign")).toBe(value);
       expect(unquoteSystemdWord(quoteSystemdWord(value, "exec"), "exec")).toBe(value);
     }
@@ -75,11 +76,12 @@ describe("systemd unit text", () => {
     expect(serviceNodePath(text)).toBe("/usr/bin/node");
   });
 
-  it("doubles $ in ExecStart and leaves it literal in Environment", () => {
+  it("leaves $ literal in the ExecStart program and doubles it only in later arguments", () => {
     const nodePath = "/opt/$HOME/${HOME}/$$/node";
     const cliPath = "/opt/${USER}/snorlax.mjs";
     const home = "/data/$HOME/${HOME}/$$";
     const text = renderRefreshService({ nodePath, cliPath, snorlaxHome: home });
+    // systemd executes the program as written and collapses $$ only in the arguments after it.
     expect(text).toBe(
       [
         "[Unit]",
@@ -87,7 +89,7 @@ describe("systemd unit text", () => {
         "",
         "[Service]",
         "Type=oneshot",
-        'ExecStart="/opt/$$HOME/$${HOME}/$$$$/node" "/opt/$${USER}/snorlax.mjs" refresh',
+        'ExecStart="/opt/$HOME/${HOME}/$$/node" "/opt/$${USER}/snorlax.mjs" refresh',
         "StandardOutput=null",
         "StandardError=null",
         'Environment="SNORLAX_HOME=/data/$HOME/${HOME}/$$"',
@@ -95,6 +97,7 @@ describe("systemd unit text", () => {
       ].join("\n")
     );
     expect(serviceNodePath(text)).toBe(nodePath);
+    expect(serviceNodePath('ExecStart="/opt/a$$b/node" "/opt/$${USER}/snorlax.mjs" refresh\n')).toBe("/opt/a$$b/node");
     expect(serviceEnvironment(text)).toBe(`SNORLAX_HOME=${home}`);
   });
 
@@ -116,12 +119,21 @@ describe("systemd unit text", () => {
     expect(serviceEnvironment("Environment=SNORLAX_HOME=/tmp/data\n")).toBeUndefined();
   });
 
-  it("ignores a relative or empty XDG_CONFIG_HOME", () => {
-    const fallback = `${HOME}/.config/systemd/user`;
-    expect(systemdUserConfigDir(HOME, undefined)).toBe(fallback);
-    expect(systemdUserConfigDir(HOME, "")).toBe(fallback);
-    expect(systemdUserConfigDir(HOME, "relative")).toBe(fallback);
-    expect(systemdUserConfigDir(HOME, "/var/xdg")).toBe("/var/xdg/systemd/user");
+  it("picks the user configuration directory under the home and skips the data directory", () => {
+    const config = `${HOME}/.config/systemd/user`;
+    const spaced = `${HOME}/my config/systemd/user`;
+    expect(
+      userConfigUnitDir(HOME, [
+        `${HOME}/.local/share/systemd/user`,
+        `${HOME}/.config/systemd/user.control`,
+        config,
+        "/etc/systemd/user"
+      ])
+    ).toBe(config);
+    expect(userConfigUnitDir(HOME, [`${HOME}/.local/share/systemd/user`, "/etc/systemd/user"])).toBeUndefined();
+    expect(userConfigUnitDir(HOME, ["/etc/systemd/user", "/usr/lib/systemd/user"])).toBeUndefined();
+    expect(userConfigUnitDir(HOME, [`${HOME}work/.config/systemd/user`])).toBeUndefined();
+    expect(userConfigUnitDir(HOME, [spaced, `${HOME}/.local/share/systemd/user`])).toBe(spaced);
   });
 });
 
@@ -160,22 +172,34 @@ describe("systemctl show", () => {
   });
 });
 
-describe("systemctl show-environment", () => {
-  it("reads an empty environment and values that contain =", () => {
-    expect(parseSystemctlEnvironment("")).toEqual({});
-    expect(parseSystemctlEnvironment("\n")).toEqual({});
-    expect(parseSystemctlEnvironment("XDG_CONFIG_HOME=/var/xdg\nEMPTY=\nPATH=/bin=/usr/bin\n")).toEqual({
-      XDG_CONFIG_HOME: "/var/xdg",
-      EMPTY: "",
-      PATH: "/bin=/usr/bin"
-    });
+describe("systemctl show UnitPath", () => {
+  const config = `${HOME}/.config/systemd/user`;
+
+  it("reads a space-separated list, including a double-quoted path", () => {
+    const listed = [
+      `${HOME}/.config/systemd/user.control`,
+      config,
+      "/etc/systemd/user",
+      `${HOME}/.local/share/systemd/user`,
+      "/usr/lib/systemd/user"
+    ].join(" ");
+    expect(parseSystemctlUnitPath(`UnitPath=${listed}\n`)).toEqual(listed.split(" "));
+    expect(parseSystemctlUnitPath("UnitPath=\n")).toEqual([]);
+    expect(
+      parseSystemctlUnitPath(`UnitPath="/opt/snorlax-test/home/my \\$cfg/systemd/user" /etc/systemd/user\n`)
+    ).toEqual(["/opt/snorlax-test/home/my $cfg/systemd/user", "/etc/systemd/user"]);
+    expect(
+      userConfigUnitDir(HOME, parseSystemctlUnitPath(`UnitPath="${config}" ${HOME}/.local/share/systemd/user\n`) ?? [])
+    ).toBe(config);
   });
 
-  it("rejects a duplicate key, a key that is not a variable name, or a line that is not KEY=value", () => {
-    expect(parseSystemctlEnvironment("A=1\nA=2\n")).toBeUndefined();
-    expect(parseSystemctlEnvironment("1BAD=x\n")).toBeUndefined();
-    expect(parseSystemctlEnvironment("HAS-DASH=x\n")).toBeUndefined();
-    expect(parseSystemctlEnvironment("=x\n")).toBeUndefined();
-    expect(parseSystemctlEnvironment("not a property\n")).toBeUndefined();
+  it("rejects a report that is not one UnitPath line of absolute or double-quoted paths", () => {
+    expect(parseSystemctlUnitPath("")).toBeUndefined();
+    expect(parseSystemctlUnitPath("not a property\n")).toBeUndefined();
+    expect(parseSystemctlUnitPath(`UnitPath=${config}\nUnitPath=/etc/systemd/user\n`)).toBeUndefined();
+    expect(parseSystemctlUnitPath('UnitPath="/opt/unterminated\n')).toBeUndefined();
+    expect(parseSystemctlUnitPath(`UnitPath=$'${config}'\n`)).toBeUndefined();
+    expect(parseSystemctlUnitPath(`UnitPath=${config} relative/systemd/user\n`)).toBeUndefined();
+    expect(parseSystemctlUnitPath('UnitPath=""\n')).toBeUndefined();
   });
 });

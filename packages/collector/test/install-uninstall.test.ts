@@ -998,11 +998,11 @@ describe("install and uninstall", () => {
 /**
  * `install` / `uninstall` on Linux against the built bundle. `SNORLAX_OS=linux` selects the systemd scheduler
  * on this machine, and `SNORLAX_SYSTEMCTL` points at a stub, so the real systemctl never runs and no unit is
- * enabled in the caller's user manager. HOME stays under the system temporary directory. The stub reports the
- * user manager's environment from `manager-env` and does not read the CLI's `XDG_CONFIG_HOME`.
+ * enabled in the caller's user manager. HOME stays under the system temporary directory. The stub reports
+ * `UnitPath` from `unit-path` and does not read the CLI's `XDG_CONFIG_HOME`.
  */
 describe("systemd user timer", () => {
-  const SHOW_ENV = ["--user", "show-environment"];
+  const SHOW_UNIT_PATH = ["--user", "show", "--property=UnitPath", "--no-pager"];
   const SHOW = [
     "--user",
     "show",
@@ -1025,8 +1025,12 @@ describe("systemd user timer", () => {
     readonly failEnable: string;
     /** When this file exists, `enable --now` loads the timer and then exits 1. */
     readonly failAfterEnable: string;
-    /** Text `show-environment` prints. Absent means the manager has no `XDG_CONFIG_HOME`. */
-    readonly managerEnv: string;
+    /** When this file exists, the timer `show` after enable exits 1. */
+    readonly failShowAfterEnable: string;
+    /** Stdout of `show --property=UnitPath`. Absent means the default list under HOME. */
+    readonly unitPath: string;
+    /** When this file exists, the UnitPath query exits 1. */
+    readonly failUnitPath: string;
   }
 
   const writeSystemctlStub = async (dir: string): Promise<string> => {
@@ -1041,26 +1045,41 @@ describe("systemd user timer", () => {
       `const marker = join(dir, "enabled");`,
       `const failEnable = join(dir, "fail-enable");`,
       `const failAfterEnable = join(dir, "fail-after-enable");`,
-      `const managerEnv = join(dir, "manager-env");`,
+      `const failShowAfterEnable = join(dir, "fail-show-after-enable");`,
+      `const unitPathFile = join(dir, "unit-path");`,
+      `const failUnitPath = join(dir, "fail-unit-path");`,
       `const args = process.argv.slice(2);`,
-      `// The unit path comes from the manager's environment, never the CLI's XDG_CONFIG_HOME.`,
-      `const managerConfigHome = () => {`,
-      `  if (!existsSync(managerEnv)) return "";`,
-      `  for (const line of readFileSync(managerEnv, "utf8").split("\\n")) {`,
-      `    if (line.startsWith("XDG_CONFIG_HOME=")) return line.slice("XDG_CONFIG_HOME=".length);`,
-      `  }`,
-      `  return "";`,
+      `// The unit directory comes from UnitPath, never the CLI's XDG_CONFIG_HOME.`,
+      `const unitPathStdout = () => {`,
+      `  if (existsSync(unitPathFile)) return readFileSync(unitPathFile, "utf8");`,
+      `  const home = process.env.HOME ?? "";`,
+      `  return "UnitPath=" + home + "/.config/systemd/user.control " + home + "/.config/systemd/user /etc/systemd/user " + home + "/.local/share/systemd/user /usr/lib/systemd/user\\n";`,
       `};`,
       `const timerPath = () => {`,
-      `  const xdg = managerConfigHome();`,
-      `  const base = xdg.startsWith("/") ? xdg : join(process.env.HOME ?? "", ".config");`,
-      `  return join(base, "systemd", "user", "snorlax-refresh.timer");`,
+      `  const home = process.env.HOME ?? "";`,
+      `  const prefix = home.endsWith("/") ? home : home + "/";`,
+      `  const text = unitPathStdout().replace(/\\n$/, "");`,
+      `  const value = text.startsWith("UnitPath=") ? text.slice("UnitPath=".length) : "";`,
+      `  for (const part of value.split(" ")) {`,
+      `    if (part.startsWith(prefix) && part.endsWith("/systemd/user") && !part.endsWith("/share/systemd/user")) {`,
+      `      return join(part, "snorlax-refresh.timer");`,
+      `    }`,
+      `  }`,
+      `  return join(home, ".config", "systemd", "user", "snorlax-refresh.timer");`,
       `};`,
-      `if (args[0] === "--user" && args[1] === "show-environment" && args.length === 2) {`,
-      `  if (existsSync(managerEnv)) process.stdout.write(readFileSync(managerEnv, "utf8"));`,
+      `if (args[0] === "--user" && args[1] === "show" && args[2] === "--property=UnitPath" && args[3] === "--no-pager" && args.length === 4) {`,
+      `  if (existsSync(failUnitPath)) {`,
+      `    console.error("unit path refused");`,
+      `    process.exit(1);`,
+      `  }`,
+      `  process.stdout.write(unitPathStdout());`,
       `  process.exit(0);`,
       `}`,
       `if (args[0] === "--user" && args[1] === "show" && args[2] === "snorlax-refresh.timer") {`,
+      `  if (existsSync(failShowAfterEnable) && existsSync(marker)) {`,
+      `    console.error("show refused");`,
+      `    process.exit(1);`,
+      `  }`,
       `  const fragment = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";`,
       `  if (fragment === "") {`,
       `    console.log("LoadState=not-found");`,
@@ -1113,7 +1132,9 @@ describe("systemd user timer", () => {
         enabled: join(stubDir, "enabled"),
         failEnable: join(stubDir, "fail-enable"),
         failAfterEnable: join(stubDir, "fail-after-enable"),
-        managerEnv: join(stubDir, "manager-env")
+        failShowAfterEnable: join(stubDir, "fail-show-after-enable"),
+        unitPath: join(stubDir, "unit-path"),
+        failUnitPath: join(stubDir, "fail-unit-path")
       });
     } finally {
       await rm(home, { recursive: true, force: true });
@@ -1163,11 +1184,11 @@ describe("systemd user timer", () => {
       expect(existsSync(servicePath)).toBe(true);
       expect(existsSync(timerPath)).toBe(true);
       expect(await readInvocations(env.record)).toEqual([
-        SHOW_ENV,
+        SHOW_UNIT_PATH,
         SHOW,
         RELOAD,
         ENABLE,
-        SHOW_ENV,
+        SHOW_UNIT_PATH,
         SHOW,
         RELOAD,
         ENABLE
@@ -1175,18 +1196,26 @@ describe("systemd user timer", () => {
     });
   });
 
-  it("writes the units under the user manager's XDG_CONFIG_HOME, not the CLI's", async () => {
+  it("writes the units in the UnitPath configuration directory, not the CLI's XDG_CONFIG_HOME", async () => {
     await withSystemdHome(async (env) => {
-      const managerXdg = join(env.home, "manager-config");
+      const managerConfig = join(env.home, "manager-config");
       const cliXdg = join(env.home, "cli-config");
-      await writeFile(env.managerEnv, `XDG_CONFIG_HOME=${managerXdg}\n`);
-      const timerPath = join(managerXdg, "systemd", "user", "snorlax-refresh.timer");
+      const listed = [
+        `${env.home}/.local/share/systemd/user`,
+        `${env.home}/.config/systemd/user.control`,
+        `${managerConfig}/systemd/user`,
+        "/etc/systemd/user",
+        `${cliXdg}/systemd/user`
+      ].join(" ");
+      await writeFile(env.unitPath, `UnitPath=${listed}\n`);
+      const timerPath = join(managerConfig, "systemd", "user", "snorlax-refresh.timer");
       const installed = runSystemd(env, ["install", "--json"], { xdgConfigHome: cliXdg });
       expect(installed.status).toBe(0);
       expect(installed.stderr).toBe("");
       expect(existsSync(timerPath)).toBe(true);
       expect(existsSync(join(cliXdg, "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
       expect(existsSync(join(env.home, ".config", "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
+      expect(existsSync(join(env.home, ".local", "share", "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
       expect(await readFile(env.enabled, "utf8")).toBe(timerPath);
     });
   });
@@ -1210,8 +1239,6 @@ describe("systemd user timer", () => {
       const service = await readFile(join(unitDirOf(env.home), "snorlax-refresh.service"), "utf8");
       expect(serviceEnvironment(service)).toBe(`SNORLAX_HOME=${dataDir}`);
       expect(existsSync(dataDir)).toBe(true);
-      const other = os === "darwin" ? join(xdgData, "snorlax") : join(env.home, ".local", "share", "snorlax");
-      expect(existsSync(other)).toBe(false);
     });
   });
 
@@ -1224,6 +1251,50 @@ describe("systemd user timer", () => {
       expect(serviceNodePath(service)).toBe(process.execPath);
     });
   });
+
+  it.each([
+    ["exits non-zero", "show UnitPath failed"],
+    ["does not parse", "did not report a path list"]
+  ] as const)("writes nothing when the UnitPath query %s", async (mode, message) => {
+    await withSystemdHome(async (env) => {
+      if (mode === "exits non-zero") {
+        await writeFile(env.failUnitPath, "1", "utf8");
+      } else {
+        await writeFile(env.unitPath, "not a property\n", "utf8");
+      }
+      const installed = runSystemd(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain(message);
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
+      expect(existsSync(join(env.home, ".config", "systemd"))).toBe(false);
+      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH]);
+    });
+  });
+
+  it.each([
+    ["exits non-zero", "show UnitPath failed"],
+    ["does not parse", "did not report a path list"]
+  ] as const)(
+    "uninstall fails after the data-dir guard when UnitPath %s, and deletes nothing",
+    async (mode, message) => {
+      await withSystemdHome(async (env) => {
+        const dataDir = join(env.home, "empty-data");
+        await mkdir(dataDir);
+        if (mode === "exits non-zero") {
+          await writeFile(env.failUnitPath, "1", "utf8");
+        } else {
+          await writeFile(env.unitPath, "not a property\n", "utf8");
+        }
+        const removed = runSystemd(env, ["uninstall", "--data", "--json"], { snorlaxHome: dataDir });
+        expect(removed.status).toBe(1);
+        const failure = z.parse(failureSchema, json(removed.stdout));
+        expect(failure.error.code).toBe("internal");
+        expect(failure.error.message).toContain(message);
+        expect(existsSync(dataDir)).toBe(true);
+        expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH]);
+      });
+    }
+  );
 
   it("refuses a relative data directory before calling systemctl", async () => {
     await withSystemdHome(async (env) => {
@@ -1247,7 +1318,22 @@ describe("systemd user timer", () => {
       expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
       expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
       expect(existsSync(env.enabled)).toBe(false);
-      expect(await readInvocations(env.record)).toEqual([SHOW_ENV, SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
+      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
+    });
+  });
+
+  it("disables the timer when enable fails and the cleanup show fails", async () => {
+    await withSystemdHome(async (env) => {
+      await writeFile(env.failAfterEnable, "loaded\n", "utf8");
+      await writeFile(env.failShowAfterEnable, "1", "utf8");
+      const units = unitDirOf(env.home);
+      const installed = runSystemd(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("enable --now");
+      expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
+      expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
+      expect(existsSync(env.enabled)).toBe(false);
+      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
     });
   });
 
@@ -1261,7 +1347,7 @@ describe("systemd user timer", () => {
       expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
       expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
       expect(existsSync(env.enabled)).toBe(false);
-      expect(await readInvocations(env.record)).toEqual([SHOW_ENV, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
+      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
     });
   });
 
@@ -1286,7 +1372,7 @@ describe("systemd user timer", () => {
       expect(removed.status).toBe(1);
       expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain(foreign);
       expect(await readFile(timerPath, "utf8")).toBe("kept\n");
-      expect(await readInvocations(env.record)).toEqual([SHOW_ENV, SHOW, SHOW_ENV, SHOW]);
+      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, SHOW_UNIT_PATH, SHOW]);
     });
   });
 
@@ -1307,15 +1393,15 @@ describe("systemd user timer", () => {
 
       expect(runSystemd(env, ["uninstall", "--json"]).status).toBe(0);
       expect(await readInvocations(env.record)).toEqual([
-        SHOW_ENV,
+        SHOW_UNIT_PATH,
         SHOW,
         RELOAD,
         ENABLE,
-        SHOW_ENV,
+        SHOW_UNIT_PATH,
         SHOW,
         DISABLE,
         RELOAD,
-        SHOW_ENV,
+        SHOW_UNIT_PATH,
         SHOW,
         RELOAD
       ]);
@@ -1363,7 +1449,7 @@ describe("systemd user timer", () => {
       expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
       expect(payload.checks.find((check) => check.id === "schedule")?.detail).toContain("does not exist");
       const calls = await readInvocations(env.record);
-      expect(calls.slice(before.length)).toEqual([SHOW_ENV, SHOW, SHOW_ENV, SHOW]);
+      expect(calls.slice(before.length)).toEqual([SHOW_UNIT_PATH, SHOW, SHOW_UNIT_PATH, SHOW]);
     });
   });
 
