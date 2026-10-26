@@ -12,10 +12,18 @@ export const bundle = fileURLToPath(new URL("../../dist/snorlax.mjs", import.met
 export interface BundleHome {
   /** The run's HOME: a directory under the system temporary directory. */
   readonly home: string;
-  /** SNORLAX_HOME; `<home>/data` when omitted. */
+  /** SNORLAX_HOME; `<home>/data` when omitted. Ignored when `omitSnorlaxHome` is set. */
   readonly dataDir?: string;
+  /** Leave `SNORLAX_HOME` unset, so the data directory follows `XDG_DATA_HOME` or the platform default. */
+  readonly omitSnorlaxHome?: boolean;
   /** The `launchctl` the run may start: a stub under the temporary directory, or by default a path that does not exist. */
   readonly launchctl?: string;
+  /** The `systemctl` the run may start: a stub under the temporary directory, or by default a path that does not exist. */
+  readonly systemctl?: string;
+  /** `XDG_CONFIG_HOME` of the CLI process. Must be under the temporary directory. The systemd user manager does not use it. */
+  readonly xdgConfigHome?: string;
+  /** `XDG_DATA_HOME`. Must be under the temporary directory. */
+  readonly xdgDataHome?: string;
   /** SNORLAX_OS, for the tests that pick the scheduler. */
   readonly os?: string;
   /** Written to stdin, then the stream is closed. Empty when omitted, so a read reaches EOF. */
@@ -35,14 +43,23 @@ const underTemporaryDirectory = (path: string): boolean => {
 
 /**
  * The whole environment of a bundle run; nothing of the caller's is inherited. launchd isolates by user, not by HOME,
- * so a temporary HOME alone would still let `doctor`, `install` or `uninstall` reach the caller's gui domain: the
- * launchctl is always set here, to a stub or to a path that does not exist, and both it and HOME must be temporary.
+ * and systemd's user manager is the caller's too, so a temporary HOME alone would still let `doctor`, `install` or
+ * `uninstall` reach the real one: launchctl and systemctl are always set here, to a stub or to a path that does not
+ * exist, and they and HOME must be temporary.
  */
 const bundleEnv = (where: BundleHome): Record<string, string> => {
   const launchctl = where.launchctl ?? join(where.home, "no-launchctl");
-  for (const path of [where.home, launchctl]) {
+  const systemctl = where.systemctl ?? join(where.home, "no-systemctl");
+  const paths = [where.home, launchctl, systemctl];
+  if (where.xdgConfigHome !== undefined) {
+    paths.push(where.xdgConfigHome);
+  }
+  if (where.xdgDataHome !== undefined) {
+    paths.push(where.xdgDataHome);
+  }
+  for (const path of paths) {
     if (!underTemporaryDirectory(path)) {
-      throw new Error(`a bundle run needs its HOME and launchctl under ${tmpdir()}, got ${path}`);
+      throw new Error(`a bundle run needs its HOME, launchctl and systemctl under ${tmpdir()}, got ${path}`);
     }
   }
   if (!existsSync(bundle)) {
@@ -51,9 +68,12 @@ const bundleEnv = (where: BundleHome): Record<string, string> => {
   return {
     ...where.extraEnv,
     HOME: where.home,
-    SNORLAX_HOME: where.dataDir ?? join(where.home, "data"),
+    ...(where.omitSnorlaxHome === true ? {} : { SNORLAX_HOME: where.dataDir ?? join(where.home, "data") }),
     SNORLAX_LAUNCHCTL: launchctl,
+    SNORLAX_SYSTEMCTL: systemctl,
     PATH: "/usr/bin:/bin",
+    ...(where.xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: where.xdgConfigHome }),
+    ...(where.xdgDataHome === undefined ? {} : { XDG_DATA_HOME: where.xdgDataHome }),
     ...(where.os === undefined ? {} : { SNORLAX_OS: where.os }),
     ...(where.security === undefined ? {} : { SNORLAX_SECURITY: where.security }),
     ...(where.secretTool === undefined ? {} : { SNORLAX_SECRET_TOOL: where.secretTool })

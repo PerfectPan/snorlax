@@ -49,7 +49,7 @@ export const FAILURES = {
   LedgerBackupFailed: { code: "data-dir", exit: 1 },
   LedgerPlatformUnsupported: { code: "internal", exit: 1 },
   SchedulerOsOverrideInvalid: { code: "internal", exit: 1 },
-  // Plan 3.2.1 has no code for an unsupported platform; the message names the batch that adds one.
+  // Plan 3.2.1 has no code for an unsupported platform, so win32 stays `internal`.
   SchedulerUnsupportedOs: { code: "internal", exit: 1 },
   DataDirNotAbsolute: { code: "data-dir", exit: 1, refusesDataDir: true },
   DataDirNotDeletable: { code: "data-dir", exit: 1, refusesDataDir: true },
@@ -63,6 +63,11 @@ export const FAILURES = {
   ForeignServiceLoaded: { code: "internal", exit: 1 },
   PlistWriteFailed: { code: "internal", exit: 1 },
   PlistRemoveFailed: { code: "internal", exit: 1 },
+  UnitPathsUnresolved: { code: "internal", exit: 1 },
+  SystemctlFailed: { code: "internal", exit: 1 },
+  ForeignTimerLoaded: { code: "internal", exit: 1 },
+  UnitWriteFailed: { code: "internal", exit: 1 },
+  UnitRemoveFailed: { code: "internal", exit: 1 },
   KeychainUnavailable: { code: "keychain", exit: 1 },
   BackendUnreachable: { code: "network", exit: 1 },
   BackendUnauthorized: { code: "unauthorized", exit: 1 },

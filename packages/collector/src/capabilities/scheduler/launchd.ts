@@ -279,6 +279,7 @@ const loadedJob = (platform: SchedulerPlatform, plistPath: string): Effect.Effec
 export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.Shape<typeof Scheduler> => {
   const plistPath = launchAgentPlistPath(platform.home);
   return {
+    kind: "launchd",
     install: (job, prepare) =>
       Effect.gen(function* () {
         yield* requireAbsoluteDataDir(job.dataDir);
@@ -343,7 +344,8 @@ export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.S
       }),
     inspect: Effect.gen(function* () {
       return {
-        kind: "inspected",
+        kind: "inspected" as const,
+        scheduler: "launchd" as const,
         cliJob: yield* readCliJob(platform, plistPath),
         loaded: yield* loadedJob(platform, plistPath)
       };

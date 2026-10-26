@@ -52,6 +52,7 @@ const removeKeychainItem = (platform: Platform, dataDir: string) =>
  * deletes the data directory. The data directory is checked — its path, then the snorlax marker — before the
  * scheduler looks at the job, so a refused `--data` leaves the job loaded. `deleted` says the data directory was
  * emptied of snorlax's entries; `dataLeftovers` are the entries kept because snorlax did not write them.
+ * The command names the job from the scheduler's kind, so this flow does not report an operating system.
  */
 export const uninstallFlow = ({ deleteData }: { readonly deleteData: boolean }) =>
   Effect.gen(function* () {

@@ -15,8 +15,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { CliJob, JobInspection, LoadedJob } from "../src/capabilities/scheduler/scheduler.ts";
 import { runCli } from "../src/cli/run.ts";
 import { CliEnv } from "../src/cli/env.ts";
+import { doctorPayload, scheduleCheck, type ScheduleObservation } from "../src/commands/doctor/checks.ts";
 import { offlineCapabilities } from "./fixtures/capabilities.ts";
-import { scheduleCheck, type ScheduleObservation } from "../src/commands/doctor/checks.ts";
 import { RuntimeInfo } from "../src/modules/version/version.ts";
 import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
@@ -382,5 +382,91 @@ describe("the schedule check", () => {
     const { detail } = scheduleCheck({ job: inspected(cliJob, { from: "cli", file: PLIST }), node: "missing" });
     expect(detail).toContain("run `snorlax install` again");
     expect(detail).toContain("turn on Launch at login in Snorlax's Settings");
+  });
+
+  const UNIT = "/opt/snorlax-test/home/.config/systemd/user/snorlax-refresh.service";
+  const TIMER = "/opt/snorlax-test/home/.config/systemd/user/snorlax-refresh.timer";
+  const unitJob: CliJob = { file: UNIT, nodePath: NODE };
+  const systemd = (job: CliJob | undefined, loaded: LoadedJob): JobInspection => ({
+    kind: "inspected",
+    scheduler: "systemd",
+    cliJob: job,
+    loaded
+  });
+  const systemdCases: [string, ScheduleObservation, DoctorCheck["status"], string][] = [
+    [
+      "the systemd user timer running on a runnable Node",
+      { job: systemd(unitJob, { from: "cli", file: TIMER }), node: "runnable" },
+      "ok",
+      "the systemd user timer is running"
+    ],
+    [
+      "the Node named in the unit file does not exist",
+      { job: systemd(unitJob, { from: "cli", file: TIMER }), node: "missing" },
+      "error",
+      `the Node in ${UNIT} does not exist (${NODE})`
+    ],
+    [
+      "the Node named in the unit file is not executable",
+      { job: systemd(unitJob, { from: "nothing" }), node: "not-executable" },
+      "error",
+      `the Node in ${UNIT} is not executable (${NODE})`
+    ],
+    [
+      "a Node the user cannot check",
+      { job: systemd(unitJob, { from: "cli", file: TIMER }), node: { unchecked: "EACCES: permission denied" } },
+      "error",
+      `cannot check the Node at ${NODE} that ${UNIT} runs: EACCES: permission denied`
+    ],
+    [
+      "a unit file whose timer is not running",
+      { job: systemd(unitJob, { from: "nothing" }), node: "runnable" },
+      "warn",
+      "the systemd user timer is not running"
+    ],
+    [
+      "a unit file when the loaded timer's source is unknown",
+      { job: systemd(unitJob, { from: "unknown", reason: "systemctl did not finish" }), node: "runnable" },
+      "warn",
+      "cannot tell whether systemd runs"
+    ],
+    [
+      "a unit file without a Node path snorlax can read",
+      { job: systemd({ file: UNIT, nodePath: undefined }, { from: "cli", file: TIMER }), node: undefined },
+      "warn",
+      "cannot read the Node path"
+    ],
+    [
+      "the timer loaded after its service unit was deleted",
+      { job: systemd(undefined, { from: "cli", file: TIMER }), node: undefined },
+      "warn",
+      "the service unit it starts is gone"
+    ],
+    [
+      "a loaded timer whose source is unknown",
+      { job: systemd(undefined, { from: "unknown", reason: "show did not parse" }), node: undefined },
+      "warn",
+      "cannot confirm the timer's state: show did not parse"
+    ],
+    [
+      "a timer reported as the app's",
+      { job: systemd(undefined, { from: "app", file: TIMER }), node: undefined },
+      "warn",
+      "not a unit file snorlax install writes"
+    ],
+    [
+      "nothing scheduled on Linux",
+      { job: systemd(undefined, { from: "nothing" }), node: undefined },
+      "warn",
+      "refresh is not scheduled: run `snorlax install`"
+    ]
+  ];
+
+  it.each(systemdCases)("%s", (_, observed, status, detail) => {
+    const check = scheduleCheck(observed);
+    expect(check).toEqual({ id: "schedule", status, detail: expect.stringContaining(detail) });
+    expect(check.detail).not.toContain("Launch at login");
+    expect(check.detail).not.toContain("Snorlax.app");
+    expect(doctorPayload([check]).healthy).toBe(status !== "error");
   });
 });
