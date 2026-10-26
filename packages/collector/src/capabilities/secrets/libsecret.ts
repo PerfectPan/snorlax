@@ -2,7 +2,15 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import type { Context } from "effect";
 import { Effect } from "effect";
 
-import { commandPath, KeychainUnavailable, lastLine, runStdinCommand, type CommandResult } from "./command.ts";
+import {
+  absentWhenBinaryMissing,
+  commandPath,
+  KeychainUnavailable,
+  lastLine,
+  runStdinCommand,
+  unavailableWhenBinaryMissing,
+  type CommandResult
+} from "./command.ts";
 import type { Secrets } from "./secrets.ts";
 
 /**
@@ -10,8 +18,9 @@ import type { Secrets } from "./secrets.ts";
  * trailing newline as part of the password, so the token is written with no newline. `lookup` prints the
  * token. Exit 1 with an empty stderr means the item is absent; exit 1 with stderr (the service or D-Bus
  * could not be reached) is `KeychainUnavailable`, and `clear` uses the same split. The token is never a
- * process argument. `SNORLAX_SECRET_TOOL` replaces `secret-tool`; tests point it at a stub and never start
- * the real binary.
+ * process argument. A missing `secret-tool` program (`ENOENT`) is an absent item for `read` and `delete`,
+ * because nothing could have been stored; `store` still fails. `SNORLAX_SECRET_TOOL` replaces `secret-tool`;
+ * tests point it at a stub and never start the real binary.
  */
 
 const LABEL = "--label=snorlax";
@@ -40,34 +49,42 @@ export const libsecretSecrets = (
   const run = (args: readonly string[], stdin: string) => runStdinCommand(platform, binary, args, stdin);
   return {
     read: (deviceId) =>
-      Effect.gen(function* () {
-        const result = yield* run(["lookup", ...attributes(deviceId)], "");
-        if (absent(result)) {
-          return undefined;
-        }
-        if (result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code);
-        }
-        const token = lastLine(result.stdout);
-        if (token === "") {
-          return yield* new KeychainUnavailable({ message: "secret-tool printed no token" });
-        }
-        return token;
-      }),
+      absentWhenBinaryMissing(
+        Effect.gen(function* () {
+          const result = yield* run(["lookup", ...attributes(deviceId)], "");
+          if (absent(result)) {
+            return undefined;
+          }
+          if (result.code !== 0) {
+            return yield* failed(result.stderr, result.stdout, result.code);
+          }
+          const token = lastLine(result.stdout);
+          if (token === "") {
+            return yield* new KeychainUnavailable({ message: "secret-tool printed no token" });
+          }
+          return token;
+        }),
+        undefined
+      ),
     store: (deviceId, token) =>
-      Effect.gen(function* () {
-        const result = yield* run(["store", LABEL, ...attributes(deviceId)], token);
-        if (result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code, token);
-        }
-      }),
+      unavailableWhenBinaryMissing(
+        Effect.gen(function* () {
+          const result = yield* run(["store", LABEL, ...attributes(deviceId)], token);
+          if (result.code !== 0) {
+            return yield* failed(result.stderr, result.stdout, result.code, token);
+          }
+        })
+      ),
     delete: (deviceId) =>
-      Effect.gen(function* () {
-        const result = yield* run(["clear", ...attributes(deviceId)], "");
-        // Clearing an item that is already gone is the state `delete` promises. A non-empty stderr is not that.
-        if (!absent(result) && result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code);
-        }
-      })
+      absentWhenBinaryMissing(
+        Effect.gen(function* () {
+          const result = yield* run(["clear", ...attributes(deviceId)], "");
+          // Clearing an item that is already gone is the state `delete` promises. A non-empty stderr is not that.
+          if (!absent(result) && result.code !== 0) {
+            return yield* failed(result.stderr, result.stdout, result.code);
+          }
+        }),
+        undefined
+      )
   };
 };

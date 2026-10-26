@@ -44,8 +44,13 @@ describe("uninstall keychain item", () => {
   const start = async () => {
     const setup = await createRefreshSetup({ now: NOW });
     const items = new Map<string, string>();
-    const operations: string[] = [];
+    const trace: string[] = [];
     const calls: SchedulerCall[] = [];
+    const pushCall = calls.push.bind(calls);
+    calls.push = (call: SchedulerCall) => {
+      trace.push(`scheduler ${call.operation}`);
+      return pushCall(call);
+    };
     let failDelete = false;
     const secrets = Layer.succeed(
       Secrets,
@@ -54,10 +59,10 @@ describe("uninstall keychain item", () => {
         store: (deviceId, token) =>
           Effect.sync(() => {
             items.set(deviceId, token);
-            operations.push("store");
+            trace.push("keychain store");
           }),
         delete: (deviceId) => {
-          operations.push(`delete ${deviceId}`);
+          trace.push(`keychain delete ${deviceId}`);
           return failDelete
             ? Effect.fail(new KeychainUnavailable({ message: "keychain is locked" }))
             : Effect.sync(() => {
@@ -93,7 +98,7 @@ describe("uninstall keychain item", () => {
     return {
       setup,
       items,
-      operations,
+      trace,
       calls,
       run,
       failDelete: (value: boolean) => {
@@ -113,7 +118,7 @@ describe("uninstall keychain item", () => {
       expect(removed.stderr).toBe("");
       expect(removed.exitCode).toBe(0);
       expect(z.parse(okSchema, JSON.parse(removed.stdout)).ok).toBe(true);
-      expect(harness.operations).toEqual([`delete ${deviceId}`]);
+      expect(harness.trace).toEqual(["scheduler uninstall", `keychain delete ${deviceId}`]);
       expect(harness.items.has(deviceId)).toBe(false);
       expect(existsSync(harness.setup.dataDir)).toBe(false);
       expect(harness.calls.map((call) => call.operation)).toEqual(["uninstall"]);
@@ -129,7 +134,7 @@ describe("uninstall keychain item", () => {
       const deviceId = deviceIdOf(harness.setup.dataDir);
       const removed = await harness.run(["uninstall", "--data", "--json"]);
       expect(removed.exitCode).toBe(0);
-      expect(harness.operations).toEqual([`delete ${deviceId}`]);
+      expect(harness.trace).toEqual(["scheduler uninstall", `keychain delete ${deviceId}`]);
       expect(existsSync(harness.setup.dataDir)).toBe(false);
     } finally {
       await harness.close();
@@ -151,6 +156,7 @@ describe("uninstall keychain item", () => {
       expect(error.message).toContain("the data directory was kept");
       expect(harness.items.get(deviceId)).toBe("device-token");
       expect(existsSync(join(harness.setup.dataDir, "ledger.db"))).toBe(true);
+      expect(harness.trace).toEqual(["scheduler uninstall", `keychain delete ${deviceId}`]);
       expect(harness.calls.map((call) => call.operation)).toEqual(["uninstall"]);
     } finally {
       await harness.close();
@@ -165,7 +171,7 @@ describe("uninstall keychain item", () => {
       harness.items.set(deviceId, "device-token");
       const removed = await harness.run(["uninstall", "--json"]);
       expect(removed.exitCode).toBe(0);
-      expect(harness.operations).toEqual([]);
+      expect(harness.trace).toEqual(["scheduler uninstall"]);
       expect(harness.items.get(deviceId)).toBe("device-token");
       expect(existsSync(join(harness.setup.dataDir, "ledger.db"))).toBe(true);
     } finally {
@@ -178,7 +184,7 @@ describe("uninstall keychain item", () => {
     try {
       const removed = await harness.run(["uninstall", "--data", "--json"]);
       expect(removed.exitCode).toBe(0);
-      expect(harness.operations).toEqual([]);
+      expect(harness.trace).toEqual(["scheduler uninstall"]);
       expect(existsSync(harness.setup.dataDir)).toBe(false);
     } finally {
       await harness.close();

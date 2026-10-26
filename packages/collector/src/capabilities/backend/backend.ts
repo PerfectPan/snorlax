@@ -155,43 +155,56 @@ const send = (
   token: string | undefined,
   json: unknown
 ): Effect.Effect<RawResponse, BackendUnreachable> =>
-  Effect.callback<RawResponse, BackendUnreachable>((resume) => {
-    const controller = new AbortController();
-    const headers = new Headers();
-    if (token !== undefined) {
-      headers.set("authorization", `Bearer ${token}`);
-    }
-    let body: string | undefined;
-    if (json !== undefined) {
-      headers.set("content-type", "application/json");
-      body = JSON.stringify(json);
-    }
-    const finished = fetchImpl(new Request(url, { method, headers, body, signal: controller.signal })).then(
-      async (response) => ({ status: response.status, text: await response.text() })
-    );
-    let settled = false;
-    const finish = (effect: Effect.Effect<RawResponse, BackendUnreachable>): void => {
-      if (!settled) {
-        settled = true;
-        resume(effect);
+  // `Headers.set` throws a TypeError whose message contains the header value when the token has a newline,
+  // a carriage return, or a NUL. That throw must not become a defect: `catchDefect` would print it, and
+  // redaction cannot hide a value it has not been shown. The message here is fixed and names no token.
+  Effect.try({
+    try: () => {
+      const controller = new AbortController();
+      const headers = new Headers();
+      if (token !== undefined) {
+        headers.set("authorization", `Bearer ${token}`);
       }
-    };
-    void finished.then(
-      (raw) => finish(Effect.succeed(raw)),
-      (error: unknown) =>
-        finish(Effect.fail(new BackendUnreachable({ message: `cannot reach the backend: ${errorMessage(error)}` })))
-    );
-    return Effect.sync(() => {
-      if (!settled) {
-        settled = true;
-        controller.abort();
+      let body: string | undefined;
+      if (json !== undefined) {
+        headers.set("content-type", "application/json");
+        body = JSON.stringify(json);
       }
-    });
+      return { controller, request: new Request(url, { method, headers, body, signal: controller.signal }) };
+    },
+    catch: () => new BackendUnreachable({ message: "cannot build the backend request" })
   }).pipe(
-    Effect.timeoutOrElse({
-      duration: REQUEST_TIMEOUT,
-      orElse: () => Effect.fail(new BackendUnreachable({ message: "the backend did not answer within 15s" }))
-    })
+    Effect.flatMap(({ controller, request }) =>
+      Effect.callback<RawResponse, BackendUnreachable>((resume) => {
+        const finished = fetchImpl(request).then(async (response) => ({
+          status: response.status,
+          text: await response.text()
+        }));
+        let settled = false;
+        const finish = (effect: Effect.Effect<RawResponse, BackendUnreachable>): void => {
+          if (!settled) {
+            settled = true;
+            resume(effect);
+          }
+        };
+        void finished.then(
+          (raw) => finish(Effect.succeed(raw)),
+          (error: unknown) =>
+            finish(Effect.fail(new BackendUnreachable({ message: `cannot reach the backend: ${errorMessage(error)}` })))
+        );
+        return Effect.sync(() => {
+          if (!settled) {
+            settled = true;
+            controller.abort();
+          }
+        });
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: REQUEST_TIMEOUT,
+          orElse: () => Effect.fail(new BackendUnreachable({ message: "the backend did not answer within 15s" }))
+        })
+      )
+    )
   );
 
 type BackendShape = {

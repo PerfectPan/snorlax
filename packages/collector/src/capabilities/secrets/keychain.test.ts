@@ -194,12 +194,64 @@ describe("macOS keychain through security -i", () => {
     }
   });
 
-  it("fails when the security binary cannot be started and does not call /usr/bin/security", async () => {
+  it("treats a missing security binary as an absent item and does not call /usr/bin/security", async () => {
     const home = await mkdtemp(join(tmpdir(), "snorlax-keychain-missing-"));
+    const missing = join(home, "missing-security");
+    try {
+      const base = createNodePlatform({
+        home,
+        env: { PATH: "/usr/bin:/bin", SNORLAX_SECURITY: missing }
+      });
+      const spawned: string[] = [];
+      const platform = {
+        ...base,
+        process: {
+          ...base.process,
+          spawn: ((command: string, args: readonly string[], options: Parameters<typeof base.process.spawn>[2]) => {
+            spawned.push(command);
+            if (command === "/usr/bin/security") {
+              throw new Error("refused /usr/bin/security");
+            }
+            return base.process.spawn(command, args, options);
+          }) as typeof base.process.spawn
+        }
+      };
+      const provide = Layer.provide(Secrets.keychain, Layer.succeed(SnorlaxPlatform, platform));
+      const read = await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Secrets).read(DEVICE);
+        }).pipe(Effect.provide(provide))
+      );
+      expect(read).toBeUndefined();
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Secrets).delete(DEVICE);
+        }).pipe(Effect.provide(provide))
+      );
+      const stored = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).store(DEVICE, TOKEN);
+          }).pipe(Effect.provide(provide))
+        )
+      );
+      expect(stored._tag).toBe("KeychainUnavailable");
+      expect(stored.message).toContain("missing-security");
+      expect(stored.message).not.toContain("/usr/bin/security");
+      expect(stored.message).not.toContain(TOKEN);
+      expect(spawned.every((command) => command === missing)).toBe(true);
+      expect(spawned).not.toContain("/usr/bin/security");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("stays unavailable when the security path exists but is not a program", async () => {
+    const home = await mkdtemp(join(tmpdir(), "snorlax-keychain-not-a-program-"));
     try {
       const platform = createNodePlatform({
         home,
-        env: { PATH: "/usr/bin:/bin", SNORLAX_SECURITY: join(home, "missing-security") }
+        env: { PATH: "/usr/bin:/bin", SNORLAX_SECURITY: home }
       });
       const error = await Effect.runPromise(
         Effect.flip(
@@ -209,8 +261,8 @@ describe("macOS keychain through security -i", () => {
         )
       );
       expect(error._tag).toBe("KeychainUnavailable");
-      expect(error.message).toContain("missing-security");
       expect(error.message).not.toContain("/usr/bin/security");
+      expect(error.message).toContain(home);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -339,6 +391,57 @@ process.exit(1);
           return yield* (yield* Secrets).delete(DEVICE);
         }).pipe(Effect.provide(provide(missingPath)))
       );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a missing secret-tool binary as an absent item and does not call secret-tool", async () => {
+    const home = await mkdtemp(join(tmpdir(), "snorlax-libsecret-enoent-"));
+    const missing = join(home, "missing-secret-tool");
+    try {
+      const base = createNodePlatform({
+        home,
+        env: { PATH: "/usr/bin:/bin", SNORLAX_SECRET_TOOL: missing }
+      });
+      const spawned: string[] = [];
+      const platform = {
+        ...base,
+        process: {
+          ...base.process,
+          spawn: ((command: string, args: readonly string[], options: Parameters<typeof base.process.spawn>[2]) => {
+            spawned.push(command);
+            if (command === "secret-tool" || command === "/usr/bin/security") {
+              throw new Error(`refused ${command}`);
+            }
+            return base.process.spawn(command, args, options);
+          }) as typeof base.process.spawn
+        }
+      };
+      const provide = Layer.provide(Secrets.libsecret, Layer.succeed(SnorlaxPlatform, platform));
+      const read = await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Secrets).read(DEVICE);
+        }).pipe(Effect.provide(provide))
+      );
+      expect(read).toBeUndefined();
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Secrets).delete(DEVICE);
+        }).pipe(Effect.provide(provide))
+      );
+      const stored = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).store(DEVICE, TOKEN);
+          }).pipe(Effect.provide(provide))
+        )
+      );
+      expect(stored._tag).toBe("KeychainUnavailable");
+      expect(stored.message).toContain("missing-secret-tool");
+      expect(stored.message).not.toContain(TOKEN);
+      expect(spawned.every((command) => command === missing)).toBe(true);
+      expect(spawned).not.toContain("secret-tool");
     } finally {
       await rm(home, { recursive: true, force: true });
     }

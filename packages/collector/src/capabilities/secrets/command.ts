@@ -1,5 +1,6 @@
 import type { Platform } from "@rivus/agent-kit/platform";
 import { Data, Duration, Effect } from "effect";
+import * as z from "zod/mini";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 
@@ -10,6 +11,37 @@ import { errorMessage } from "../../core/error-message/error-message.ts";
 export class KeychainUnavailable extends Data.TaggedError("KeychainUnavailable")<{
   readonly message: string;
 }> {}
+
+/**
+ * The store tool's program does not exist (`ENOENT`). No item can be stored, so `read` and `delete` treat it
+ * as an absent item. `store` still fails: pairing needs the program.
+ */
+export class StoreBinaryMissing extends Data.TaggedError("StoreBinaryMissing")<{
+  readonly message: string;
+}> {}
+
+/** Node's spawn error carries `code`. A hand-written shape check would duplicate this schema. */
+const enoentSchema = z.object({ code: z.literal("ENOENT") });
+
+const isEnoent = (error: unknown): boolean => z.safeParse(enoentSchema, error).success;
+
+const missingBinary = (command: string): StoreBinaryMissing =>
+  new StoreBinaryMissing({ message: `cannot run ${command}: the program does not exist` });
+
+/** `read` and `delete` answer "no item" when the program is missing. */
+export const absentWhenBinaryMissing = <A>(
+  effect: Effect.Effect<A, KeychainUnavailable | StoreBinaryMissing>,
+  absent: A
+): Effect.Effect<A, KeychainUnavailable> =>
+  effect.pipe(Effect.catchTag("StoreBinaryMissing", () => Effect.succeed(absent)));
+
+/** `store` stays a failure when the program is missing. The message names the path and not a secret. */
+export const unavailableWhenBinaryMissing = <A>(
+  effect: Effect.Effect<A, KeychainUnavailable | StoreBinaryMissing>
+): Effect.Effect<A, KeychainUnavailable> =>
+  effect.pipe(
+    Effect.catchTag("StoreBinaryMissing", (error) => Effect.fail(new KeychainUnavailable({ message: error.message })))
+  );
 
 /** How long one keychain command may run, on the Effect clock, before the child is stopped. */
 const COMMAND_TIMEOUT = Duration.seconds(15);
@@ -53,19 +85,21 @@ const cannotRun = (command: string, error: unknown): KeychainUnavailable =>
 
 /**
  * Runs `command` with `args` and writes `stdin` to the child, then closes it. The token a caller puts in
- * `stdin` is never placed in `args` (plan 3.4.2). Failing to start, a signal, or no answer within 15s on the
- * Effect clock is `KeychainUnavailable`; a non-zero exit is still a result, because "not found" is an exit
- * code the caller knows and a broken keychain is a different one.
+ * `stdin` is never placed in `args` (plan 3.4.2). `ENOENT` is `StoreBinaryMissing`: the program is not
+ * installed, so no item exists. Any other failure to start, a signal, or no answer within 15s on the Effect
+ * clock is `KeychainUnavailable`. A non-zero exit is still a result, because "not found" is an exit code the
+ * caller knows and a broken keychain is a different one.
  */
 export const runStdinCommand = (
   platform: CommandPlatform,
   command: string,
   args: readonly string[],
   stdin: string
-): Effect.Effect<CommandResult, KeychainUnavailable> =>
+): Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing> =>
   // `spawn` throws synchronously for ENOEXEC, ENOTDIR and E2BIG, and `Writable.toWeb` (reached by
   // `getWriter`) throws EMFILE. A throw inside `Effect.callback` is a defect, so refresh would fail
-  // `internal` and skip the snapshot. `Effect.try` keeps it on the `KeychainUnavailable` channel.
+  // `internal` and skip the snapshot. `Effect.try` keeps it on the failure channel. `ENOENT` arrives on
+  // `exited` when the program is not there; the synchronous path handles it too.
   Effect.try({
     try: () => {
       const controller = new AbortController();
@@ -81,10 +115,10 @@ export const runStdinCommand = (
         throw error;
       }
     },
-    catch: (error) => cannotRun(command, error)
+    catch: (error) => (isEnoent(error) ? missingBinary(command) : cannotRun(command, error))
   }).pipe(
     Effect.flatMap(({ controller, child, writer }) =>
-      Effect.callback<CommandResult, KeychainUnavailable>((resume) => {
+      Effect.callback<CommandResult, KeychainUnavailable | StoreBinaryMissing>((resume) => {
         const encoder = new TextEncoder();
         const written = (async (): Promise<void> => {
           try {
@@ -98,7 +132,7 @@ export const runStdinCommand = (
           ([stdout, stderr, status]) => ({ stdout: decode(stdout), stderr: decode(stderr), status })
         );
         let settled = false;
-        const finish = (effect: Effect.Effect<CommandResult, KeychainUnavailable>): void => {
+        const finish = (effect: Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>): void => {
           if (!settled) {
             settled = true;
             resume(effect);
@@ -118,7 +152,7 @@ export const runStdinCommand = (
             }
             finish(Effect.succeed({ code: status.code, stdout, stderr }));
           },
-          (error: unknown) => finish(Effect.fail(cannotRun(command, error)))
+          (error: unknown) => finish(Effect.fail(isEnoent(error) ? missingBinary(command) : cannotRun(command, error)))
         );
         return Effect.sync(() => controller.abort());
       }).pipe(

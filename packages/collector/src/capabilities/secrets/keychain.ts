@@ -2,14 +2,22 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import type { Context } from "effect";
 import { Effect } from "effect";
 
-import { commandPath, KeychainUnavailable, lastLine, runStdinCommand } from "./command.ts";
+import {
+  absentWhenBinaryMissing,
+  commandPath,
+  KeychainUnavailable,
+  lastLine,
+  runStdinCommand,
+  unavailableWhenBinaryMissing
+} from "./command.ts";
 import type { Secrets } from "./secrets.ts";
 
 /**
  * macOS login keychain through `security -i` (plan 3.4.2). Every command is one line on stdin, so the device
  * token is never a process argument. `security find-generic-password` exits 44 when the item is absent
- * (`errSecItemNotFound`); any other failure means the keychain could not be used. `SNORLAX_SECURITY` replaces
- * `/usr/bin/security`; tests point it at a stub and never start the real binary.
+ * (`errSecItemNotFound`); any other failure means the keychain could not be used. A missing `security` program
+ * (`ENOENT`) is an absent item for `read` and `delete`, because nothing could have been stored; `store` still
+ * fails. `SNORLAX_SECURITY` replaces `/usr/bin/security`; tests point it at a stub and never start the real binary.
  */
 
 const SERVICE = "snorlax";
@@ -43,34 +51,42 @@ export const keychainSecrets = (
   const run = (stdin: string) => runStdinCommand(platform, binary, ["-i"], stdin);
   return {
     read: (deviceId) =>
-      Effect.gen(function* () {
-        const result = yield* run(commandFor(deviceId, "read"));
-        if (result.code === NOT_FOUND) {
-          return undefined;
-        }
-        if (result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code);
-        }
-        const token = lastLine(result.stdout);
-        if (token === "") {
-          return yield* new KeychainUnavailable({ message: "security printed no token" });
-        }
-        return token;
-      }),
+      absentWhenBinaryMissing(
+        Effect.gen(function* () {
+          const result = yield* run(commandFor(deviceId, "read"));
+          if (result.code === NOT_FOUND) {
+            return undefined;
+          }
+          if (result.code !== 0) {
+            return yield* failed(result.stderr, result.stdout, result.code);
+          }
+          const token = lastLine(result.stdout);
+          if (token === "") {
+            return yield* new KeychainUnavailable({ message: "security printed no token" });
+          }
+          return token;
+        }),
+        undefined
+      ),
     store: (deviceId, token) =>
-      Effect.gen(function* () {
-        const result = yield* run(commandFor(deviceId, "store", token));
-        if (result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code, token);
-        }
-      }),
+      unavailableWhenBinaryMissing(
+        Effect.gen(function* () {
+          const result = yield* run(commandFor(deviceId, "store", token));
+          if (result.code !== 0) {
+            return yield* failed(result.stderr, result.stdout, result.code, token);
+          }
+        })
+      ),
     delete: (deviceId) =>
-      Effect.gen(function* () {
-        const result = yield* run(commandFor(deviceId, "delete"));
-        // Deleting an item that is already gone is the state `delete` promises.
-        if (result.code !== 0 && result.code !== NOT_FOUND) {
-          return yield* failed(result.stderr, result.stdout, result.code);
-        }
-      })
+      absentWhenBinaryMissing(
+        Effect.gen(function* () {
+          const result = yield* run(commandFor(deviceId, "delete"));
+          // Deleting an item that is already gone is the state `delete` promises.
+          if (result.code !== 0 && result.code !== NOT_FOUND) {
+            return yield* failed(result.stderr, result.stdout, result.code);
+          }
+        }),
+        undefined
+      )
   };
 };

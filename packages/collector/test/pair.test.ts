@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,7 +72,11 @@ const createLab = (fail: "put" | "register" | undefined) => {
   database.exec(MIGRATION);
   const app = createApp({ db: createSqliteD1(database), adminToken: ADMIN, now: () => NOW });
   const requests: Recorded[] = [];
-  const gate = { failRegisterAfterRevoke: false };
+  const gate: {
+    failRegisterAfterRevoke: boolean;
+    failRegisterNetworkAfterRevoke: boolean;
+    afterRegister?: () => Promise<void>;
+  } = { failRegisterAfterRevoke: false, failRegisterNetworkAfterRevoke: false };
   let revoked = false;
   const fetchImpl: BackendFetch = async (request) => {
     const text = request.method === "GET" || request.method === "DELETE" ? null : await request.text();
@@ -99,7 +103,10 @@ const createLab = (fail: "put" | "register" | undefined) => {
         headers: { "content-type": "application/json" }
       });
     }
-    return app.fetch(
+    if (gate.failRegisterNetworkAfterRevoke && revoked && request.method === "POST" && path === "/v1/devices") {
+      throw new Error("backend down after revoke");
+    }
+    const response = await app.fetch(
       new Request(request.url, {
         method: request.method,
         headers: request.headers,
@@ -107,6 +114,10 @@ const createLab = (fail: "put" | "register" | undefined) => {
         signal: request.signal
       })
     );
+    if (response.status === 201 && request.method === "POST" && path === "/v1/devices" && gate.afterRegister) {
+      await gate.afterRegister();
+    }
+    return response;
   };
   return { database, fetchImpl, requests, gate };
 };
@@ -220,8 +231,12 @@ interface Harness {
   readonly env: Record<string, string>;
   readonly requests: Recorded[];
   readonly database: DatabaseSync;
-  /** The next `POST /v1/devices` after a successful revoke answers 409. */
-  readonly gate: { failRegisterAfterRevoke: boolean };
+  /** The next `POST /v1/devices` after a successful revoke answers 409, or the network fails. */
+  readonly gate: {
+    failRegisterAfterRevoke: boolean;
+    failRegisterNetworkAfterRevoke: boolean;
+    afterRegister?: () => Promise<void>;
+  };
   readonly logPath: string;
   readonly storePath: string;
   readonly fetchImpl: BackendFetch;
@@ -390,6 +405,41 @@ const holdLockAfterConfig = (harness: Harness): { readonly waiting: Promise<void
   };
 };
 
+/**
+ * After the next successful registration, holds the ledger lock so the following dirty step waits. The wait
+ * resolves once that step has entered `realpath` on the lock directory. Arming happens after this helper's own
+ * acquire, so that acquire does not signal.
+ */
+const holdLockBeforeDirtyStep = (
+  harness: Harness
+): { readonly waiting: Promise<void>; release: () => Promise<void> } => {
+  const dataDir = harness.setup.dataDir;
+  const lockDir = `${dataDir}/`;
+  const fs = harness.setup.platform.fs;
+  const realpath = fs.realpath.bind(fs);
+  let armed = false;
+  let resolveWaiting: () => void = () => undefined;
+  const waiting = new Promise<void>((resolve) => {
+    resolveWaiting = resolve;
+  });
+  fs.realpath = async (path) => {
+    if (armed && path === lockDir) {
+      resolveWaiting();
+    }
+    return realpath(path);
+  };
+  let release = (): Promise<void> => Promise.resolve();
+  harness.gate.afterRegister = async () => {
+    const acquired = await acquireProcessLock(harness.setup.platform, join(dataDir, "ledger.lock"));
+    if (!acquired.ok) {
+      throw new Error("the test could not hold the ledger lock");
+    }
+    release = () => acquired.value.release();
+    armed = true;
+  };
+  return { waiting, release: () => release() };
+};
+
 describe("pair", () => {
   it("stores the token on security stdin, marks every bucket dirty, clears remote rows, and pushes", async () => {
     const harness = await open();
@@ -551,6 +601,57 @@ describe("pair", () => {
     }
   });
 
+  it("rejects an admin token that is not an RFC 6750 bearer token and does not print it", async () => {
+    const harness = await open();
+    const first = "probe-secret-123";
+    const second = "probe-other-456";
+    try {
+      await prepareLedger(harness);
+      const before = harness.requests.length;
+      const failed = await harness.run(
+        ["pair", "--url", BASE, "--name", "Desk", "--json"],
+        `ADMIN_TOKEN=${first}\nOTHER_SECRET=${second}\n`
+      );
+      expect(failed.exitCode).toBe(2);
+      const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
+      expect(error.code).toBe("invalid-arguments");
+      expect(error.message).toContain("RFC 6750");
+      const surface = `${failed.stdout}\n${failed.stderr}\n${await treeText(harness.setup.dataDir)}`;
+      expect(surface).not.toContain(first);
+      expect(surface).not.toContain(second);
+      expect(harness.requests.length).toBe(before);
+      expect(await readStore(harness.storePath)).toEqual({});
+
+      const carriage = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${first}\rhidden\n`);
+      expect(carriage.exitCode).toBe(2);
+      const carriageSurface = `${carriage.stdout}\n${carriage.stderr}\n${await treeText(harness.setup.dataDir)}`;
+      expect(carriageSurface).not.toContain(first);
+      expect(carriageSurface).not.toContain("hidden");
+      expect(harness.requests.length).toBe(before);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("rejects an invalid config before registering", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      await writeFile(join(harness.setup.dataDir, "config.json"), "{");
+      const before = harness.requests.length;
+      const failed = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(failed.exitCode).toBe(1);
+      const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
+      expect(error.code).toBe("data-dir");
+      expect(error.message).toContain("not valid JSON");
+      expect(harness.requests.length).toBe(before);
+      expect(await readStore(harness.storePath)).toEqual({});
+      expect(countRows(harness.setup.dataDir, "SELECT COUNT(*) AS n FROM buckets WHERE dirty != 0")).toBe(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("reports keychain when the token cannot be stored after the device was registered", async () => {
     const harness = await open();
     try {
@@ -562,7 +663,8 @@ describe("pair", () => {
       const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
       expect(error.code).toBe("keychain");
       expect(error.message).toContain("already registered");
-      expect(error.message).toContain("admin token");
+      expect(error.message).not.toContain("admin token");
+      expect(error.message).not.toContain("revoke");
       await pairingUnchanged(harness);
       expect((await registerAgain(harness, deviceId)).status).toBe(409);
       expect(failed.stdout).not.toContain(ADMIN);
@@ -683,7 +785,8 @@ describe("pair", () => {
       expect(error.message).toContain("not marked dirty");
       expect(error.message).toContain("config was not written");
       expect(error.message).toContain("not paired");
-      expect(error.message).toContain("admin token");
+      expect(error.message).not.toContain("admin token");
+      expect(error.message).not.toContain("revoke");
       expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBeUndefined();
       const deviceId = deviceIdOf(harness.setup.dataDir);
       expect((await readStore(harness.storePath))[deviceId]).toBeDefined();
@@ -726,6 +829,86 @@ describe("pair", () => {
         countRows(harness.setup.dataDir, `SELECT COUNT(*) AS n FROM remote_buckets WHERE device_id = '${PLANT}'`)
       ).toBe(0);
       expect(failed.stdout).not.toContain(ADMIN);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("says the device stays revoked when registering again cannot reach the backend", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      expect((await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`)).exitCode).toBe(0);
+      const deviceId = deviceIdOf(harness.setup.dataDir);
+      const previous = (await readStore(harness.storePath))[deviceId];
+      harness.gate.failRegisterNetworkAfterRevoke = true;
+      const failed = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(failed.exitCode).toBe(1);
+      const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
+      expect(error.code).toBe("network");
+      expect(error.message).toContain("The old registration was revoked");
+      expect(error.message).toContain("shows revoked until pair is run again");
+      expect(error.message).toContain("running pair once more recovers it");
+      expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBe(BASE);
+      expect((await readStore(harness.storePath))[deviceId]).toBe(previous);
+      expect(failed.stdout).not.toContain(ADMIN);
+      expect(await treeText(harness.setup.dataDir)).not.toContain(ADMIN);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("names the previous pairing when a re-pair cannot take the ledger lock", async () => {
+    const harness = await open();
+    let held: ReturnType<typeof holdLockBeforeDirtyStep> | undefined;
+    try {
+      await prepareLedger(harness);
+      expect((await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`)).exitCode).toBe(0);
+      const deviceId = deviceIdOf(harness.setup.dataDir);
+      const previous = (await readStore(harness.storePath))[deviceId];
+      held = holdLockBeforeDirtyStep(harness);
+      const failed = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`, held.waiting);
+      expect(failed.exitCode).toBe(1);
+      const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
+      expect(error.code).toBe("locked");
+      expect(error.message).toContain("previous backend URL");
+      expect(error.message).toContain("keychain has the new token");
+      expect(error.message).not.toContain("not paired");
+      expect(error.message).not.toContain("admin token");
+      expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBe(BASE);
+      expect((await readStore(harness.storePath))[deviceId]).toBeDefined();
+      expect((await readStore(harness.storePath))[deviceId]).not.toBe(previous);
+    } finally {
+      await held?.release();
+      await harness.close();
+    }
+  });
+
+  it("exits 0 when the refresh after pairing dies", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      const read = harness.setup.platform.fs.read.bind(harness.setup.platform.fs);
+      let configReads = 0;
+      harness.setup.platform.fs.read = (path, range) => {
+        if (path.endsWith("config.json")) {
+          configReads += 1;
+          if (configReads >= 2) {
+            throw new Error("refresh defect marker");
+          }
+        }
+        return read(path, range);
+      };
+      const paired = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(paired.stderr).toBe("");
+      expect(paired.exitCode).toBe(0);
+      expect(z.parse(pairResultSchema, JSON.parse(paired.stdout)).name).toBe("Desk");
+      expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBe(BASE);
+      const log = await readFile(join(harness.setup.dataDir, "logs", "snorlax.log"), "utf8");
+      expect(log).toContain('"refresh":"failed"');
+      expect(log).toContain("refresh defect marker");
+      expect(log).not.toContain(ADMIN);
+      expect(paired.stdout).not.toContain("internal");
     } finally {
       await harness.close();
     }

@@ -629,7 +629,7 @@ describe("collector sync", () => {
     }
   });
 
-  it("does not start security when unpaired, and a broken keychain still writes the snapshot", async () => {
+  it("does not start security when unpaired, and a missing security binary is an absent item", async () => {
     const setup = await createRefreshSetup({ now: NOW });
     const stub = join(setup.home, "security-stub");
     const logPath = join(setup.home, "security.log");
@@ -694,12 +694,13 @@ describe("collector sync", () => {
         )
       );
       expect(exit.exitCode).toBe(0);
-      expect(stdout.join("")).toContain("sync: failed");
-      expect(stdout.join("")).toContain("missing-security");
+      expect(stdout.join("")).toContain("sync: not paired");
+      expect(stdout.join("")).not.toContain("/usr/bin/security");
+      expect(stdout.join("")).not.toContain("missing-security");
       const snap = await readSnapshotFile(setup.platform, setup.dataDir);
       expect(snap.kind === "ok" && snap.snapshot.generatedAt).toBe(new Date(NOW + 60_000).toISOString());
-      expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("failed");
-      expect(snap.kind === "ok" && snap.snapshot.status.paired).toBe(true);
+      expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("unpaired");
+      expect(snap.kind === "ok" && snap.snapshot.status.paired).toBe(false);
     } finally {
       await setup.remove();
     }

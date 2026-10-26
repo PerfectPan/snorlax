@@ -28,9 +28,15 @@ export interface BundleHome {
   readonly os?: string;
   /** Written to stdin, then the stream is closed. Empty when omitted, so a read reaches EOF. */
   readonly input?: string;
-  /** `SNORLAX_SECURITY`. Tests point it at a stub and never start `/usr/bin/security`. */
+  /**
+   * `SNORLAX_SECURITY`. A stub under the temporary directory, or by default a path under HOME that does not
+   * exist. A bundle run never starts `/usr/bin/security`.
+   */
   readonly security?: string;
-  /** `SNORLAX_SECRET_TOOL`. Tests point it at a stub and never start `secret-tool`. */
+  /**
+   * `SNORLAX_SECRET_TOOL`. A stub under the temporary directory, or by default a path under HOME that does not
+   * exist. A bundle run never starts `secret-tool`.
+   */
   readonly secretTool?: string;
   /** Extra environment entries. HOME, SNORLAX_HOME, SNORLAX_LAUNCHCTL and PATH stay as this helper sets them. */
   readonly extraEnv?: Readonly<Record<string, string>>;
@@ -44,13 +50,16 @@ const underTemporaryDirectory = (path: string): boolean => {
 /**
  * The whole environment of a bundle run; nothing of the caller's is inherited. launchd isolates by user, not by HOME,
  * and systemd's user manager is the caller's too, so a temporary HOME alone would still let `doctor`, `install` or
- * `uninstall` reach the real one: launchctl and systemctl are always set here, to a stub or to a path that does not
- * exist, and they and HOME must be temporary.
+ * `uninstall` reach the real one. The same is true of the login keychain and libsecret: `security` and `secret-tool`
+ * are always set here, to a stub or to a path that does not exist. Those paths, launchctl, systemctl and HOME must
+ * be temporary.
  */
-const bundleEnv = (where: BundleHome): Record<string, string> => {
+export const bundleEnv = (where: BundleHome): Record<string, string> => {
   const launchctl = where.launchctl ?? join(where.home, "no-launchctl");
   const systemctl = where.systemctl ?? join(where.home, "no-systemctl");
-  const paths = [where.home, launchctl, systemctl];
+  const security = where.security ?? join(where.home, "no-security");
+  const secretTool = where.secretTool ?? join(where.home, "no-secret-tool");
+  const paths = [where.home, launchctl, systemctl, security, secretTool];
   if (where.xdgConfigHome !== undefined) {
     paths.push(where.xdgConfigHome);
   }
@@ -59,11 +68,10 @@ const bundleEnv = (where: BundleHome): Record<string, string> => {
   }
   for (const path of paths) {
     if (!underTemporaryDirectory(path)) {
-      throw new Error(`a bundle run needs its HOME, launchctl and systemctl under ${tmpdir()}, got ${path}`);
+      throw new Error(
+        `a bundle run needs its HOME, launchctl, systemctl, security and secret-tool under ${tmpdir()}, got ${path}`
+      );
     }
-  }
-  if (!existsSync(bundle)) {
-    throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
   }
   return {
     ...where.extraEnv,
@@ -71,29 +79,38 @@ const bundleEnv = (where: BundleHome): Record<string, string> => {
     ...(where.omitSnorlaxHome === true ? {} : { SNORLAX_HOME: where.dataDir ?? join(where.home, "data") }),
     SNORLAX_LAUNCHCTL: launchctl,
     SNORLAX_SYSTEMCTL: systemctl,
+    SNORLAX_SECURITY: security,
+    SNORLAX_SECRET_TOOL: secretTool,
     PATH: "/usr/bin:/bin",
     ...(where.xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: where.xdgConfigHome }),
     ...(where.xdgDataHome === undefined ? {} : { XDG_DATA_HOME: where.xdgDataHome }),
-    ...(where.os === undefined ? {} : { SNORLAX_OS: where.os }),
-    ...(where.security === undefined ? {} : { SNORLAX_SECURITY: where.security }),
-    ...(where.secretTool === undefined ? {} : { SNORLAX_SECRET_TOOL: where.secretTool })
+    ...(where.os === undefined ? {} : { SNORLAX_OS: where.os })
   };
 };
 
+const requireBundle = (): void => {
+  if (!existsSync(bundle)) {
+    throw new Error(`${bundle} is missing; run "pnpm --filter @rivus/snorlax run build" first`);
+  }
+};
+
 /** Runs the bundle to completion. */
-export const runBundle = (args: readonly string[], where: BundleHome) =>
-  spawnSync(process.execPath, [bundle, ...args], {
+export const runBundle = (args: readonly string[], where: BundleHome) => {
+  requireBundle();
+  return spawnSync(process.execPath, [bundle, ...args], {
     encoding: "utf8",
     env: bundleEnv(where),
     input: where.input ?? ""
   });
+};
 
 /**
  * Runs the bundle without blocking the event loop. A test that serves HTTP in-process needs this: `spawnSync`
  * would stall the server the child is calling.
  */
-export const runBundleAsync = (args: readonly string[], where: BundleHome) =>
-  new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+export const runBundleAsync = (args: readonly string[], where: BundleHome) => {
+  requireBundle();
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], { env: bundleEnv(where) });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -109,7 +126,10 @@ export const runBundleAsync = (args: readonly string[], where: BundleHome) =>
     );
     child.stdin.end(where.input ?? "");
   });
+};
 
 /** Starts the bundle with stdout and stderr piped, for tests that signal it or close its streams. */
-export const spawnBundle = (args: readonly string[], where: BundleHome) =>
-  spawn(process.execPath, [bundle, ...args], { env: bundleEnv(where), stdio: ["ignore", "pipe", "pipe"] });
+export const spawnBundle = (args: readonly string[], where: BundleHome) => {
+  requireBundle();
+  return spawn(process.execPath, [bundle, ...args], { env: bundleEnv(where), stdio: ["ignore", "pipe", "pipe"] });
+};

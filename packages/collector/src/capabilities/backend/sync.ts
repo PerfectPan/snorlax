@@ -77,8 +77,9 @@ export const synchronize = (
         onSuccess: (value) => ({ kind: "value" as const, value })
       })
     );
-    // A missing item is "not paired". A keychain that cannot be read is a failed sync: the snapshot is
-    // still written, and the `keychain` failure code stays for pair, unpair and doctor.
+    // A missing item is "not paired", including when the store program itself is not installed (`ENOENT`).
+    // A keychain that cannot be read is a failed sync: the snapshot is still written, and the `keychain`
+    // failure code stays for pair, unpair and doctor.
     if (read.kind === "error") {
       return {
         state: "failed",
