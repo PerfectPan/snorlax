@@ -1,16 +1,20 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   httpDeviceRegisterResponseSchema,
   httpDevicesResponseSchema,
   httpErrorSchema,
-  httpHealthResponseSchema
+  httpHealthResponseSchema,
+  httpPullResponseSchema
 } from "@rivus/snorlax-protocol";
 
 import * as z from "zod/mini";
 
+import { createHandler } from "../src/handler.ts";
+import { createSqliteD1 } from "../src/sqlite-d1.ts";
 import {
   ADMIN_TOKEN,
+  NOW_MS,
   bucketFixture,
   call,
   createTestBackend,
@@ -80,8 +84,29 @@ describe("POST /v1/devices", () => {
     expect(z.parse(httpErrorSchema, again.body).error.code).toBe("conflict");
   });
 
-  it("re-registers a revoked id under a fresh token and keeps its history", async () => {
+  it("decides two concurrent registrations of one id atomically: one 201 with a usable token, one 409", async () => {
     const { handler } = createTestBackend();
+    const body = { deviceId: deviceAId, name: "MacBook Pro" };
+    const [first, second] = await Promise.all([
+      call(handler, jsonRequest("POST", "/v1/devices", { body, token: ADMIN_TOKEN })),
+      call(handler, jsonRequest("POST", "/v1/devices", { body, token: ADMIN_TOKEN }))
+    ]);
+    expect([first.status, second.status].sort((x, y) => x - y)).toEqual([201, 409]);
+    const winner = first.status === 201 ? first : second;
+    const { deviceToken } = z.parse(httpDeviceRegisterResponseSchema, winner.body);
+    // The winning registration's token is the live one: it pushes.
+    const push = await call(
+      handler,
+      jsonRequest("PUT", `/v1/devices/${deviceAId}/buckets`, {
+        body: { buckets: [bucketFixture(deviceAId)] },
+        token: deviceToken
+      })
+    );
+    expect(push.status).toBe(200);
+  });
+
+  it("re-registers a revoked id under a fresh token and keeps its history", async () => {
+    const { handler, database } = createTestBackend();
     const first = await registerDevice(handler, deviceAId, "MacBook Pro");
     await call(
       handler,
@@ -94,6 +119,10 @@ describe("POST /v1/devices", () => {
       (await call(handler, jsonRequest("DELETE", `/v1/devices/${deviceAId}`, { token: ADMIN_TOKEN }))).status
     ).toBe(204);
 
+    const before = z.parse(
+      z.object({ created_at: z.int(), last_push_at: z.nullable(z.int()) }),
+      database.prepare("SELECT created_at, last_push_at FROM devices WHERE id = ?").get(deviceAId)
+    );
     const second = await call(
       handler,
       jsonRequest("POST", "/v1/devices", { body: { deviceId: deviceAId, name: "MacBook Pro" }, token: ADMIN_TOKEN })
@@ -101,7 +130,15 @@ describe("POST /v1/devices", () => {
     expect(second.status).toBe(201);
     const { deviceToken } = z.parse(httpDeviceRegisterResponseSchema, second.body);
 
-    // The old token is gone, the new one works, and the uploaded usage survived the revoke.
+    // The row's history is untouched by the re-registration, checked before the next push can move
+    // last_push_at again.
+    const after = z.parse(
+      z.object({ created_at: z.int(), last_push_at: z.nullable(z.int()) }),
+      database.prepare("SELECT created_at, last_push_at FROM devices WHERE id = ?").get(deviceAId)
+    );
+    expect(after).toEqual(before);
+
+    // The old token is gone, the uploaded usage survived, and the new one works.
     expect(
       (
         await call(
@@ -113,6 +150,8 @@ describe("POST /v1/devices", () => {
         )
       ).status
     ).toBe(401);
+    const pull = await call(handler, jsonRequest("GET", "/v1/buckets", { token: deviceToken }));
+    expect(z.parse(httpPullResponseSchema, pull.body).buckets).toEqual([bucketFixture(deviceAId)]);
     expect(
       (
         await call(
@@ -127,6 +166,24 @@ describe("POST /v1/devices", () => {
     const devices = await call(handler, jsonRequest("GET", "/v1/devices", { token: deviceToken }));
     const listed = z.parse(httpDevicesResponseSchema, devices.body).devices;
     expect(listed).toEqual([{ id: deviceAId, name: "MacBook Pro", lastPushAt: expect.any(String), revoked: false }]);
+  });
+
+  it("answers a database failure with a fixed internal message and logs the original", async () => {
+    const { database } = createTestBackend();
+    const handler = createHandler({
+      db: createSqliteD1(database),
+      adminToken: ADMIN_TOKEN,
+      now: () => NOW_MS
+    });
+    database.close();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { status, body } = await call(handler, jsonRequest("GET", "/v1/devices", { token: "any-token" }));
+    expect(status).toBe(500);
+    expect(body).toEqual({ error: { code: "internal", message: "internal error" } });
+    // No SQL, no table names, no original message in the body.
+    expect(JSON.stringify(body)).not.toMatch(/devices|SELECT|sqlite/i);
+    expect(consoleError).toHaveBeenCalledWith("snorlax-worker: internal error", expect.anything());
+    consoleError.mockRestore();
   });
 
   it("rejects a body with an unknown key, a bad UUID or a missing name", async () => {

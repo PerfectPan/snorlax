@@ -57,7 +57,7 @@ autoInstallPeers: true
 allowBuilds:
   # Its postinstall verifies the platform binary that the bundled vite runs.
   esbuild: true
-  # Its postinstall installs the Workers runtime binary that `cf dev` and the Worker tests run on.
+  # Its postinstall installs the Workers runtime that `cf dev` runs; the Worker tests run on node:sqlite.
   workerd: true
 
 versioning:

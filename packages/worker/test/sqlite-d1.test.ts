@@ -9,9 +9,9 @@ const countRows = (database: DatabaseSync, table: "devices" | "buckets"): number
   z.parse(z.object({ n: z.int() }), database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).n;
 
 /**
- * The node:sqlite adapter as production code: statement binding and results, per-statement results
- * inside a batch (the push's sequence assignment reads the batch's first statement), and the batch's
- * all-or-nothing transaction.
+ * The node:sqlite adapter as production code: statement binding and results, real change counts for
+ * writes, per-statement results inside a batch (the push's sequence assignment reads the batch's first
+ * statement), and the batch's all-or-nothing transaction that never loses the original error.
  */
 
 describe("statements", () => {
@@ -32,6 +32,38 @@ describe("statements", () => {
     expect(await byHash.first()).toBeNull();
     expect((await byHash.bind("hash-a").all()).results).toHaveLength(1);
     expect((await byHash.bind("hash-a").all()).meta).toEqual({ changes: 0 });
+  });
+
+  it("reports real change counts for writes, including one a guard stops from firing", async () => {
+    const { database } = createTestBackend();
+    const db = createSqliteD1(database);
+    const insertDevice = db
+      .prepare("INSERT INTO devices (id, name, token_sha256, created_at) VALUES (?1, ?2, ?3, ?4)")
+      .bind("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", "Device A", "hash-a", 1);
+    expect((await insertDevice.run()).meta.changes).toBe(1);
+
+    const touch = db
+      .prepare("UPDATE devices SET name = name WHERE id = ?1")
+      .bind("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f");
+    expect((await touch.run()).meta.changes).toBe(1);
+
+    // The guarded overwrite is what registration's 409 rests on: an active device fails the guard, so
+    // the statement changes nothing even though the id conflicts.
+    const guarded = db
+      .prepare(
+        "INSERT INTO devices (id, name, token_sha256, created_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (id) DO UPDATE SET name = excluded.name WHERE devices.revoked_at IS NOT NULL"
+      )
+      .bind("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", "Other", "hash-b", 5);
+    expect((await guarded.run()).meta.changes).toBe(0);
+
+    // The same counts inside a batch.
+    const batch = await db.batch([
+      db
+        .prepare("INSERT INTO devices (id, name, token_sha256, created_at) VALUES (?1, ?2, ?3, ?4)")
+        .bind("0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3", "Device B", "hash-c", 6),
+      guarded
+    ]);
+    expect(batch.map((result) => result.meta.changes)).toEqual([1, 0]);
   });
 
   it("wraps statement failures in SqliteD1Error with the sqlite3 cause", async () => {
@@ -84,10 +116,55 @@ describe("batch", () => {
         .prepare("INSERT INTO devices (id, name, token_sha256, created_at) VALUES (?1, ?2, ?3, ?4)")
         .bind("6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f", "Duplicate", "hash-c", 3)
     ]);
-    await expect(batch).rejects.toBeInstanceOf(SqliteD1Error);
+    // The error thrown is the statement's own, not a rollback artifact.
+    await expect(batch).rejects.toMatchObject({
+      name: "SqliteD1Error",
+      message: /cannot execute statement/
+    });
 
     expect(countRows(database, "devices")).toBe(1);
     expect(countRows(database, "buckets")).toBe(0);
+  });
+
+  it("keeps the original error reachable when the rollback itself fails", async () => {
+    const { database } = createTestBackend();
+    const db = createSqliteD1(
+      new Proxy(database, {
+        get(target, property) {
+          if (property === "exec") {
+            return (sql: string) => {
+              if (sql === "ROLLBACK") {
+                throw new Error("rollback broke");
+              }
+              return target.exec(sql);
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+      })
+    );
+    const id = "0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3";
+    const batch = db.batch([
+      db
+        .prepare("INSERT INTO devices (id, name, token_sha256, created_at) VALUES (?1, ?2, ?3, ?4)")
+        .bind(id, "Device B", "hash-b", 1),
+      db
+        .prepare("INSERT INTO devices (id, name, token_sha256, created_at) VALUES (?1, ?2, ?3, ?4)")
+        .bind(id, "Duplicate", "hash-c", 2)
+    ]);
+    // The thrown error names the failed rollback and keeps the statement error on `cause`.
+    const error = await batch.then(
+      () => undefined,
+      (failed: unknown) => failed
+    );
+    if (!(error instanceof SqliteD1Error)) {
+      throw new Error(`expected the batch to fail with SqliteD1Error, got ${String(error)}`);
+    }
+    expect(error.message).toContain("could not be rolled back");
+    expect(error.message).toContain("rollback broke");
+    expect(error.cause).toBeInstanceOf(SqliteD1Error);
+    expect(error.cause instanceof SqliteD1Error ? error.cause.message : "").toContain("cannot execute statement");
   });
 
   it("rejects a statement the adapter did not create", async () => {
@@ -107,9 +184,11 @@ describe("migration", () => {
   it("builds the schema the handler runs on from the committed migration alone", () => {
     const database = new DatabaseSync(":memory:");
     expect(() => applyMigrations(database)).not.toThrow();
-    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as {
-      name: string;
-    }[];
-    expect(tables.map((table) => table.name)).toEqual(["buckets", "devices"]);
+    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
+    const names = z
+      .array(z.object({ name: z.string() }))
+      .parse(tables)
+      .map((table) => table.name);
+    expect(names).toEqual(["buckets", "devices"]);
   });
 });

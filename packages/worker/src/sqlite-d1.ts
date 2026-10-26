@@ -33,7 +33,11 @@ const executeStatement = (database: DatabaseSync, sql: string, values: readonly 
     throw new SqliteD1Error(`cannot prepare statement: ${describe(cause)}`, { cause });
   }
   try {
-    // `all` runs every statement kind: reads return their rows, writes change rows and return none.
+    // A statement with no result columns writes: only `run` reports how many rows it changed. A reading
+    // statement runs through `all`; a SELECT changes no rows, so its change count is 0.
+    if (statement.columns().length === 0) {
+      return { results: [], changes: Number(statement.run(...values).changes) };
+    }
     return { results: statement.all(...values), changes: 0 };
   } catch (cause) {
     throw new SqliteD1Error(`cannot execute statement: ${describe(cause)}`, { cause });
@@ -59,8 +63,8 @@ export const createSqliteD1 = (database: DatabaseSync): D1Database => {
         return { results: results as T[], success: true, meta: { changes } };
       },
       run: async (): Promise<D1Result<never>> => {
-        execute();
-        return { results: [], success: true, meta: { changes: 0 } };
+        const { changes } = execute();
+        return { results: [], success: true, meta: { changes } };
       }
     };
     executions.set(statement, execute);
@@ -88,13 +92,18 @@ export const createSqliteD1 = (database: DatabaseSync): D1Database => {
         database.exec("COMMIT");
         return results;
       } catch (cause) {
-        try {
-          database.exec("ROLLBACK");
-        } catch (rollbackCause) {
-          throw new SqliteD1Error(
-            `a statement failed and the transaction could not be rolled back: ${describe(rollbackCause)}`,
-            { cause: rollbackCause }
-          );
+        // The original error is never lost: a rollback runs only while a transaction is actually open,
+        // and a rollback that fails itself is reported on top of the original error, which stays on
+        // `cause`.
+        if (database.isTransaction) {
+          try {
+            database.exec("ROLLBACK");
+          } catch (rollbackCause) {
+            throw new SqliteD1Error(
+              `a statement failed and the transaction could not be rolled back: ${describe(rollbackCause)}`,
+              { cause }
+            );
+          }
         }
         throw cause instanceof SqliteD1Error ? cause : new SqliteD1Error(describe(cause), { cause });
       }

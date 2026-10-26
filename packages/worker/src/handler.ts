@@ -24,14 +24,25 @@ import { generateDeviceToken, hashToken, secretsEqual } from "./tokens.ts";
 const MAX_BODY_BYTES = 1_000_000;
 const MAX_PULL_LIMIT = 1_000;
 
-/** An error carrying its HTTP status and error-body code; raised by this handler's own checks. */
-export class RequestFailure extends Error {
+/** HTTP status per error-body code; a code missing here fails to compile. */
+const STATUS_BY_CODE: Record<HttpErrorCode, number> = {
+  "invalid-body": 400,
+  unauthorized: 401,
+  forbidden: 403,
+  "not-found": 404,
+  conflict: 409,
+  "payload-too-large": 413,
+  internal: 500
+};
+
+/** An error carrying its error-body code; raised by this handler's own checks, answered by `createHandler`. */
+class RequestFailure extends Error {
   readonly status: number;
   readonly code: HttpErrorCode;
 
-  constructor(status: number, code: HttpErrorCode, message: string) {
+  constructor(code: HttpErrorCode, message: string) {
     super(message);
-    this.status = status;
+    this.status = STATUS_BY_CODE[code];
     this.code = code;
   }
 }
@@ -60,36 +71,48 @@ const jsonResponse = (status: number, body: unknown): Response =>
 const errorResponse = (status: number, code: HttpErrorCode, message: string): Response =>
   jsonResponse(status, { error: { code, message } });
 
-const describeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
 const parseWith = <S extends z.core.$ZodType>(schema: S, data: unknown, what: string): z.output<S> => {
   const result = z.safeParse(schema, data);
   if (!result.success) {
-    throw new RequestFailure(400, "invalid-body", `${what} does not match the interface definition`);
+    throw new RequestFailure("invalid-body", `${what} does not match the interface definition`);
   }
   return result.data;
 };
 
-const encoder = new TextEncoder();
-
-/** Reads the body as JSON, rejecting an oversized one both by the declared length and by its actual bytes. */
+/**
+ * Reads the body as JSON, rejecting an oversized one by its declared length before reading and, while
+ * streaming chunks in, by its actual bytes — a body over 1 MB is cut off instead of read to the end.
+ */
 const readBodyJson = async (request: Request): Promise<unknown> => {
-  const tooLarge = new RequestFailure(413, "payload-too-large", `request body exceeds ${MAX_BODY_BYTES} bytes`);
+  const tooLarge = (): RequestFailure =>
+    new RequestFailure("payload-too-large", `request body exceeds ${MAX_BODY_BYTES} bytes`);
   const declaredLength = request.headers.get("Content-Length");
-  if (declaredLength !== null) {
-    const declared = Number(declaredLength);
-    if (Number.isInteger(declared) && declared > MAX_BODY_BYTES) {
-      throw tooLarge;
-    }
+  if (declaredLength !== null && /^(0|[1-9][0-9]*)$/.test(declaredLength) && Number(declaredLength) > MAX_BODY_BYTES) {
+    throw tooLarge();
   }
-  const body = await request.text();
-  if (encoder.encode(body).byteLength > MAX_BODY_BYTES) {
-    throw tooLarge;
+  const reader = request.body?.getReader();
+  if (reader === undefined) {
+    throw new RequestFailure("invalid-body", "request body is missing");
+  }
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    bytes += value.byteLength;
+    if (bytes > MAX_BODY_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    body += decoder.decode(value, { stream: true });
   }
   try {
-    return JSON.parse(body) as unknown;
+    return JSON.parse(body + decoder.decode()) as unknown;
   } catch {
-    throw new RequestFailure(400, "invalid-body", "request body is not valid JSON");
+    throw new RequestFailure("invalid-body", "request body is not valid JSON");
   }
 };
 
@@ -101,7 +124,7 @@ const bearerToken = (request: Request): string | null => {
 const requireAdmin = async (request: Request, env: HandlerEnv): Promise<void> => {
   const token = bearerToken(request);
   if (token === null || !(await secretsEqual(token, env.adminToken))) {
-    throw new RequestFailure(401, "unauthorized", "a valid admin token is required");
+    throw new RequestFailure("unauthorized", "a valid admin token is required");
   }
 };
 
@@ -118,7 +141,7 @@ const authenticatedDeviceSchema = z.object({ id: z.uuid(), revoked_at: z.nullabl
 const requireDevice = async (request: Request, env: HandlerEnv): Promise<AuthenticatedDevice> => {
   const token = bearerToken(request);
   if (token === null) {
-    throw new RequestFailure(401, "unauthorized", "a device token is required");
+    throw new RequestFailure("unauthorized", "a device token is required");
   }
   const row = await env.db
     .prepare("SELECT id, revoked_at FROM devices WHERE token_sha256 = ?1")
@@ -126,7 +149,7 @@ const requireDevice = async (request: Request, env: HandlerEnv): Promise<Authent
     .first();
   const parsed = row === null ? null : z.safeParse(authenticatedDeviceSchema, row);
   if (parsed === null || !parsed.success || parsed.data.revoked_at !== null) {
-    throw new RequestFailure(401, "unauthorized", "unknown or revoked token");
+    throw new RequestFailure("unauthorized", "unknown or revoked token");
   }
   return { id: parsed.data.id };
 };
@@ -145,36 +168,36 @@ ON CONFLICT (device_id, hour, agent, model) DO UPDATE SET
 const registerDevice = async (request: Request, env: HandlerEnv): Promise<Response> => {
   await requireAdmin(request, env);
   const body = parseWith(httpDeviceRegisterRequestSchema, await readBodyJson(request), "request body");
-  const existing = await env.db.prepare("SELECT revoked_at FROM devices WHERE id = ?1").bind(body.deviceId).first();
-  const stillActive =
-    existing !== null && z.parse(z.object({ revoked_at: z.nullable(z.int()) }), existing).revoked_at === null;
-  if (stillActive) {
-    throw new RequestFailure(409, "conflict", `device ${body.deviceId} is already registered`);
-  }
-  // A revoked id registers again under a fresh token and keeps its uploaded usage (Spec R11); the row
-  // keeps its original created_at and last_push_at.
+  // One atomic statement decides: a fresh id inserts and an already revoked id takes the guarded
+  // overwrite — both report changes 1 — while an active device fails the guard and reports 0, the 409.
+  // There is no read before the write for two concurrent registrations to race through. The overwrite
+  // keeps created_at and last_push_at, so the usage history survives (Spec R11).
   const deviceToken = generateDeviceToken();
-  await env.db
+  const { meta } = await env.db
     .prepare(
       `INSERT INTO devices (id, name, token_sha256, created_at, last_push_at, revoked_at)
        VALUES (?1, ?2, ?3, ?4, NULL, NULL)
        ON CONFLICT (id) DO UPDATE SET
-         name = excluded.name, token_sha256 = excluded.token_sha256, revoked_at = NULL`
+         name = excluded.name, token_sha256 = excluded.token_sha256, revoked_at = NULL
+         WHERE devices.revoked_at IS NOT NULL`
     )
     .bind(body.deviceId, body.name, await hashToken(deviceToken), env.now())
     .run();
+  if (meta.changes === 0) {
+    throw new RequestFailure("conflict", `device ${body.deviceId} is already registered`);
+  }
   return jsonResponse(201, { deviceToken });
 };
 
 const pushBuckets = async (request: Request, env: HandlerEnv, pathDeviceId: string): Promise<Response> => {
   const device = await requireDevice(request, env);
   if (device.id !== pathDeviceId) {
-    throw new RequestFailure(403, "forbidden", "a device token may only write its own device's path");
+    throw new RequestFailure("forbidden", "a device token may only write its own device's path");
   }
   const body = parseWith(httpPushRequestSchema, await readBodyJson(request), "request body");
   for (const bucket of body.buckets) {
     if (bucket.deviceId !== pathDeviceId) {
-      throw new RequestFailure(403, "forbidden", "every bucket's deviceId must equal the path's device id");
+      throw new RequestFailure("forbidden", "every bucket's deviceId must equal the path's device id");
     }
   }
   // One batch per push (plan 3.3.3): the first statement reads the current top seq, each row's upsert
@@ -209,9 +232,12 @@ const pushBuckets = async (request: Request, env: HandlerEnv, pathDeviceId: stri
   return jsonResponse(200, { seq: base + body.buckets.length });
 };
 
+/** Query values are plain decimal integer strings (`0`, `123`); `0x10`, `1e1`, `-1`, `1.5`, `` all fail. */
+const decimalInteger = z.pipe(z.string().check(z.regex(/^(0|[1-9][0-9]*)$/)), z.transform(Number));
+
 const pullQuerySchema = z.object({
-  after: z.optional(z.coerce.number().check(z.int(), z.minimum(0))),
-  limit: z.optional(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(MAX_PULL_LIMIT)))
+  after: z.optional(decimalInteger),
+  limit: z.optional(z.pipe(decimalInteger, z.number().check(z.minimum(1), z.maximum(MAX_PULL_LIMIT))))
 });
 
 const pullRowSchema = z.intersection(bucketSchema, z.object({ seq: nonNegativeIntSchema }));
@@ -272,7 +298,7 @@ const revokeDevice = async (request: Request, env: HandlerEnv, pathDeviceId: str
   await requireAdmin(request, env);
   const existing = await env.db.prepare("SELECT id FROM devices WHERE id = ?1").bind(pathDeviceId).first();
   if (existing === null || !z.safeParse(z.object({ id: z.string() }), existing).success) {
-    throw new RequestFailure(404, "not-found", `no device ${pathDeviceId}`);
+    throw new RequestFailure("not-found", `no device ${pathDeviceId}`);
   }
   await env.db.prepare("UPDATE devices SET revoked_at = ?1 WHERE id = ?2").bind(env.now(), pathDeviceId).run();
   return new Response(null, { status: 204 });
@@ -303,12 +329,14 @@ export const createHandler = (env: HandlerEnv): Handler => {
       if (revokeMatch !== null) {
         return await revokeDevice(request, env, revokeMatch.pathname.groups.id ?? "");
       }
-      throw new RequestFailure(404, "not-found", `no route for ${request.method} ${pathname}`);
+      throw new RequestFailure("not-found", `no route for ${request.method} ${pathname}`);
     } catch (error) {
       if (error instanceof RequestFailure) {
         return errorResponse(error.status, error.code, error.message);
       }
-      return errorResponse(500, "internal", describeError(error));
+      // The original error goes to the logs only; the body carries nothing from the inside.
+      console.error("snorlax-worker: internal error", error);
+      return errorResponse(500, "internal", "internal error");
     }
   };
 };

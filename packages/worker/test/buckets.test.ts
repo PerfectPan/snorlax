@@ -131,30 +131,48 @@ describe("PUT /v1/devices/:id/buckets", () => {
     expect(unknownRowKey.status).toBe(400);
   });
 
-  it("answers 413 for a body over 1 MB, with or without a Content-Length", async () => {
+  it("answers 413 for a body over 1 MB, by declared length and while streaming", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");
     const url = `https://snorlax.test/v1/devices/${deviceAId}/buckets`;
 
-    // A string body sets Content-Length; the declared length is checked before reading.
+    // Node adds no Content-Length for a string body, so the header goes on explicitly to lock the
+    // declared-length branch: the request is refused before one byte is read from a body that would
+    // never end.
+    let declaredReads = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        declaredReads += 1;
+        controller.enqueue(new Uint8Array(600_000).fill(0x20));
+      }
+    });
     const declared = await call(
       handler,
       new Request(url, {
         method: "PUT",
-        headers: { Authorization: `Bearer ${a.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ buckets: [bucketFixture(deviceAId)] }).padEnd(1_000_001, " ")
-      })
+        headers: {
+          Authorization: `Bearer ${a.token}`,
+          "Content-Type": "application/json",
+          "Content-Length": "1000001"
+        },
+        body: endless,
+        duplex: "half"
+      } as RequestInit)
     );
     expect(declared.status).toBe(413);
     expect(z.parse(httpErrorSchema, declared.body).error.code).toBe("payload-too-large");
+    // The stream itself fills its queue to highWaterMark 1 before the handler runs; any further pull
+    // would mean the handler started consuming, which the declared-length refusal must not do.
+    expect(declaredReads).toBeLessThanOrEqual(1);
 
-    // A stream body sends no Content-Length; the actual byte length still triggers 413.
-    const streamBody = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          new TextEncoder().encode(JSON.stringify({ buckets: [bucketFixture(deviceAId)] }).padEnd(1_000_001, " "))
-        );
-        controller.close();
+    // No declared length: the reader cuts the body off as soon as the limit is crossed. The stream
+    // could produce far more than 1 MB, so few pulls prove the connection was cancelled, not drained.
+    let produced = 0;
+    const chunk = new Uint8Array(600_000).fill(0x20);
+    const oversized = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        produced += 1;
+        controller.enqueue(chunk);
       }
     });
     const streamed = await call(
@@ -162,11 +180,15 @@ describe("PUT /v1/devices/:id/buckets", () => {
       new Request(url, {
         method: "PUT",
         headers: { Authorization: `Bearer ${a.token}`, "Content-Type": "application/json" },
-        body: streamBody,
+        body: oversized,
         duplex: "half"
       } as RequestInit)
     );
     expect(streamed.status).toBe(413);
+    expect(z.parse(httpErrorSchema, streamed.body).error.code).toBe("payload-too-large");
+    // One pull fills the stream's queue, two more cross the limit and cancel: a drained body would
+    // keep producing indefinitely instead of stopping at three.
+    expect(produced).toBeLessThanOrEqual(3);
   });
 
   it("rejects invalid JSON and a non-integer token count with 400", async () => {
@@ -238,7 +260,17 @@ describe("GET /v1/buckets", () => {
     }
     expect((await pull(handler, a.token)).body).toMatchObject({ next: null });
 
-    for (const query of ["?limit=0", "?limit=1001", "?limit=abc", "?after=-1", "?after=1.5", "?after=x"]) {
+    for (const query of [
+      "?limit=0",
+      "?limit=1001",
+      "?limit=abc",
+      "?after=-1",
+      "?after=1.5",
+      "?after=x",
+      "?after=",
+      "?after=0x10",
+      "?after=1e1"
+    ]) {
       expect((await pull(handler, a.token, query)).status).toBe(400);
     }
   });
