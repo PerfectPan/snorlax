@@ -58,7 +58,9 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           set -eu
-          PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
+          # The caller's PATH comes first, so the Node it chose (CI's setup step, a version manager) builds the
+          # collector; Homebrew is only the fallback for a build started from Xcode with launchd's short PATH.
+          PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin"
           cd "$SRCROOT/../.."
           if ! command -v pnpm >/dev/null 2>&1; then
             echo "error: pnpm is not on PATH; the Snorlax build needs it to bundle the collector" >&2
