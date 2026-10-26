@@ -15,6 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { CliJob, JobInspection, LoadedJob } from "../src/capabilities/scheduler/scheduler.ts";
 import { runCli } from "../src/cli/run.ts";
 import { CliEnv } from "../src/cli/env.ts";
+import { offlineCapabilities } from "./fixtures/capabilities.ts";
 import { scheduleCheck, type ScheduleObservation } from "../src/commands/doctor/checks.ts";
 import { RuntimeInfo } from "../src/modules/version/version.ts";
 import { memoryKitPlatform } from "./fixtures/platform.ts";
@@ -66,7 +67,8 @@ const runOn = async (
     Layer.succeed(NodeFiles, nodeFiles),
     fakeScheduler([], { jobFile: "/testroot/tester/job", inspection: deps?.inspection }),
     Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
-    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
+    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" }),
+    offlineCapabilities
   );
   const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
   return { exitCode: exit.exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join("") };

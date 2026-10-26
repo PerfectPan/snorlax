@@ -18,9 +18,10 @@ import { Scheduler, type JobInspection } from "../src/capabilities/scheduler/sch
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../src/modules/platform/platform.ts";
+import { offlineCapabilities } from "./fixtures/capabilities.ts";
 import { runBundle } from "./fixtures/bundle.ts";
-import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { readLedger } from "./fixtures/flows.ts";
+import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { fakeScheduler, type SchedulerCall } from "./fixtures/scheduler.ts";
 
 /**
@@ -67,7 +68,8 @@ const runOn = async (
         stderr: { write: (text) => void err.push(text) },
         colors: false
       })
-    )
+    ),
+    offlineCapabilities
   );
   const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
   return { exitCode: exit.exitCode, stdout: out.join(""), stderr: err.join("") };

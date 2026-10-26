@@ -3,7 +3,9 @@ import { CliConfig, CliError, Command, GlobalFlag } from "effect/cli";
 import { Console, Effect, FileSystem, Layer, Option, Path, Runtime, Terminal } from "effect";
 import { layerTest as stdioLayerTest } from "effect/Stdio";
 
+import type { Backend } from "../capabilities/backend/backend.ts";
 import type { Scheduler } from "../capabilities/scheduler/scheduler.ts";
+import type { Secrets } from "../capabilities/secrets/secrets.ts";
 import { errorMessage } from "../core/error-message/error-message.ts";
 import { resolveDataDir } from "../modules/data-dir/data-dir.ts";
 import { appendingLogger } from "../modules/log/log.ts";
@@ -56,8 +58,8 @@ interface Outcome {
   readonly output: "json" | "human";
 }
 
-/** What the caller provides: the platform, the file ops, the scheduler implementation and the sinks. */
-type CliBase = SnorlaxPlatform | NodeFiles | Scheduler | CliEnv;
+/** What the caller provides: the platform, the file ops, the scheduler, the token store, the backend and the sinks. */
+type CliBase = SnorlaxPlatform | NodeFiles | Scheduler | Secrets | Backend | CliEnv;
 
 /**
  * Everything one invocation runs on, around the caller's `base`: the command handoff and what effect/cli

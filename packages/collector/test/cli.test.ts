@@ -249,7 +249,12 @@ describe("refresh and rebuild", () => {
     expect(refreshed.stderr).toBe("");
     expect(refreshed.status).toBe(0);
     const result = z.parse(refreshResultSchema, parseOneJsonObject(refreshed.stdout));
-    expect(result).toMatchObject({ ok: true, records: 0, failures: 0, sync: { ok: false, pushed: 0, pulled: 0 } });
+    expect(result).toMatchObject({
+      ok: true,
+      records: 0,
+      failures: 0,
+      sync: { ok: false, state: "unpaired", pushed: 0, pulled: 0 }
+    });
 
     const printed = runRefreshHome(["snapshot", "--json"]);
     expect(printed.status).toBe(0);
@@ -305,9 +310,9 @@ describe("refresh and rebuild", () => {
         .split("\n")
         .map((line) => line.replace(/^\S+ /, "").replace(/"durationMs":\d+/, '"durationMs":0'));
       expect(events).toEqual([
-        'refresh {"records":0,"failures":0,"pushed":0,"pulled":0,"durationMs":0}',
+        'refresh {"records":0,"failures":0,"pushed":0,"pulled":0,"sync":"unpaired","durationMs":0}',
         'command {"name":"refresh","exitCode":0,"durationMs":0}',
-        'rebuild {"days":2,"records":0,"failures":0,"pushed":0,"pulled":0,"durationMs":0}',
+        'rebuild {"days":2,"records":0,"failures":0,"pushed":0,"pulled":0,"sync":"unpaired","durationMs":0}',
         'command {"name":"rebuild","exitCode":0,"durationMs":0}'
       ]);
     } finally {

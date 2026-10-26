@@ -3,7 +3,9 @@ import process from "node:process";
 import { NodePlatformLive } from "@rivus/agent-kit/node/effect";
 import { Effect, Layer, Runtime } from "effect";
 
+import { Backend } from "../capabilities/backend/backend.ts";
 import { Scheduler } from "../capabilities/scheduler/scheduler.ts";
+import { Secrets } from "../capabilities/secrets/secrets.ts";
 import { NodeFiles, SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
@@ -14,6 +16,23 @@ import { runCli } from "./run.ts";
  * CI job; it is not copied into the job. Picking one only reads the environment, and the implementations
  * for other systems fail install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
  */
+/**
+ * The token store of this machine (plan 3.4.2). `platform.os` decides, not `SNORLAX_OS`: that override exists
+ * so the Linux CI job can exercise launchd, and it must not point the keychain at a binary the machine lacks.
+ */
+const secretsLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const platform = yield* SnorlaxPlatform;
+    if (platform.os === "darwin") {
+      return Secrets.keychain;
+    }
+    if (platform.os === "linux") {
+      return Secrets.libsecret;
+    }
+    return Secrets.unavailable(platform.os);
+  })
+);
+
 const schedulerLive = Layer.unwrap(
   Effect.gen(function* () {
     const platform = yield* SnorlaxPlatform;
@@ -36,7 +55,10 @@ const schedulerLive = Layer.unwrap(
  * one command.
  */
 const liveLayers = Layer.mergeAll(
-  Layer.provideMerge(schedulerLive, Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive)),
+  Layer.provideMerge(
+    Layer.mergeAll(schedulerLive, secretsLive, Backend.live),
+    Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive)
+  ),
   NodeFiles.live,
   Layer.succeed(
     CliEnv,

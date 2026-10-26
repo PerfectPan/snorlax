@@ -31,6 +31,15 @@
         "ok": {
           "type": "boolean"
         },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed",
+            "unpaired",
+            "revoked"
+          ]
+        },
         "pushed": {
           "type": "integer",
           "minimum": 0,
@@ -44,6 +53,7 @@
       },
       "required": [
         "ok",
+        "state",
         "pushed",
         "pulled"
       ],

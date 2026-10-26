@@ -244,6 +244,9 @@ importers:
       '@rivus/snorlax-protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@rivus/snorlax-worker':
+        specifier: workspace:*
+        version: link:../worker
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.2

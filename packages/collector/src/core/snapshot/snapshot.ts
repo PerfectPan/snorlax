@@ -8,6 +8,7 @@ import type {
   DailyEntry,
   HourlyEntry,
   Snapshot,
+  SyncState,
   WindowTotal
 } from "@rivus/snorlax-protocol";
 
@@ -40,7 +41,8 @@ export interface BuildSnapshotInput {
   readonly remoteDevices: readonly RemoteDeviceRow[];
   readonly lastScanAt: number | null;
   readonly failuresByAgent: Record<string, number>;
-  readonly paired: boolean;
+  /** The sync attempt this snapshot records. `paired` is derived from `state`. */
+  readonly sync: { readonly state: SyncState; readonly at: string | null };
 }
 
 const emptyTotal = (): WindowTotal => ({
@@ -218,19 +220,22 @@ export function buildSnapshot(input: BuildSnapshotInput): Snapshot {
     last7d: group.last7d,
     last30d: group.last30d
   }));
+  // `GET /v1/devices` includes this device. Its `lastPushAt` fills the local row; the row itself is not
+  // listed again among the other devices.
+  const self = input.remoteDevices.find((device) => device.id === input.thisDevice.id);
   const byDevice: ByDeviceEntry[] = [
     {
       deviceId: input.thisDevice.id,
       name: input.thisDevice.name,
       isThisDevice: true,
-      lastPushAt: null,
+      lastPushAt: self === undefined || self.lastPushAt === null ? null : new Date(self.lastPushAt).toISOString(),
       ...(() => {
         const own = inWindow.filter((bucket) => bucket.deviceId === input.thisDevice.id);
         return sumWindows(own, windows);
       })()
     },
     ...input.remoteDevices
-      .filter((device) => !device.revoked)
+      .filter((device) => !device.revoked && device.id !== input.thisDevice.id)
       .map((device): ByDeviceEntry => {
         const own = inWindow.filter((bucket) => bucket.deviceId === device.id);
         return {
@@ -255,10 +260,10 @@ export function buildSnapshot(input: BuildSnapshotInput): Snapshot {
     hourlyToday,
     status: {
       lastScanAt: input.lastScanAt === null ? null : new Date(input.lastScanAt).toISOString(),
-      // Batch 2 has no sync: the snapshot reports the device as not paired (plan 6.4 Batch 2).
-      sync: { state: "unpaired", at: null },
+      sync: { state: input.sync.state, at: input.sync.at },
       failuresByAgent: input.failuresByAgent,
-      paired: input.paired
+      // A failed sync still means the device is paired. Revoked and unpaired do not.
+      paired: input.sync.state === "ok" || input.sync.state === "failed"
     }
   };
 }

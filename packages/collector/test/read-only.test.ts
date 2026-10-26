@@ -11,6 +11,7 @@ import * as z from "zod/mini";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
+import { offlineCapabilities } from "./fixtures/capabilities.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
@@ -73,7 +74,8 @@ const runCommand = async (args: readonly string[]): Promise<RunOutcome> => {
         stderr: { write: (text) => void chunks.err.push(text) },
         colors: false
       })
-    )
+    ),
+    offlineCapabilities
   );
   const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
   return { exitCode: exit.exitCode, stdout: chunks.out.join(""), stderr: chunks.err.join("") };

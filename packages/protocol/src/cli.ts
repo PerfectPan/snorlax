@@ -80,6 +80,7 @@ export const refreshResultSchema = z.object({
   failures: nonNegativeIntSchema,
   sync: z.object({
     ok: z.boolean(),
+    state: syncStateSchema,
     pushed: nonNegativeIntSchema,
     pulled: nonNegativeIntSchema
   })

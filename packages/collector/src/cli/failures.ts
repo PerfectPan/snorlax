@@ -1,13 +1,16 @@
 import type { FailureCode } from "@rivus/snorlax-protocol";
 import type { Command } from "effect/cli";
 
+import type { BackendFailure } from "../capabilities/backend/backend.ts";
 import type { rootCommand } from "./root.ts";
 
 /**
  * Every error a command can fail with, read off the root command's error channel: the root handler's
  * usage error and the typed failures of every subcommand handler. effect/cli's own `CliError` is not in it.
+ * The backend failures are included even while refresh catches them into a sync report, so `pair` (Batch 7b)
+ * can fail with them and the rows already exist. A type-only import keeps this file from loading the client.
  */
-type CommandFailure = Command.Error<typeof rootCommand>;
+type CommandFailure = Command.Error<typeof rootCommand> | BackendFailure;
 
 export interface FailureExit {
   readonly code: FailureCode;
@@ -54,7 +57,12 @@ export const FAILURES = {
   LaunchctlFailed: { code: "internal", exit: 1 },
   ForeignServiceLoaded: { code: "internal", exit: 1 },
   PlistWriteFailed: { code: "internal", exit: 1 },
-  PlistRemoveFailed: { code: "internal", exit: 1 }
+  PlistRemoveFailed: { code: "internal", exit: 1 },
+  KeychainUnavailable: { code: "keychain", exit: 1 },
+  BackendUnreachable: { code: "network", exit: 1 },
+  BackendUnauthorized: { code: "unauthorized", exit: 1 },
+  BackendForbidden: { code: "forbidden", exit: 1 },
+  BackendInvalidResponse: { code: "invalid-response", exit: 1 }
 } as const satisfies { readonly [Tag in CommandFailure["_tag"]]: FailureExit };
 
 /** Defects and errors outside `FAILURES` (effect/cli's own besides `ShowHelp`). */
