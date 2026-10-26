@@ -1,11 +1,11 @@
 # Plan 0001: snorlax
 
-- Status: accepted (owner decisions recorded 2026-10-22 to 2026-10-24). Milestone 1: Batches 0–4b are merged;
-  Batch 4c (command folders, 3.13) is next, then 4d. Milestone 2 waits for agent-kit K1 and K2; Milestone 3 needs
-  the owner's Cloudflare account (6.1)
+- Status: accepted (owner decisions recorded 2026-10-22 to 2026-10-26). Milestones 1 and 2 are merged and
+  accepted. Milestone 3 starts with Batch 6 on Cloudflare's `cf` CLI (D13) and needs the owner's Cloudflare
+  account (6.1)
 - Owner: PerfectPan
 - Reviewer: unconfirmed
-- Last updated: 2026-10-25
+- Last updated: 2026-10-26
 - Paired Spec: [docs/specs/0001-snorlax.md](../specs/0001-snorlax.md)
 
 ## Contents
@@ -118,6 +118,7 @@ this Mac
 | D10 | New repository, not part of agent-presence | Grow agent-presence | Owner decision. Presence can later become an output of this collector (8.3). |
 | D11 | GPL-3.0-only | MIT | Repository convention for applications. |
 | D12 | The collector CLI is built on `effect/cli` (Effect 4); flows are written in Effect and external capabilities are Effect services; pure rules stay plain TypeScript (3.13) | An own `node:util` `parseArgs` dispatcher; citty | Layers build a service only when a command uses it, so read-only commands such as `doctor` cause no side effects; the typed error channel ties every failure to a `FailureCode`; test layers and `TestClock` cover the injected-clock rule; agent-kit already ships Effect 4 entries (`PlatformService`, `NodePlatformLive`). `effect/cli` is marked unstable, so `effect` is pinned to the exact version agent-kit's peer names and both are upgraded together. Owner decision. |
+| D13 | The Worker is configured, run locally and deployed with Cloudflare's `cf` CLI (`cloudflare.config.ts`), with Wrangler as the bundler `cf` delegates to (3.12) | Wrangler alone with `wrangler.jsonc`; `cf` with Vite and the Cloudflare Vite plugin 2.0 beta | Owner decision to use `cf`, which takes over from Wrangler as Cloudflare's CLI. In this workspace `vite` is the vite-plus core alias, which has no `vite` executable, so on the Vite route `cf build` ran `npx vite build` with a Vite fetched outside the lockfile (checked 2026-10-26); builds would have to go through `vp build` plus `cf deploy --prebuilt`, the plugin's `vite` peer is met only through `allowAny`, and the plugin starts the Workers runtime under `vp test`. With Wrangler declared in the package, `cf dev`, `cf build` and `cf deploy` work as documented, and the Worker's `vite.config.ts` stays the lint, format and test config every package has. |
 
 ## 3. Detailed design
 
@@ -416,6 +417,7 @@ backend rows. `n` is capped at 30 because Claude Code deletes older logs by defa
 - Uploads contain only bucket fields (R10); the protocol schemas are strict, and S15 checks it.
 - Device tokens: 32 random bytes, base64url; D1 stores SHA-256 hex; lookup by hash. The admin token is the Worker
   secret `ADMIN_TOKEN`, compared with `crypto.subtle.timingSafeEqual`, and is only sent by `pair` and revocation.
+  The owner uploads it with `cf deploy --secrets-file` (3.12), never as a command-line argument.
 - The data directory is mode 0700; `config.json` holds no secrets.
 - Logs and `doctor` output pass through `redactText` from `@rivus/agent-kit/redact` so home paths and secret-shaped
   strings are hidden.
@@ -502,13 +504,45 @@ spellings.
 
 ### 3.12 Worker
 
-- `packages/worker`: a plain `fetch` handler with `URLPattern` routes, no framework. The handler takes
-  `{ db, adminToken }` where `db` is the subset of `D1Database` it uses (`prepare`, `bind`, `first`, `all`, `run`,
-  `batch`).
-- Tests run the handler against an adapter that implements that subset over `node:sqlite` (a `batch` is one
-  `BEGIN … COMMIT`). A manual `wrangler dev` smoke test is in the validation ledger.
+- `packages/worker` (`@rivus/snorlax-worker`, private): a plain `fetch` handler with `URLPattern` routes, no
+  framework. The handler takes `{ db, adminToken }` where `db` is the subset of `D1Database` it uses (`prepare`,
+  `bind`, `first`, `all`, `run`, `batch`), declared in the package, so neither the handler nor its tests need the
+  Workers runtime types.
 - Request bodies over 1 MB are rejected with 413. A push validates every row with the protocol schema before any
   write.
+- Toolchain (D13): `cf` and `wrangler` are devDependencies of the package, pinned exactly in the catalog to the
+  newest npmjs releases (on 2026-10-26: `cf` 1.0.0-beta.21, `wrangler` 4.152.0). Commands run from
+  `packages/worker` through `pnpm exec cf`, so the pinned `cf` runs and delegates to the package's Wrangler. The
+  package's `build` script is `cf build`, which needs no account and writes `.cloudflare/output/v0/`. `workerd`, a
+  dependency of both, joins `allowBuilds` for its postinstall. `.cloudflare/`, `.wrangler/` and `.dev.vars` are
+  ignored by git.
+- Node: `cf` needs `^22.23.0 || ^24.22.0 || ^26.12.0`, so the root `engines` and `devEngines` move from `^24.11.0`
+  to `^24.22.0`; `.node-version` stays `24`, which CI resolves to the newest 24 release. Node 26 is not an LTS
+  release yet and is not adopted. The collector's `engines` (`>= 22.13`, the Node that runs the published CLI) does
+  not change.
+- `cloudflare.config.ts` returns its configuration from a function of `--mode`. `--mode production` reads the D1
+  database id from `SNORLAX_D1_DATABASE_ID` and the custom domain from `SNORLAX_DOMAIN` and throws when either is
+  missing, so no account's ids or domain are committed; it publishes on that domain with `workersDev: false`
+  (6.1). Any other mode, including `cf dev`'s, binds a fixed local database id, because the local D1 commands
+  accept only an id. `ADMIN_TOKEN` is declared with `bindings.secret()`; `cf dev` reads it from `.dev.vars`.
+- Migrations live in `packages/worker/migrations/` (the default `--dir`) and are applied with
+  `cf d1 migrations apply <database id>`; adding `--local --persist-to .wrangler/state` applies them to the state
+  `cf dev` uses. The bookkeeping table is Wrangler's `d1_migrations`, so Wrangler can apply later migrations too.
+- Tests run the handler against an adapter that implements the D1 subset over `node:sqlite` (a `batch` is one
+  `BEGIN … COMMIT`), under `vp test` like the other packages. The Workers Vitest integration is not used:
+  `@cloudflare/vitest-pool-workers` 0.23.0 needs vitest 4, and vite-plus 1.3.0 ships vitest 5. The smoke test
+  below covers the difference between Node and the Workers runtime.
+- Smoke test (no account), from `packages/worker`: write a throwaway `ADMIN_TOKEN` to `.dev.vars`; apply the
+  migrations to the local id with `--local --persist-to .wrangler/state`; start `cf dev`; check `GET /v1/health`,
+  register a device with the admin token, push and pull a bucket with its device token, and get 401 for a wrong
+  token; then delete `.wrangler/` and `.dev.vars`. The implementer runs it and puts the commands and output in the
+  PR.
+- Deployment (owner), from `packages/worker` after `cf auth login` (`cf` does not reuse Wrangler's login):
+  `cf d1 create --name snorlax --read-replication-mode disabled` once, `cf d1 migrations apply <id>`, then
+  `SNORLAX_D1_DATABASE_ID=<id> SNORLAX_DOMAIN=<domain> pnpm exec cf deploy --mode production --secrets-file <file>`,
+  where `<file>` holds `ADMIN_TOKEN`, sits outside the repository with mode 0600, and is deleted afterwards. `cf`
+  cannot set a single secret yet, and `cf workers secrets update` would take the value as an argument. Whether a
+  later deploy without `--secrets-file` keeps the secret is checked on the second deploy (section 7).
 
 ### 3.13 Collector code structure
 
@@ -646,14 +680,16 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 
 - Read `AGENTS.md`, including its Project Rules: never read real agent session files, zod at boundaries, no
   hand-written shape guards, injected clocks in tests, temporary `HOME` cleanup, owner-only steps.
-- Toolchains: Node 24 and pnpm from the repository pins; Xcode with the macOS 14 SDK or later and XcodeGen for
-  Batches 0 and 4. The lockfile must resolve from `https://registry.npmjs.org/` only; on a machine whose default
-  registry is a mirror, pass `--registry https://registry.npmjs.org/` to pnpm commands that resolve versions.
+- Toolchains: Node 24 and pnpm from the repository pins (from Batch 6, Node 24.22 or later, which `cf` needs;
+  3.12); Xcode with the macOS 14 SDK or later and XcodeGen for Batches 0 and 4. The lockfile must resolve from
+  `https://registry.npmjs.org/` only; on a machine whose default registry is a mirror, pass
+  `--registry https://registry.npmjs.org/` to pnpm commands that resolve versions.
 - M1 needs no Cloudflare account, no second machine and no agent-kit change.
 - M2 needs an agent-kit release that contains K1 and K2 (3.10; K2 is
   [agent-kit#190](https://github.com/PerfectPan/agent-kit/issues/190)).
-- M3 needs the owner's Cloudflare account, a domain whose DNS is on Cloudflare (`*.workers.dev` often does not
-  resolve from mainland China), and a second Mac.
+- M3 needs the owner's Cloudflare account with `cf auth login` done on the owner's machine, a domain whose DNS is
+  on Cloudflare (`*.workers.dev` often does not resolve from mainland China), and a second Mac. Batches 6 and 7
+  themselves need no account: tests and smoke tests run locally (3.12).
 
 ### 6.2 Working agreement
 
@@ -809,13 +845,18 @@ Each batch leaves `pnpm run check` green.
 
 #### Batch 6 (M3): Worker
 
-- Files: `packages/worker/**` (`wrangler.jsonc`, `migrations/0001_init.sql`, `src/**`), HTTP schemas in
-  `packages/protocol`.
+- Files: `packages/worker/**` (`package.json`, `cloudflare.config.ts`, `vite.config.ts`, `tsconfig.json`,
+  `migrations/0001_init.sql`, `src/**`, `test/**`), HTTP schemas in `packages/protocol`, `pnpm-workspace.yaml`
+  (catalog: `cf`, `wrangler`; `allowBuilds`: `workerd`), the root `package.json` (`engines`, `devEngines`),
+  `.gitignore`.
 - Change: 3.2.4 including `GET /v1/health`, 3.3.3, the token rules in 3.8, 3.12.
 - Tests: `devices.test.ts` (S9, revoke), `buckets.test.ts` (upsert, seq order, pagination, 200-row limit, strict
   body, 413), `protocol.test.ts` (S15 schemas).
-- Exit: tests pass; `wrangler dev` smoke steps in the PR. Owner: deploy to `snorlax.<domain>` and record in section
-  7 that `GET /v1/health` answers from every network the devices use.
+- Exit: tests pass; `pnpm exec cf deploy --dry-run --mode production` with placeholder `SNORLAX_D1_DATABASE_ID`
+  and `SNORLAX_DOMAIN` builds and lists the D1 binding without an account; the `cf dev` smoke test (3.12) with its
+  output in the PR. Owner: create the database, apply the migration and deploy to `snorlax.<domain>` (3.12), then
+  record in section 7 that `GET /v1/health` answers from every network the devices use, and whether the secret
+  survived the second deploy.
 
 #### Batch 7 (M3): sync in the collector
 
@@ -824,7 +865,9 @@ Each batch leaves `pnpm run check` green.
 - Tests: `sync.test.ts` (S6–S8, S15, failure codes; two collectors against the Worker handler on in-memory
   `node:sqlite`), `install-uninstall.test.ts` extended with `pair` (S14), `keychain.test.ts` with stubbed
   `security` and `secret-tool` that checks the token is passed on stdin only, `pair.test.ts`.
-- Exit: tests pass; two local collectors against `wrangler dev` converge (steps in the PR).
+- Precondition: the owner has decided whether the first push after pairing sends buckets older than 30 days
+  (section 7).
+- Exit: tests pass; two local collectors against `cf dev` converge (steps in the PR).
 
 #### Batch 8 (M3): pairing in the app, Linux, release setup
 
@@ -845,7 +888,7 @@ Each batch leaves `pnpm run check` green.
 | 1 | `node packages/collector/dist/snorlax.mjs status --json` | valid `Status`, exit 0 |
 | 2, 5, 7 | `pnpm --filter @rivus/snorlax run test` | the batch's scenarios pass |
 | 4, 8 | `xcodebuild -scheme Snorlax test` (CI `macos`) | pass; regeneration leaves no diff |
-| 6 | `pnpm --filter @rivus/snorlax-worker run test`; `wrangler dev` smoke | pass |
+| 6 | `pnpm --filter @rivus/snorlax-worker run test`; `cf deploy --dry-run --mode production`; `cf dev` smoke (3.12) | pass |
 | M1 | owner, three days on one Mac | token totals match ccusage for every finished day (4.1 step 2) |
 | M2 | owner | cost totals match ccusage for finished days, or differences explained |
 | M3 | owner, 5.4 | converged totals on all devices |
@@ -897,6 +940,9 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | Second Mac under another Apple ID | open | bundle id may already be registered to the first team | owner | Batch 8: build on the second Mac; if Xcode rejects the bundle id, make the prefix configurable in `project.yml` |
 | S2 results | pending owner run | refresh interval and performance target | owner | On each machine, run `node scripts/measure-scan.ts`. It reads local agent homes (full: `since` 0 and no state; incremental: the saved state and `since` = now − 2 h) and prints one JSON object of counts only. Paste that JSON here. The refresh interval stays 300 s until the numbers are recorded. |
 | Worker reachability | open | domain | owner | record here after Batch 6 |
+| `cf` and `cloudflare.config.ts` are in beta | risk | a `cf` release changes commands, the configuration format or Build Output | maintainer | `cf` and `wrangler` are pinned exactly and upgraded on purpose; Wrangler with `wrangler.jsonc` stays a fallback, since both use the same D1 migration table (3.12) |
+| `ADMIN_TOKEN` across deploys | open | if a deploy without `--secrets-file` drops the secret, `pair` and revocation answer 401 | owner | after the second deploy, send `DELETE /v1/devices/<an unused id>` with the admin token: any answer other than 401 means the secret was kept; otherwise every deploy passes the file (3.12) |
+| Buckets older than 30 days on the first push | open | pairing marks every local bucket dirty (3.4.2), including the M1 buckets of 2026-09-23 to 09-25 that no rebuild can reprice (M2 results); no window shows them, so they cost writes and storage only | owner | decide before Batch 7: push them, so the backend stays a full copy of the ledger, or push only the last 30 days |
 | K1, K2 in agent-kit | resolved | — | agent-kit maintainer | Released in agent-kit 0.22.0 (`/cost/prices`, `priceRecord`); Batch 5 pins it |
 | Presence on this collector | follow-up | — | owner | separate Spec and Plan (8.3) |
 
