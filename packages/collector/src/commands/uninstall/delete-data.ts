@@ -98,7 +98,7 @@ export const requireSnorlaxDataDir = (
     ) {
       return;
     }
-    const untouched = "nothing was deleted and the LaunchAgent was left in place";
+    const untouched = "nothing was deleted and the scheduled refresh job was left in place";
     const ledger = ledgerPath(dir);
     const ledgerFound = yield* Effect.promise(() => platform.fs.stat(ledger));
     if (ledgerFound === undefined) {

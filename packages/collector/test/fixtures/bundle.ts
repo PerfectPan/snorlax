@@ -12,14 +12,18 @@ export const bundle = fileURLToPath(new URL("../../dist/snorlax.mjs", import.met
 export interface BundleHome {
   /** The run's HOME: a directory under the system temporary directory. */
   readonly home: string;
-  /** SNORLAX_HOME; `<home>/data` when omitted. */
+  /** SNORLAX_HOME; `<home>/data` when omitted. Ignored when `omitSnorlaxHome` is set. */
   readonly dataDir?: string;
+  /** Leave `SNORLAX_HOME` unset, so the data directory follows `XDG_DATA_HOME` or the platform default. */
+  readonly omitSnorlaxHome?: boolean;
   /** The `launchctl` the run may start: a stub under the temporary directory, or by default a path that does not exist. */
   readonly launchctl?: string;
   /** The `systemctl` the run may start: a stub under the temporary directory, or by default a path that does not exist. */
   readonly systemctl?: string;
-  /** `XDG_CONFIG_HOME`, when a test wants the systemd units outside `~/.config`. Must be under the temporary directory. */
+  /** `XDG_CONFIG_HOME` of the CLI process. Must be under the temporary directory. The systemd user manager does not use it. */
   readonly xdgConfigHome?: string;
+  /** `XDG_DATA_HOME`. Must be under the temporary directory. */
+  readonly xdgDataHome?: string;
   /** SNORLAX_OS, for the tests that pick the scheduler. */
   readonly os?: string;
 }
@@ -42,6 +46,9 @@ const bundleEnv = (where: BundleHome): Record<string, string> => {
   if (where.xdgConfigHome !== undefined) {
     paths.push(where.xdgConfigHome);
   }
+  if (where.xdgDataHome !== undefined) {
+    paths.push(where.xdgDataHome);
+  }
   for (const path of paths) {
     if (!underTemporaryDirectory(path)) {
       throw new Error(`a bundle run needs its HOME, launchctl and systemctl under ${tmpdir()}, got ${path}`);
@@ -52,11 +59,12 @@ const bundleEnv = (where: BundleHome): Record<string, string> => {
   }
   return {
     HOME: where.home,
-    SNORLAX_HOME: where.dataDir ?? join(where.home, "data"),
+    ...(where.omitSnorlaxHome === true ? {} : { SNORLAX_HOME: where.dataDir ?? join(where.home, "data") }),
     SNORLAX_LAUNCHCTL: launchctl,
     SNORLAX_SYSTEMCTL: systemctl,
     PATH: "/usr/bin:/bin",
     ...(where.xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: where.xdgConfigHome }),
+    ...(where.xdgDataHome === undefined ? {} : { XDG_DATA_HOME: where.xdgDataHome }),
     ...(where.os === undefined ? {} : { SNORLAX_OS: where.os })
   };
 };

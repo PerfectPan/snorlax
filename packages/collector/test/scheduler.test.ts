@@ -463,6 +463,7 @@ describe("an install interrupted inside systemctl enable", () => {
   const UNIT_DIR = `${HOME}/.config/systemd/user`;
   const SERVICE = `${UNIT_DIR}/snorlax-refresh.service`;
   const TIMER = `${UNIT_DIR}/snorlax-refresh.timer`;
+  const SHOW_ENV = ["--user", "show-environment"];
   const SHOW = [
     "--user",
     "show",
@@ -503,6 +504,9 @@ describe("an install interrupted inside systemctl enable", () => {
     const answer = (stdout: string) => ({ code: 0, signal: null, stdout, stderr: "", timedOut: false });
     const run: Platform["process"]["run"] = async (_command, args, options) => {
       runs.push(args);
+      if (args[1] === "show-environment") {
+        return answer("");
+      }
       if (args[1] === "show") {
         return answer(showOf(state.fragment));
       }
@@ -550,7 +554,7 @@ describe("an install interrupted inside systemctl enable", () => {
     systemctl.exitEnable();
     await interrupted;
 
-    expect(systemctl.runs).toEqual([SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
+    expect(systemctl.runs).toEqual([SHOW_ENV, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
     expect(await platform.fs.stat(SERVICE)).toBeUndefined();
     expect(await platform.fs.stat(TIMER)).toBeUndefined();
   });
@@ -570,7 +574,7 @@ describe("an install interrupted inside systemctl enable", () => {
       }).pipe(Effect.provide(TestClock.layer()))
     );
 
-    expect(systemctl.runs).toEqual([SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
+    expect(systemctl.runs).toEqual([SHOW_ENV, SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
     expect(await platform.fs.stat(SERVICE)).toBeUndefined();
     expect(await platform.fs.stat(TIMER)).toBeUndefined();
   });
@@ -580,6 +584,7 @@ describe("systemd inspect", () => {
   const SYSTEMCTL = "/stub/systemctl";
   const SERVICE = `${HOME}/.config/systemd/user/snorlax-refresh.service`;
   const TIMER = `${HOME}/.config/systemd/user/snorlax-refresh.timer`;
+  const SHOW_ENV = ["--user", "show-environment"];
   const SHOW = [
     "--user",
     "show",
@@ -613,6 +618,9 @@ describe("systemd inspect", () => {
           : {
               [SYSTEMCTL]: (args) => {
                 runs.push(args);
+                if (args[1] === "show-environment") {
+                  return { code: 0, stdout: "" };
+                }
                 return { code: 0, stdout };
               }
             }
@@ -635,7 +643,7 @@ describe("systemd inspect", () => {
       cliJob: { file: SERVICE, nodePath: "/opt/node home/bin/node" },
       loaded: { from: "cli", file: TIMER }
     });
-    expect(runs).toEqual([SHOW]);
+    expect(runs).toEqual([SHOW_ENV, SHOW]);
   });
 
   it("reports nothing when the unit is missing, and unknown for a fragment this install did not write", async () => {

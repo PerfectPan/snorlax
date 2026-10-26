@@ -2,13 +2,14 @@ import { isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { Cause, Data, Duration, Effect, type Context } from "effect";
+import { Data, Duration, Effect, type Context } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
 import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 import {
+  parseSystemctlEnvironment,
   parseSystemctlShow,
   renderRefreshService,
   renderRefreshTimer,
@@ -24,9 +25,12 @@ import {
  * The scheduler on Linux: a systemd user timer.
  *
  * Nothing else on Linux registers `snorlax-refresh.timer`, so a loaded unit whose fragment path is not
- * the CLI's own file is refused rather than replaced. `SNORLAX_SYSTEMCTL`, when set, is the `systemctl`
- * binary. Tests point it at a stub so they never start the real one and never enable a timer in the
- * caller's user manager.
+ * the CLI's own file is refused rather than replaced. The unit directory comes from the user manager's
+ * environment (`systemctl --user show-environment`), not from this process's `XDG_CONFIG_HOME`: the
+ * manager does not inherit a shell rc, and it is the manager that looks the units up. The service always
+ * sets `SNORLAX_HOME` to the data directory install already resolved. `SNORLAX_SYSTEMCTL`, when set, is
+ * the `systemctl` binary. Tests point it at a stub so they never start the real one and never enable a
+ * timer in the caller's user manager.
  */
 
 /** The Node binary or the `snorlax.mjs` entry this process runs from has no absolute path. */
@@ -75,6 +79,7 @@ const SHOW_ARGS = [
 const RELOAD_ARGS = ["--user", "daemon-reload"] as const;
 const ENABLE_ARGS = ["--user", "enable", "--now", TIMER_NAME] as const;
 const DISABLE_ARGS = ["--user", "disable", "--now", TIMER_NAME] as const;
+const SHOW_ENVIRONMENT_ARGS = ["--user", "show-environment"] as const;
 
 /** `run` is the only process operation install uses. */
 type SchedulerPlatform = Pick<Platform, "env" | "fs" | "home"> & {
@@ -158,6 +163,41 @@ const systemctlFailure = (result: SystemctlResult, action: string): SystemctlFai
   });
 };
 
+/**
+ * The user manager's environment. A non-zero exit or a report that is not `KEY=value` lines fails instead
+ * of being replaced with this process's environment.
+ */
+const showEnvironment = (
+  platform: SchedulerPlatform
+): Effect.Effect<Readonly<Record<string, string>>, SystemctlFailed> =>
+  Effect.flatMap(runSystemctl(platform, SHOW_ENVIRONMENT_ARGS), (result) => {
+    if (result.code !== 0) {
+      return Effect.fail(systemctlFailure(result, "show-environment"));
+    }
+    const environment = parseSystemctlEnvironment(result.stdout);
+    if (environment === undefined) {
+      return Effect.fail(new SystemctlFailed({ message: "systemctl show-environment did not report KEY=value lines" }));
+    }
+    return Effect.succeed(environment);
+  });
+
+interface UnitPaths {
+  readonly unitDir: string;
+  readonly servicePath: string;
+  readonly timerPath: string;
+}
+
+/** Where the user manager looks up user units. Never this process's `XDG_CONFIG_HOME`. */
+const resolveUnitPaths = (platform: SchedulerPlatform): Effect.Effect<UnitPaths, SystemctlFailed> =>
+  Effect.map(showEnvironment(platform), (environment) => {
+    const unitDir = systemdUserConfigDir(platform.home, environment.XDG_CONFIG_HOME);
+    return {
+      unitDir,
+      servicePath: join(unitDir, SERVICE_NAME),
+      timerPath: join(unitDir, TIMER_NAME)
+    };
+  });
+
 /** `systemctl show` of the timer. A non-zero exit or an unexpected report fails instead of being guessed. */
 const showTimer = (platform: SchedulerPlatform): Effect.Effect<SystemctlShow, SystemctlFailed> =>
   Effect.flatMap(runSystemctl(platform, SHOW_ARGS), (result) => {
@@ -192,8 +232,9 @@ const disable = (platform: SchedulerPlatform): Effect.Effect<void, SystemctlFail
 
 /**
  * A timer systemd loaded from somewhere other than `timerPath` is not this CLI's. An empty fragment means
- * the unit is not loaded. Our own fragment is stopped with `disable --now` when `stop` is set, which uninstall
- * wants and an interrupted install wants only for the timer this run enabled.
+ * the unit is not loaded. Our own fragment is stopped with `disable --now`, which uninstall wants and which
+ * a failed install wants when `enable --now` already loaded this timer. Enable is not atomic: the symlink
+ * can exist before start fails.
  */
 const refuseForeignTimer = (shown: SystemctlShow, timerPath: string): Effect.Effect<void, ForeignTimerLoaded> => {
   if (shown.FragmentPath === "" || shown.FragmentPath === timerPath) {
@@ -219,14 +260,6 @@ const disableIfLoadedFrom = (
       yield* disable(platform);
     }
   });
-
-const snorlaxHomeOverride = (platform: Pick<Platform, "env">): string | undefined => {
-  const value = platform.env.SNORLAX_HOME;
-  if (value === undefined || value === "") {
-    return undefined;
-  }
-  return value;
-};
 
 const removeUnitFiles = (
   platform: SchedulerPlatform,
@@ -277,72 +310,87 @@ const loadedJob = (platform: SchedulerPlatform, timerPath: string): Effect.Effec
   );
 
 /** The systemd implementation of the scheduler capability over `platform`. */
-export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.Shape<typeof Scheduler> => {
-  const unitDir = systemdUserConfigDir(platform.home, platform.env.XDG_CONFIG_HOME);
-  const servicePath = join(unitDir, SERVICE_NAME);
-  const timerPath = join(unitDir, TIMER_NAME);
-  const unitPaths = [servicePath, timerPath];
-  return {
-    install: (job, prepare) =>
-      Effect.gen(function* () {
-        yield* requireAbsoluteDataDir(job.dataDir);
-        // Ownership comes before any write: a timer loaded from another file is never replaced.
-        const shown = yield* showTimer(platform);
-        yield* refuseForeignTimer(shown, timerPath);
-        yield* prepare;
-        const service = renderRefreshService({
-          ...(yield* runningCollectorPaths),
-          snorlaxHome: snorlaxHomeOverride(platform)
-        });
-        const timer = renderRefreshTimer();
-        yield* Effect.tryPromise({
-          try: async () => {
-            await platform.fs.mkdir(unitDir);
-            await platform.fs.writeAtomic(servicePath, service, { mode: UNIT_MODE });
-            try {
-              await platform.fs.writeAtomic(timerPath, timer, { mode: UNIT_MODE });
-            } catch (error) {
-              await platform.fs.remove(servicePath);
-              throw error;
-            }
-          },
-          catch: (error) => new UnitWriteFailed({ message: `cannot write ${unitDir}: ${errorMessage(error)}` })
-        });
-        // `enable --now` is idempotent, so a repeat install rewrites the units, reloads and enables again.
-        // A failed or interrupted enable must not leave unit files for the next user-manager start. An
-        // interrupted enable may still have enabled the timer before its child stopped; runSystemctl has
-        // waited for that child to exit, so a timer systemd now runs from this file is disabled before the
-        // files go. The cleanup's own failures are dropped: the command reports the enable failure or the
-        // interruption, not the cleanup.
-        yield* reload(platform).pipe(
-          Effect.andThen(enable(platform)),
-          Effect.onError((cause) =>
+export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.Shape<typeof Scheduler> => ({
+  install: (job, prepare) =>
+    Effect.gen(function* () {
+      yield* requireAbsoluteDataDir(job.dataDir);
+      const paths = yield* resolveUnitPaths(platform);
+      // Ownership comes before any write: a timer loaded from another file is never replaced.
+      const shown = yield* showTimer(platform);
+      yield* refuseForeignTimer(shown, paths.timerPath);
+      yield* prepare;
+      // `job.dataDir` is the directory this install resolved. The timer must use that path, not look it up
+      // again: the user manager does not inherit `XDG_DATA_HOME` from a shell rc.
+      const service = renderRefreshService({
+        ...(yield* runningCollectorPaths),
+        snorlaxHome: job.dataDir
+      });
+      const timer = renderRefreshTimer();
+      yield* Effect.tryPromise({
+        try: async () => {
+          await platform.fs.mkdir(paths.unitDir);
+          await platform.fs.writeAtomic(paths.servicePath, service, { mode: UNIT_MODE });
+          try {
+            await platform.fs.writeAtomic(paths.timerPath, timer, { mode: UNIT_MODE });
+          } catch (error) {
+            await platform.fs.remove(paths.servicePath);
+            throw error;
+          }
+        },
+        catch: (error) => new UnitWriteFailed({ message: `cannot write ${paths.unitDir}: ${errorMessage(error)}` })
+      });
+      // `enable --now` is idempotent, so a repeat install rewrites the units, reloads and enables again.
+      // It is not atomic: enable can install the symlink before start fails or the 15 s limit fires.
+      // Any failed or interrupted enable therefore disables the timer when this file is the one loaded,
+      // then deletes the unit files and reloads. An interrupt has already waited, inside runSystemctl, for
+      // the child to exit before this cleanup reads systemd. The cleanup's own failures are dropped: the
+      // command reports the enable failure or the interruption, not the cleanup.
+      yield* reload(platform).pipe(
+        Effect.andThen(enable(platform)),
+        Effect.onError(() =>
+          Effect.andThen(
+            Effect.ignore(disableIfLoadedFrom(platform, paths.timerPath)),
             Effect.andThen(
-              Cause.hasInterrupts(cause) ? Effect.ignore(disableIfLoadedFrom(platform, timerPath)) : Effect.void,
-              Effect.andThen(Effect.ignore(removeUnitFiles(platform, unitPaths)), Effect.ignore(reload(platform)))
+              Effect.ignore(removeUnitFiles(platform, [paths.servicePath, paths.timerPath])),
+              Effect.ignore(reload(platform))
             )
           )
-        );
-        return timerPath;
-      }),
-    uninstall: (job, guard) =>
-      Effect.gen(function* () {
-        yield* requireAbsoluteDataDir(job.dataDir);
-        // The caller's guard runs before anything changes: a refused `--data` must not have already disabled
-        // the timer and removed its units.
-        const guarded = yield* guard;
-        yield* disableIfLoadedFrom(platform, timerPath);
-        yield* removeUnitFiles(platform, unitPaths);
-        yield* reload(platform);
-        return guarded;
-      }),
-    inspect: Effect.gen(function* () {
+        )
+      );
+      return paths.timerPath;
+    }),
+  uninstall: (job, guard) =>
+    Effect.gen(function* () {
+      yield* requireAbsoluteDataDir(job.dataDir);
+      // The caller's guard runs before anything changes: a refused `--data` must not have already disabled
+      // the timer and removed its units.
+      const guarded = yield* guard;
+      const paths = yield* resolveUnitPaths(platform);
+      yield* disableIfLoadedFrom(platform, paths.timerPath);
+      yield* removeUnitFiles(platform, [paths.servicePath, paths.timerPath]);
+      yield* reload(platform);
+      return guarded;
+    }),
+  inspect: Effect.gen(function* () {
+    // A manager environment we cannot read does not fall back to this process's `XDG_CONFIG_HOME`: that
+    // would inspect a directory the manager is not using.
+    const located = yield* resolveUnitPaths(platform).pipe(
+      Effect.map((paths) => ({ located: true, paths }) as const),
+      Effect.catch((error) => Effect.succeed({ located: false, reason: error.message } as const))
+    );
+    if (!located.located) {
       return {
         kind: "inspected" as const,
         scheduler: "systemd" as const,
-        cliJob: yield* readCliJob(platform, servicePath),
-        loaded: yield* loadedJob(platform, timerPath)
+        cliJob: undefined,
+        loaded: { from: "unknown" as const, reason: located.reason }
       };
-    })
-  };
-};
+    }
+    return {
+      kind: "inspected" as const,
+      scheduler: "systemd" as const,
+      cliJob: yield* readCliJob(platform, located.paths.servicePath),
+      loaded: yield* loadedJob(platform, located.paths.timerPath)
+    };
+  })
+});

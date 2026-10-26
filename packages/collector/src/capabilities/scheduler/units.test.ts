@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  parseSystemctlEnvironment,
   parseSystemctlShow,
   quoteSystemdWord,
   renderRefreshService,
@@ -8,8 +9,6 @@ import {
   serviceEnvironment,
   serviceNodePath,
   systemdUserConfigDir,
-  TIMER_INTERVAL,
-  TIMER_ON_BOOT,
   unquoteSystemdWord
 } from "./units.ts";
 
@@ -17,25 +16,20 @@ const HOME = "/opt/snorlax-test/home";
 
 describe("systemd unit text", () => {
   it("renders the timer at a 5 minute interval", () => {
-    const text = renderRefreshTimer();
-    expect(text).toBe(
+    expect(renderRefreshTimer()).toBe(
       [
         "[Unit]",
         "Description=Refresh snorlax usage every 5 minutes",
         "",
         "[Timer]",
-        `OnBootSec=${TIMER_ON_BOOT}`,
-        `OnUnitActiveSec=${TIMER_INTERVAL}`,
+        "OnBootSec=1min",
+        "OnUnitActiveSec=5min",
         "",
         "[Install]",
         "WantedBy=timers.target",
         ""
       ].join("\n")
     );
-    expect(TIMER_ON_BOOT).toBe("1min");
-    expect(TIMER_INTERVAL).toBe("5min");
-    expect(text).toContain("OnBootSec=1min");
-    expect(text).toContain("OnUnitActiveSec=5min");
   });
 
   it("quotes a word so spaces, quotes, percent, backslash and newlines survive a round trip", () => {
@@ -50,16 +44,20 @@ describe("systemd unit text", () => {
       'C:\\100% "odd"\\node'
     ];
     for (const value of values) {
-      expect(unquoteSystemdWord(quoteSystemdWord(value))).toBe(value);
+      expect(unquoteSystemdWord(quoteSystemdWord(value, "assign"), "assign")).toBe(value);
+      expect(unquoteSystemdWord(quoteSystemdWord(value, "exec"), "exec")).toBe(value);
     }
-    expect(unquoteSystemdWord("/usr/bin/node")).toBeUndefined();
-    expect(unquoteSystemdWord('"%')).toBeUndefined();
-    expect(unquoteSystemdWord('"%"')).toBeUndefined();
+    expect(unquoteSystemdWord("/usr/bin/node", "exec")).toBeUndefined();
+    expect(unquoteSystemdWord('"%', "exec")).toBeUndefined();
+    expect(unquoteSystemdWord('"%"', "exec")).toBeUndefined();
   });
 
-  it("writes an absolute ExecStart and omits Environment when SNORLAX_HOME is unset", () => {
-    const nodePath = "/usr/bin/node";
-    const text = renderRefreshService({ nodePath, cliPath: "/usr/bin/snorlax.mjs" });
+  it("writes an absolute ExecStart and always sets SNORLAX_HOME", () => {
+    const text = renderRefreshService({
+      nodePath: "/usr/bin/node",
+      cliPath: "/usr/bin/snorlax.mjs",
+      snorlaxHome: "/var/lib/snorlax"
+    });
     expect(text).toBe(
       [
         "[Unit]",
@@ -70,12 +68,34 @@ describe("systemd unit text", () => {
         'ExecStart="/usr/bin/node" "/usr/bin/snorlax.mjs" refresh',
         "StandardOutput=null",
         "StandardError=null",
+        'Environment="SNORLAX_HOME=/var/lib/snorlax"',
+        ""
+      ].join("\n")
+    );
+    expect(serviceNodePath(text)).toBe("/usr/bin/node");
+  });
+
+  it("doubles $ in ExecStart and leaves it literal in Environment", () => {
+    const nodePath = "/opt/$HOME/${HOME}/$$/node";
+    const cliPath = "/opt/${USER}/snorlax.mjs";
+    const home = "/data/$HOME/${HOME}/$$";
+    const text = renderRefreshService({ nodePath, cliPath, snorlaxHome: home });
+    expect(text).toBe(
+      [
+        "[Unit]",
+        "Description=Refresh snorlax usage",
+        "",
+        "[Service]",
+        "Type=oneshot",
+        'ExecStart="/opt/$$HOME/$${HOME}/$$$$/node" "/opt/$${USER}/snorlax.mjs" refresh',
+        "StandardOutput=null",
+        "StandardError=null",
+        'Environment="SNORLAX_HOME=/data/$HOME/${HOME}/$$"',
         ""
       ].join("\n")
     );
     expect(serviceNodePath(text)).toBe(nodePath);
-    expect(nodePath.startsWith("/")).toBe(true);
-    expect(serviceEnvironment(text)).toBeUndefined();
+    expect(serviceEnvironment(text)).toBe(`SNORLAX_HOME=${home}`);
   });
 
   it("keeps a SNORLAX_HOME with spaces and quotes as one Environment word", () => {
@@ -137,5 +157,25 @@ describe("systemctl show", () => {
     expect(parseSystemctlShow("LoadState=loaded\nUnitFileState=enabled\nActiveState=active\n")).toBeUndefined();
     expect(parseSystemctlShow(`${shown}not a property\n`)).toBeUndefined();
     expect(parseSystemctlShow("")).toBeUndefined();
+  });
+});
+
+describe("systemctl show-environment", () => {
+  it("reads an empty environment and values that contain =", () => {
+    expect(parseSystemctlEnvironment("")).toEqual({});
+    expect(parseSystemctlEnvironment("\n")).toEqual({});
+    expect(parseSystemctlEnvironment("XDG_CONFIG_HOME=/var/xdg\nEMPTY=\nPATH=/bin=/usr/bin\n")).toEqual({
+      XDG_CONFIG_HOME: "/var/xdg",
+      EMPTY: "",
+      PATH: "/bin=/usr/bin"
+    });
+  });
+
+  it("rejects a duplicate key, a key that is not a variable name, or a line that is not KEY=value", () => {
+    expect(parseSystemctlEnvironment("A=1\nA=2\n")).toBeUndefined();
+    expect(parseSystemctlEnvironment("1BAD=x\n")).toBeUndefined();
+    expect(parseSystemctlEnvironment("HAS-DASH=x\n")).toBeUndefined();
+    expect(parseSystemctlEnvironment("=x\n")).toBeUndefined();
+    expect(parseSystemctlEnvironment("not a property\n")).toBeUndefined();
   });
 });
