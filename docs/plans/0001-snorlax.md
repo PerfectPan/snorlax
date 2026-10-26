@@ -606,8 +606,8 @@ spellings.
   where `<file>` holds `ADMIN_TOKEN`, sits outside the repository with mode 0600, and is deleted afterwards. The
   owner generates the token with `openssl rand -hex 32`: 64 hex characters, which are RFC 6750 token characters
   (3.2.4); a token with any other character makes every admin call 401. `cf` cannot set a single secret yet, and
-  `cf workers secrets update` would take the value as an argument. Whether a later deploy without `--secrets-file`
-  keeps the secret is checked on the second deploy (section 7).
+  `cf workers secrets update` would take the value as an argument. A later deploy without `--secrets-file` keeps
+  the secret (checked on 2026-10-27, section 7); only rotating the token needs the file again.
 
 ### 3.12.1 Worker code structure
 
