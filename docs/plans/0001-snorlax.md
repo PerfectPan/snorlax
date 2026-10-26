@@ -541,9 +541,11 @@ spellings.
   release yet and is not adopted. The collector's `engines` (`>= 22.13`, the Node that runs the published CLI) does
   not change.
 - `cloudflare.config.ts` returns its configuration from a function of `--mode`. `--mode production` reads the D1
-  database id from `SNORLAX_D1_DATABASE_ID` and the custom domain from `SNORLAX_DOMAIN` and throws when either is
-  missing, so no account's ids or domain are committed; it publishes on that domain with `workersDev: false`
-  (6.1). Any other mode, including `cf dev`'s, binds a fixed local database id, because the local D1 commands
+  database id from `SNORLAX_D1_DATABASE_ID` and throws without it, so no account's ids or domain are committed.
+  With `SNORLAX_DOMAIN` set it publishes on that custom domain with `workersDev: false`; without it, on the
+  Worker's `workers.dev` URL (`workersDev: true`), which is where the owner deploys first (owner, 2026-10-27).
+  `*.workers.dev` often does not resolve from mainland China (6.1), so a device on such a network needs a custom
+  domain later; a redeploy with `SNORLAX_DOMAIN` moves the Worker, and each device then pairs again. Any other mode, including `cf dev`'s, binds a fixed local database id, because the local D1 commands
   accept only an id. `ADMIN_TOKEN` is declared with `bindings.secret()`; `cf dev` reads it from `.dev.vars`.
 - Migrations live in `packages/worker/migrations/` (the default `--dir`) and are applied with
   `cf d1 migrations apply <database id>`; adding `--local --persist-to .wrangler/state` applies them to the state
@@ -559,7 +561,7 @@ spellings.
   PR.
 - Deployment (owner), from `packages/worker` after `cf auth login` (`cf` does not reuse Wrangler's login):
   `cf d1 create --name snorlax --read-replication-mode disabled` once, `cf d1 migrations apply <id>`, then
-  `SNORLAX_D1_DATABASE_ID=<id> SNORLAX_DOMAIN=<domain> pnpm exec cf deploy --mode production --secrets-file <file>`,
+  `SNORLAX_D1_DATABASE_ID=<id> [SNORLAX_DOMAIN=<domain>] pnpm exec cf deploy --mode production --secrets-file <file>`,
   where `<file>` holds `ADMIN_TOKEN`, sits outside the repository with mode 0600, and is deleted afterwards. The
   owner generates the token with `openssl rand -hex 32`: 64 hex characters, which are RFC 6750 token characters
   (3.2.4); a token with any other character makes every admin call 401. `cf` cannot set a single secret yet, and
@@ -758,7 +760,8 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 - M2 needs an agent-kit release that contains K1 and K2 (3.10; K2 is
   [agent-kit#190](https://github.com/PerfectPan/agent-kit/issues/190)).
 - M3 needs the owner's Cloudflare account with `cf auth login` done on the owner's machine, a domain whose DNS is
-  on Cloudflare (`*.workers.dev` often does not resolve from mainland China), and a second Mac. Batches 6 and 7
+  on Cloudflare once a device needs one (the Worker starts on its `workers.dev` URL, which often does not resolve
+  from mainland China; 3.12), and a second Mac. Batches 6 and 7
   themselves need no account: tests and smoke tests run locally (3.12).
 
 ### 6.2 Working agreement
@@ -924,7 +927,7 @@ Each batch leaves `pnpm run check` green.
   body, 413), `protocol.test.ts` (S15 schemas).
 - Exit: tests pass; `pnpm exec cf deploy --dry-run --mode production` with placeholder `SNORLAX_D1_DATABASE_ID`
   and `SNORLAX_DOMAIN` builds and lists the D1 binding without an account; the `cf dev` smoke test (3.12) with its
-  output in the PR. Owner: create the database, apply the migration and deploy to `snorlax.<domain>` (3.12), then
+  output in the PR. Owner: create the database, apply the migration and deploy (3.12; the `workers.dev` URL first), then
   record in section 7 that `GET /v1/health` answers from every network the devices use, and whether the secret
   survived the second deploy.
 
@@ -975,8 +978,8 @@ Each batch leaves `pnpm run check` green.
 - Tests: `sync.test.ts` (S6–S8, S15, failure codes; two collectors against the Worker app on in-memory
   `node:sqlite`), `install-uninstall.test.ts` extended with `pair` (S14), `keychain.test.ts` with stubbed
   `security` and `secret-tool` that checks the token is passed on stdin only, `pair.test.ts`.
-- Precondition: the owner has decided whether the first push after pairing sends buckets older than 30 days
-  (section 7).
+- The first push after pairing sends every local bucket, those older than 30 days included (owner, 2026-10-27;
+  section 7).
 - Exit: tests pass; two local collectors against `cf dev` converge (steps in the PR).
 
 #### Batch 8 (M3): pairing in the app, Linux, release setup
@@ -1054,7 +1057,7 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | Worker reachability | open | domain | owner | record here after Batch 6 |
 | `cf` and `cloudflare.config.ts` are in beta | risk | a `cf` release changes commands, the configuration format or Build Output | maintainer | `cf` and `wrangler` are pinned exactly and upgraded on purpose; Wrangler with `wrangler.jsonc` stays a fallback, since both use the same D1 migration table (3.12) |
 | `ADMIN_TOKEN` across deploys | open | if a deploy without `--secrets-file` drops the secret, `pair` and revocation answer 401 | owner | after the second deploy, send `DELETE /v1/devices/<an unused id>` with the admin token: any answer other than 401 means the secret was kept; otherwise every deploy passes the file (3.12) |
-| Buckets older than 30 days on the first push | open | pairing marks every local bucket dirty (3.4.2), including the M1 buckets of 2026-09-23 to 09-25 that no rebuild can reprice (M2 results); no window shows them, so they cost writes and storage only | owner | decide before Batch 7: push them, so the backend stays a full copy of the ledger, or push only the last 30 days |
+| Buckets older than 30 days on the first push | resolved | pairing marks every local bucket dirty (3.4.2), including the M1 buckets of 2026-09-23 to 09-25 that no rebuild can reprice (M2 results); no window shows them, so they cost writes and storage only | owner | Owner decision on 2026-10-27: push them, so the backend stays a full copy of the ledger (3.4.2 unchanged) |
 | K1, K2 in agent-kit | resolved | — | agent-kit maintainer | Released in agent-kit 0.22.0 (`/cost/prices`, `priceRecord`); Batch 5 pins it |
 | Presence on this collector | follow-up | — | owner | separate Spec and Plan (8.3) |
 | Self-hosted backend | follow-up | — | owner | The Hono app and the node:sqlite D1 adapter run on Node too (3.12.1), so a Node server (`@hono/node-server`) on a SQLite file could serve the same HTTP API later; not planned now (owner, 2026-10-26) |
