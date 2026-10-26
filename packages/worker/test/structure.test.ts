@@ -9,7 +9,9 @@ import { describe, expect, it } from "vite-plus/test";
  * `src/` and never back; only `index.ts` and `http/` import `hono` or `@hono/*`; the two domain folders do not
  * import each other; and a `store.ts` is imported only by its own folder's use-case file (and by tests, which
  * this check does not read). All three import forms count — `from "…"`, side-effect `import "…"` and dynamic
- * `import("…")` — and relative specifiers are resolved against the importing file's directory.
+ * `import("…")`. Relative specifiers are resolved against the importing file's directory, a specifier naming
+ * `src/` or one of its folders stands for that folder's `index.ts`, and the package's own name resolves through
+ * its `exports`.
  */
 
 type Part = "entry" | "http" | "domain" | "base";
@@ -56,6 +58,27 @@ const partOf = (path: string): Part | undefined => {
 
 const isFrameworkSpec = (spec: string): boolean => /^(?:hono(?:\/|$)|@hono\/)/.test(spec);
 
+/** The package's `exports` (package.json), from `src/`. */
+const SELF_EXPORTS: ReadonlyMap<string, string> = new Map([
+  ["@rivus/snorlax-worker", "http/app.ts"],
+  ["@rivus/snorlax-worker/sqlite-d1", "sqlite-d1.ts"]
+]);
+
+/** The folders of the layout, each of which a directory import names by its `index.ts`. */
+const FOLDERS: ReadonlySet<string> = new Set(["http", ...DOMAINS]);
+
+/** The path from `src/` a specifier names; undefined for another package. */
+const resolveSpec = (folder: string, spec: string): string | undefined => {
+  if (!spec.startsWith(".")) {
+    return SELF_EXPORTS.get(spec);
+  }
+  const target = posix.join(folder, spec).replace(/\/$/, "");
+  if (target === ".") {
+    return "index.ts";
+  }
+  return FOLDERS.has(target) ? `${target}/index.ts` : target;
+};
+
 function structureViolations(files: readonly SourceFile[]): Violation[] {
   const violations: Violation[] = [];
   for (const { path, text } of files) {
@@ -72,13 +95,11 @@ function structureViolations(files: readonly SourceFile[]): Violation[] {
       if (isFrameworkSpec(spec) && part !== "entry" && part !== "http") {
         report("framework-import");
       }
-      if (!spec.startsWith(".")) {
-        continue;
-      }
-      const target = posix.join(folder, spec);
-      const targetPart = partOf(target);
-      // A target outside the layout (package.json, a folder the layout rule reports) is no layer import.
-      if (targetPart === undefined) {
+      const target = resolveSpec(folder, spec);
+      const targetPart = target === undefined ? undefined : partOf(target);
+      // Another package, or a target outside the layout (package.json, a folder the layout rule reports), is
+      // no layer import.
+      if (target === undefined || targetPart === undefined) {
         continue;
       }
       const targetFolder = posix.dirname(target);
@@ -173,7 +194,10 @@ describe("worker structure (plan 3.12.1 rule 1)", () => {
     ["a use case to http/", "buckets/buckets.ts", "../http/failures.ts"],
     ["a store to http/", "devices/store.ts", "../http/app.ts"],
     ["a top file to a domain folder", "tokens.ts", "./devices/devices.ts"],
-    ["http/ to index.ts", "http/app.ts", "../index.ts"]
+    ["http/ to index.ts", "http/app.ts", "../index.ts"],
+    ["a use case to the http/ directory", "devices/devices.ts", "../http"],
+    ["a store to the src/ directory, which is index.ts", "devices/store.ts", ".."],
+    ["a use case to the package's own name, which is http/app.ts", "buckets/buckets.ts", "@rivus/snorlax-worker"]
   ])("catches an upward import from %s", (_, file, spec) => {
     expect(check({ [file]: `import { above } from "${spec}";` })).toEqual([
       { rule: "upward-import", file, import: spec }
@@ -189,6 +213,13 @@ describe("worker structure (plan 3.12.1 rule 1)", () => {
     ).toEqual([
       { rule: "cross-domain", file: "buckets/buckets.ts", import: "../devices/devices.ts" },
       { rule: "cross-domain", file: "devices/devices.ts", import: "../buckets/buckets.ts" }
+    ]);
+  });
+
+  it("catches a domain folder importing the other by its directory", () => {
+    const file = "buckets/buckets.ts";
+    expect(check({ [file]: 'import type { AuthenticatedDevice } from "../devices";' })).toEqual([
+      { rule: "cross-domain", file, import: "../devices" }
     ]);
   });
 
