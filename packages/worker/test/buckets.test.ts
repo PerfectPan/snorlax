@@ -216,6 +216,21 @@ describe("PUT /v1/devices/:id/buckets", () => {
     expect(badCounts.status).toBe(400);
   });
 
+  it("answers a body sent as JSON that does not parse with 400 invalid-body, not 500", async () => {
+    const { handler } = createTestBackend();
+    const a = await registerDevice(handler, deviceAId, "Device A");
+    const { status, body } = await call(
+      handler,
+      new Request(`https://snorlax.test/v1/devices/${deviceAId}/buckets`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${a.token}`, "Content-Type": "application/json" },
+        body: "{not json"
+      })
+    );
+    expect(status).toBe(400);
+    expect(z.parse(httpErrorSchema, body).error.code).toBe("invalid-body");
+  });
+
   it("requires the device's own token (401 for none, unknown or revoked)", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");
