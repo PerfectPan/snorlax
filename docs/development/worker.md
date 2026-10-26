@@ -71,7 +71,8 @@ SNORLAX_D1_DATABASE_ID=<d1-database-id> SNORLAX_DOMAIN=<domain> \
 
 Leave `SNORLAX_DOMAIN` unset to stay on `workers.dev`.
 
-Changing the domain moves the Worker to a new origin. Each device has to pair again. The steps are in
+Changing the domain moves the Worker to a new origin. Pair each device again with the admin token. The collector
+revokes that device and registers it again, and usage already uploaded stays. The steps are in
 [pairing.md](pairing.md).
 
 ## Check

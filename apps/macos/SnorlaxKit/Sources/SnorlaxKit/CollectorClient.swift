@@ -64,6 +64,7 @@ public struct CollectorClient: Sendable {
     public func run<Success: Decodable>(
         _ arguments: [String],
         stdin: Data? = nil,
+        timeout: Duration? = nil,
         as type: Success.Type
     ) async throws -> Success {
         var args = arguments
@@ -72,7 +73,14 @@ public struct CollectorClient: Sendable {
         }
         let output: ProcessOutput
         do {
-            output = try await runner.run(executable: executable, arguments: args, stdin: stdin, timeout: timeout)
+            // `timeout` is this command's budget. `pair` passes a longer one;
+            // every other caller keeps the client's 120 seconds.
+            output = try await runner.run(
+                executable: executable,
+                arguments: args,
+                stdin: stdin,
+                timeout: timeout ?? self.timeout
+            )
         } catch let error as CollectorClientError {
             throw error
         } catch {

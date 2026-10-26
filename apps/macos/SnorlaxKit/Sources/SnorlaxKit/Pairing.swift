@@ -3,11 +3,12 @@ import Foundation
 
 /// One pairing attempt in Settings. The view binds the fields and the buttons.
 ///
-/// The admin token lives only in `adminToken` for the length of `pair()`. It is
-/// handed to the collector on stdin, never as an argument, and the property is
-/// cleared when the attempt ends, whether the command succeeded or failed. Nothing
-/// here writes UserDefaults, the keychain, or a log: the collector stores the
-/// device token, and this process must not keep the admin token.
+/// The admin token lives only in `adminToken` until `pair()` copies it onto
+/// stdin. It is never an argument. The field is cleared when that attempt ends,
+/// when Settings disappears, when unpair starts, and when the snapshot shows
+/// this Mac as paired. A return that does not start a command leaves the field
+/// alone, so an empty form or a second click does not discard what the user
+/// typed. Nothing here writes UserDefaults, the keychain, or a log.
 @MainActor
 public final class PairingModel: ObservableObject {
     @Published public var backendURL = ""
@@ -24,6 +25,11 @@ public final class PairingModel: ObservableObject {
     public var refreshSnapshot: (@MainActor () async -> SnapshotStatus?)?
 
     private let client: CollectorClient
+
+    /// `pair` refreshes in the same process. It can wait on the ledger lock and
+    /// then upload every local bucket, so the client's 120 second budget can
+    /// expire after the device is already registered.
+    private static let pairTimeout: Duration = .seconds(300)
 
     public init(client: CollectorClient) {
         self.client = client
@@ -53,19 +59,39 @@ public final class PairingModel: ObservableObject {
     /// Shows pairing and sync from the snapshot (`status.paired`, `status.sync`).
     /// `now` is the clock the relative sync time is measured against.
     public func apply(status: SnapshotStatus?, now: Date = Date(), timeZone: TimeZone = .current) {
-        guard let status else {
-            paired = false
-            syncStateText = "—"
-            lastSyncText = "—"
-            return
-        }
-        paired = status.paired
-        syncStateText = status.sync.state.rawValue
-        if let at = status.sync.at, let text = UsageFormat.instantText(at, now: now, timeZone: timeZone) {
-            lastSyncText = text
+        let nextPaired: Bool
+        let nextSync: String
+        let nextLast: String
+        if let status {
+            nextPaired = status.paired
+            nextSync = status.sync.state.rawValue
+            if let at = status.sync.at, let text = UsageFormat.instantText(at, now: now, timeZone: timeZone) {
+                nextLast = text
+            } else {
+                nextLast = "—"
+            }
         } else {
-            lastSyncText = "—"
+            nextPaired = false
+            nextSync = "—"
+            nextLast = "—"
         }
+        // A notice describes the attempt that just finished. Once the snapshot
+        // shows a different pairing or sync state, that sentence is stale.
+        if nextPaired != paired || nextSync != syncStateText || nextLast != lastSyncText {
+            notice = nil
+        }
+        paired = nextPaired
+        syncStateText = nextSync
+        lastSyncText = nextLast
+        if nextPaired {
+            adminToken = ""
+        }
+    }
+
+    /// Settings calls this from `onDisappear`. Closing the window must not leave
+    /// the admin token in the process.
+    public func settingsDisappeared() {
+        adminToken = ""
     }
 
     public func pair() async {
@@ -75,7 +101,12 @@ public final class PairingModel: ObservableObject {
         guard !running, !url.isEmpty, !name.isEmpty, !token.isEmpty else { return }
         running = true
         defer {
-            adminToken = ""
+            // A token typed after this attempt copied `token` belongs to the
+            // next attempt. Clearing unconditionally would discard it when
+            // Settings was closed and opened again during the refresh.
+            if adminToken == token {
+                adminToken = ""
+            }
             running = false
         }
         let outcome: PairResult
@@ -85,35 +116,39 @@ public final class PairingModel: ObservableObject {
             outcome = try await client.run(
                 ["pair", "--url", url, "--name", name],
                 stdin: Data((token + "\n").utf8),
+                timeout: Self.pairTimeout,
                 as: PairResult.self
             )
-            notice = nil
         } catch {
-            notice = PairingCopy.pair(error)
             await reloadSnapshot()
+            notice = PairingCopy.pair(error)
             return
         }
         await reloadSnapshot()
-        if !paired {
+        if paired {
+            notice = nil
+        } else {
             notice = "Paired as \(outcome.name). The snapshot does not show this Mac as paired yet."
         }
     }
 
     public func unpair() async {
         guard !running else { return }
+        adminToken = ""
         running = true
         defer { running = false }
         do {
             _ = try await client.run(["unpair"], as: Ok.self)
-            notice = nil
         } catch {
-            notice = PairingCopy.unpair(error)
             await reloadSnapshot()
+            notice = PairingCopy.unpair(error)
             return
         }
         await reloadSnapshot()
         if paired {
             notice = "Unpair finished, but the snapshot still shows this Mac as paired."
+        } else {
+            notice = nil
         }
     }
 
@@ -132,6 +167,23 @@ public final class PairingModel: ObservableObject {
 /// `message` stays on the end so the raw reason is still visible.
 enum PairingCopy {
     static func pair(_ error: Error) -> String {
+        if let clientError = error as? CollectorClientError {
+            switch clientError {
+            case .timedOut:
+                // The device may already be registered: the collector refreshes
+                // after pair, and the timeout kills that whole process.
+                return "Pairing may already have succeeded. Check the status in Settings or run snorlax status, then try again."
+            case let .unreadable(_, stdout, stderr):
+                let detail = !stderr.isEmpty ? stderr : stdout
+                return detail.isEmpty
+                    ? "The collector returned a result pairing could not read."
+                    : "The collector returned a result pairing could not read. \(detail)"
+            case .failed:
+                break
+            case .newerCollector, .launchFailed:
+                return localized(error)
+            }
+        }
         guard let failure = failure(of: error) else { return localized(error) }
         let summary: String
         switch failure.code {

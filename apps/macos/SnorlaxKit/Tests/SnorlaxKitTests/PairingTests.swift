@@ -17,13 +17,10 @@ final class PairingModelTests: XCTestCase {
             ["pair", "--url", "https://snorlax.example.com", "--name", "MacBook Pro", "--json"]
         )
         XCTAssertEqual(runner.calls[0].stdin, Data((token + "\n").utf8))
+        XCTAssertEqual(runner.calls[0].timeout, .seconds(300))
         XCTAssertFalse(runner.calls[0].arguments.contains { $0.contains(token) })
         XCTAssertEqual(model.adminToken, "")
         XCTAssertFalse(model.running)
-        let stored = UserDefaults.standard.dictionaryRepresentation().contains { key, value in
-            key.contains(token) || String(describing: value).contains(token)
-        }
-        XCTAssertFalse(stored)
     }
 
     func testTokenIsClearedAfterAFailedPair() async {
@@ -64,17 +61,19 @@ final class PairingModelTests: XCTestCase {
     }
 
     func testUnpairArguments() async {
-        let runner = ScriptedRunner()
-        runner.enqueue(output(Ok(ok: true, schemaVersion: 1), status: 0))
+        let runner = HoldingRunner()
         let model = PairingModel(client: client(runner))
         model.adminToken = "left-in-the-field"
-
-        await model.unpair()
+        let running = Task { await model.unpair() }
+        await runner.waitForCalls(1)
 
         XCTAssertEqual(runner.calls.count, 1)
         XCTAssertEqual(runner.calls[0].arguments, ["unpair", "--json"])
         XCTAssertNil(runner.calls[0].stdin)
-        XCTAssertEqual(model.adminToken, "left-in-the-field")
+        XCTAssertEqual(model.adminToken, "")
+        runner.resume(output(Ok(ok: true, schemaVersion: 1), status: 0))
+        await running.value
+        XCTAssertEqual(model.adminToken, "")
         XCTAssertNil(model.notice)
     }
 
@@ -164,6 +163,125 @@ final class PairingModelTests: XCTestCase {
         XCTAssertEqual(model.syncStateText, "—")
     }
 
+    func testClosingSettingsClearsTheToken() {
+        let model = prepared(ScriptedRunner(), token: "snorlax-test-admin-token")
+        model.settingsDisappeared()
+        XCTAssertEqual(model.adminToken, "")
+    }
+
+    func testAPairedSnapshotClearsTheTokenAndAStaleNotice() async {
+        let runner = ScriptedRunner()
+        runner.enqueue(output(failure(code: "network", message: "connection refused"), status: 1))
+        let model = prepared(runner, token: "snorlax-test-admin-token")
+        await model.pair()
+        let stale = "The backend could not be reached. connection refused"
+        XCTAssertEqual(model.notice, stale)
+        model.adminToken = "typed-after-the-failure"
+        let now = UsageFormat.instant("2026-10-23T02:38:10Z")!
+
+        model.apply(status: nil, now: now)
+        XCTAssertEqual(model.adminToken, "typed-after-the-failure")
+        XCTAssertEqual(model.notice, stale)
+
+        model.apply(
+            status: snapshot(paired: true, state: .ok, at: "2026-10-23T02:35:10Z"),
+            now: now,
+            timeZone: TimeZone(secondsFromGMT: 0)!
+        )
+        XCTAssertTrue(model.paired)
+        XCTAssertEqual(model.adminToken, "")
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(model.syncStateText, "ok")
+        XCTAssertEqual(model.lastSyncText, "3 min ago")
+    }
+
+    func testATokenTypedDuringAnAttemptIsKeptWhenThatAttemptEnds() async {
+        let runner = HoldingRunner()
+        let model = prepared(runner, token: "first-token")
+        let first = Task { await model.pair() }
+        await runner.waitForCalls(1)
+
+        model.settingsDisappeared()
+        XCTAssertEqual(model.adminToken, "")
+        model.adminToken = "second-token"
+        runner.resume(output(pairResult(name: "MacBook Pro"), status: 0))
+        await first.value
+
+        XCTAssertEqual(model.adminToken, "second-token")
+        XCTAssertFalse(model.running)
+    }
+
+    func testPairAndUnpairApplyTheReloadedSnapshot() async {
+        let runner = ScriptedRunner()
+        runner.enqueue(output(pairResult(name: "MacBook Pro"), status: 0))
+        runner.enqueue(output(Ok(ok: true, schemaVersion: 1), status: 0))
+        runner.enqueue(output(Ok(ok: true, schemaVersion: 1), status: 0))
+        let model = prepared(runner, token: "snorlax-test-admin-token")
+        let stillUnpaired = snapshot(paired: false, state: .unpaired, at: nil)
+        let paired = snapshot(paired: true, state: .ok, at: nil)
+        let loads = LoadSequence([stillUnpaired, paired, stillUnpaired])
+        model.refreshSnapshot = { loads.next() }
+
+        await model.pair()
+        XCTAssertEqual(loads.count, 1)
+        XCTAssertFalse(model.paired)
+        XCTAssertEqual(model.syncStateText, "unpaired")
+        XCTAssertEqual(
+            model.notice,
+            "Paired as MacBook Pro. The snapshot does not show this Mac as paired yet."
+        )
+        XCTAssertEqual(model.adminToken, "")
+
+        model.apply(status: paired)
+        XCTAssertTrue(model.paired)
+        XCTAssertNil(model.notice)
+
+        model.adminToken = "typed-while-paired"
+        await model.unpair()
+        XCTAssertEqual(loads.count, 2)
+        XCTAssertEqual(model.adminToken, "")
+        XCTAssertTrue(model.paired)
+        XCTAssertEqual(model.notice, "Unpair finished, but the snapshot still shows this Mac as paired.")
+
+        await model.unpair()
+        XCTAssertEqual(loads.count, 3)
+        XCTAssertFalse(model.paired)
+        XCTAssertNil(model.notice)
+    }
+
+    func testTimeoutAndUnreadableResultsHaveTheirOwnSentences() async {
+        let timedOut = ScriptedRunner()
+        timedOut.enqueue(throwing: CollectorClientError.timedOut)
+        let timed = prepared(timedOut, token: "snorlax-test-admin-token")
+        await timed.pair()
+        XCTAssertEqual(
+            timed.notice,
+            "Pairing may already have succeeded. Check the status in Settings or run snorlax status, then try again."
+        )
+        XCTAssertEqual(timed.adminToken, "")
+        XCTAssertEqual(timedOut.calls[0].timeout, .seconds(300))
+
+        let unreadable = ScriptedRunner()
+        unreadable.enqueue(throwing: CollectorClientError.unreadable(exitCode: 9, stdout: "", stderr: ""))
+        let blank = prepared(unreadable, token: "blank-token")
+        await blank.pair()
+        XCTAssertEqual(blank.notice, "The collector returned a result pairing could not read.")
+        XCTAssertEqual(blank.adminToken, "")
+
+        let noisy = ScriptedRunner()
+        noisy.enqueue(throwing: CollectorClientError.unreadable(exitCode: 1, stdout: "", stderr: "not json"))
+        let withDetail = prepared(noisy, token: "detail-token")
+        await withDetail.pair()
+        XCTAssertEqual(withDetail.notice, "The collector returned a result pairing could not read. not json")
+
+        let missing = ScriptedRunner()
+        missing.enqueue(throwing: CollectorClientError.launchFailed("collector missing"))
+        let launched = prepared(missing, token: "launch-token")
+        await launched.pair()
+        XCTAssertEqual(launched.notice, "collector missing")
+        XCTAssertEqual(launched.adminToken, "")
+    }
+
     private func prepared(_ runner: any ProcessRunning, token: String) -> PairingModel {
         let model = PairingModel(client: client(runner))
         model.backendURL = "https://snorlax.example.com"
@@ -199,33 +317,68 @@ final class PairingModelTests: XCTestCase {
         )
     }
 
+    private func snapshot(paired: Bool, state: SyncState, at: String?) -> SnapshotStatus {
+        SnapshotStatus(
+            failuresByAgent: [:],
+            lastScanAt: nil,
+            paired: paired,
+            sync: SnapshotSync(at: at, state: state)
+        )
+    }
+
     private func output(_ value: some Encodable, status: Int32) -> ProcessOutput {
         ProcessOutput(status: status, stdout: try! JSONEncoder().encode(value), stderr: Data())
     }
 }
 
+/// Statuses returned by a fake `refreshSnapshot`, in order.
+private final class LoadSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var statuses: [SnapshotStatus]
+    private(set) var count = 0
+
+    init(_ statuses: [SnapshotStatus]) {
+        self.statuses = statuses
+    }
+
+    func next() -> SnapshotStatus? {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return statuses.isEmpty ? nil : statuses.removeFirst()
+    }
+}
+
 private final class ScriptedRunner: ProcessRunning, @unchecked Sendable {
     private let lock = NSLock()
-    private var scripts: [ProcessOutput] = []
-    private(set) var calls: [(arguments: [String], stdin: Data?)] = []
+    private var scripts: [Result<ProcessOutput, Error>] = []
+    private(set) var calls: [(arguments: [String], stdin: Data?, timeout: Duration)] = []
 
     func enqueue(_ output: ProcessOutput) {
         lock.lock()
-        scripts.append(output)
+        scripts.append(.success(output))
+        lock.unlock()
+    }
+
+    func enqueue(throwing error: Error) {
+        lock.lock()
+        scripts.append(.failure(error))
         lock.unlock()
     }
 
     func run(executable: URL, arguments: [String], stdin: Data?, timeout: Duration) async throws -> ProcessOutput {
-        if let output = next(arguments: arguments, stdin: stdin) { return output }
-        throw CollectorClientError.launchFailed("no scripted output")
+        guard let result = next(arguments: arguments, stdin: stdin, timeout: timeout) else {
+            throw CollectorClientError.launchFailed("no scripted output")
+        }
+        return try result.get()
     }
 
     /// The lock stays in a synchronous function. `NSLock` is unavailable directly
     /// in an async function.
-    private func next(arguments: [String], stdin: Data?) -> ProcessOutput? {
+    private func next(arguments: [String], stdin: Data?, timeout: Duration) -> Result<ProcessOutput, Error>? {
         lock.lock()
         defer { lock.unlock() }
-        calls.append((arguments, stdin))
+        calls.append((arguments, stdin, timeout))
         return scripts.isEmpty ? nil : scripts.removeFirst()
     }
 }

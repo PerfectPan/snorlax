@@ -142,6 +142,9 @@ struct SettingsView: View {
         .onChange(of: model.snapshotStatus) { _, status in
             model.pairing.apply(status: status)
         }
+        .onDisappear {
+            model.pairing.settingsDisappeared()
+        }
     }
 }
 
@@ -169,7 +172,7 @@ private struct SyncSection: View {
                     .disabled(pairing.running)
                 SecureField("Admin token", text: $pairing.adminToken)
                     .disabled(pairing.running)
-                Text("The admin token is used only for this pairing. It is not saved.")
+                Text("The admin token is used only for this pairing. It is not saved, and closing Settings clears it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Pair") {
