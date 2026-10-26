@@ -3,7 +3,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type { D1Database, D1PreparedStatement, D1Result, D1Value } from "./db.ts";
 
 /**
- * Implements the Worker's D1 subset (`db.ts`) over `node:sqlite`, so the handler runs against a local
+ * Implements the Worker's D1 subset (`db.ts`) over `node:sqlite`, so the app runs against a local
  * SQLite file or an in-memory database in tests and on a self-hosted server. A `batch` is one
  * `BEGIN … COMMIT` in statement order: every statement commits, or a failure rolls the transaction back
  * and the database is left as it was. Reads may appear inside a batch and see the writes of the

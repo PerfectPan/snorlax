@@ -1,6 +1,6 @@
 /**
- * The subset of the D1 database API the Worker uses (plan 3.12), declared here so neither the handler nor
- * its tests need the Workers runtime types. Method shapes follow the real D1 worker API; the node:sqlite
+ * The subset of the D1 database API the Worker uses (plan 3.12), declared here so neither the app nor its
+ * tests need the Workers runtime types. Method shapes follow the real D1 worker API; the node:sqlite
  * adapter in `sqlite-d1.ts` implements the same interface for tests and self-hosting.
  */
 

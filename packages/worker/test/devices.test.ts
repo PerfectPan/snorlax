@@ -10,7 +10,7 @@ import {
 
 import * as z from "zod/mini";
 
-import { createHandler } from "../src/handler.ts";
+import { createApp } from "../src/http/app.ts";
 import { createSqliteD1 } from "../src/sqlite-d1.ts";
 import {
   ADMIN_TOKEN,
@@ -170,11 +170,11 @@ describe("POST /v1/devices", () => {
 
   it("answers a database failure with a fixed internal message and logs the original", async () => {
     const { database } = createTestBackend();
-    const handler = createHandler({
+    const handler = createApp({
       db: createSqliteD1(database),
       adminToken: ADMIN_TOKEN,
       now: () => NOW_MS
-    });
+    }).fetch;
     database.close();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { status, body } = await call(handler, jsonRequest("GET", "/v1/devices", { token: "any-token" }));
@@ -287,6 +287,32 @@ describe("GET /v1/devices", () => {
     const { handler } = createTestBackend();
     expect((await call(handler, jsonRequest("GET", "/v1/devices"))).status).toBe(401);
     expect((await call(handler, jsonRequest("GET", "/v1/devices", { token: ADMIN_TOKEN }))).status).toBe(401);
+  });
+});
+
+describe("Authorization header", () => {
+  it("answers a malformed header with 401 and the JSON error body on admin and device routes", async () => {
+    const { handler } = createTestBackend();
+    const routes = [
+      ["POST", "/v1/devices", { deviceId: deviceAId, name: "x" }],
+      ["DELETE", `/v1/devices/${deviceAId}`, undefined],
+      ["PUT", `/v1/devices/${deviceAId}/buckets`, { buckets: [bucketFixture(deviceAId)] }],
+      ["GET", "/v1/buckets", undefined],
+      ["GET", "/v1/devices", undefined]
+    ] as const;
+    for (const authorization of ["Token x", "Basic dXNlcjpwYXNz", "Bearer", "Bearer two words"]) {
+      for (const [method, path, body] of routes) {
+        const response = await handler(
+          new Request(`https://snorlax.test${path}`, {
+            method,
+            headers: { Authorization: authorization, "Content-Type": "application/json" },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) })
+          })
+        );
+        expect(response.status, `${authorization} on ${method} ${path}`).toBe(401);
+        expect(z.parse(httpErrorSchema, await response.json()).error.code).toBe("unauthorized");
+      }
+    }
   });
 });
 

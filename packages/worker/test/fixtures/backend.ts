@@ -6,13 +6,12 @@ import { DatabaseSync } from "node:sqlite";
 import { httpDeviceRegisterResponseSchema, type Bucket } from "@rivus/snorlax-protocol";
 import * as z from "zod/mini";
 
-import type { Handler } from "../../src/handler.ts";
-import { createHandler } from "../../src/handler.ts";
+import { createApp } from "../../src/http/app.ts";
 import { createSqliteD1 } from "../../src/sqlite-d1.ts";
 
 /**
- * Builds the handler over an in-memory SQLite database whose schema is the committed D1 migration, with
- * a fixed injected clock. Tests never use real elapsed time (plan 3.12).
+ * Builds the app over an in-memory SQLite database whose schema is the committed D1 migration, with a
+ * fixed injected clock, and hands tests its `fetch`. Tests never use real elapsed time (plan 3.12).
  */
 
 export const ADMIN_TOKEN = "test-admin-token-do-not-use";
@@ -24,6 +23,9 @@ export const applyMigrations = (database: DatabaseSync): void => {
   database.exec(readFileSync(join(packageRoot, "migrations", "0001_init.sql"), "utf8"));
 };
 
+/** The app's `fetch`, called with a request alone. */
+export type Handler = (request: Request) => Response | Promise<Response>;
+
 export interface TestBackend {
   handler: Handler;
   database: DatabaseSync;
@@ -32,12 +34,12 @@ export interface TestBackend {
 export const createTestBackend = (options?: { now?: () => number }): TestBackend => {
   const database = new DatabaseSync(":memory:");
   applyMigrations(database);
-  const handler = createHandler({
+  const app = createApp({
     db: createSqliteD1(database),
     adminToken: ADMIN_TOKEN,
     now: options?.now ?? (() => NOW_MS)
   });
-  return { handler, database };
+  return { handler: app.fetch, database };
 };
 
 export interface CallResult {
@@ -46,7 +48,7 @@ export interface CallResult {
   response: Response;
 }
 
-/** Runs one request against the handler and parses the JSON body, if any. */
+/** Runs one request against the app and parses the JSON body, if any. */
 export const call = async (handler: Handler, request: Request): Promise<CallResult> => {
   const response = await handler(request);
   const text = await response.text();

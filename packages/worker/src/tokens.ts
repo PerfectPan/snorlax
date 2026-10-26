@@ -1,9 +1,7 @@
 /**
- * Device and admin token rules (plan 3.8): device tokens are 32 random bytes in base64url, D1 stores only
- * their SHA-256 hex and lookup goes by hash; the admin token is compared without leaking its value through
- * timing. Everything here uses WebCrypto primitives that exist in both Node 24 and workerd — notably
- * `crypto.subtle.digest` for the digest compare, because `crypto.subtle.timingSafeEqual` exists only in
- * workerd (recorded in plan 6.8, Batch 6).
+ * Device token rules (plan 3.8): device tokens are 32 random bytes in base64url, and D1 stores only their
+ * SHA-256 hex, so lookup goes by hash. Everything here uses WebCrypto primitives that exist in both Node 24
+ * and workerd. The admin token is compared by Hono's `bearerAuth` in `http/app.ts`.
  */
 
 const encoder = new TextEncoder();
@@ -31,17 +29,4 @@ export const generateDeviceToken = (): string => {
     base64 += String.fromCharCode(byte);
   }
   return btoa(base64).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-};
-
-/**
- * Constant-time secret equality: both sides are hashed first, then the two fixed-length digests are
- * compared with no early exit, so timing reveals nothing about either value.
- */
-export const secretsEqual = async (left: string, right: string): Promise<boolean> => {
-  const [leftDigest, rightDigest] = await Promise.all([sha256(left), sha256(right)]);
-  let diff = 0;
-  for (let i = 0; i < leftDigest.length; i += 1) {
-    diff |= leftDigest[i]! ^ rightDigest[i]!;
-  }
-  return diff === 0;
 };

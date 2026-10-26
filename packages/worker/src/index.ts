@@ -1,10 +1,10 @@
 import type { D1Database } from "./db.ts";
-import { createHandler, type Handler } from "./handler.ts";
+import { createApp } from "./http/app.ts";
 
 /**
- * The Workers entry (plan 3.12): the only Workers-specific piece, wiring the bindings and the runtime
- * clock into the handler. `src/handler.ts` and everything it depends on stays runtime-agnostic, so the
- * same handler also runs under plain Node when self-hosting.
+ * The Workers entry (plan 3.12.1): the only Workers-specific file, wiring the bindings and the runtime clock
+ * into the app. `src/http/app.ts` and everything it depends on stays runtime-agnostic, so the same app also
+ * runs under plain Node when self-hosting.
  */
 
 interface Env {
@@ -12,12 +12,12 @@ interface Env {
   readonly ADMIN_TOKEN: string;
 }
 
-let handler: Handler | undefined;
+let app: ReturnType<typeof createApp> | undefined;
 
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
-    // Bindings are fixed for an isolate's lifetime, so the handler and its route patterns are built once.
-    handler ??= createHandler({ db: env.DB, adminToken: env.ADMIN_TOKEN, now: Date.now });
-    return handler(request);
+  fetch(request: Request, env: Env): Response | Promise<Response> {
+    // Bindings are fixed for an isolate's lifetime, so the app and its routes are built once.
+    app ??= createApp({ db: env.DB, adminToken: env.ADMIN_TOKEN, now: Date.now });
+    return app.fetch(request);
   }
 };
