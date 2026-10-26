@@ -136,14 +136,21 @@ describe("PUT /v1/devices/:id/buckets", () => {
     const a = await registerDevice(handler, deviceAId, "Device A");
     const url = `https://snorlax.test/v1/devices/${deviceAId}/buckets`;
 
+    // Both bodies are ten 600 kB chunks, six times the limit. They end, so a missing limit fails these
+    // assertions: draining an endless stream that a pull refills synchronously never yields to the timers,
+    // and the test would hang instead of timing out.
+    const CHUNKS = 10;
+
     // Node adds no Content-Length for a string body, so the header goes on explicitly to lock the
-    // declared-length branch: the request is refused before one byte is read from a body that would
-    // never end.
+    // declared-length branch: the request is refused before one byte is read from the body.
     let declaredReads = 0;
-    const endless = new ReadableStream<Uint8Array>({
+    const declaredBody = new ReadableStream<Uint8Array>({
       pull(controller) {
         declaredReads += 1;
         controller.enqueue(new Uint8Array(600_000).fill(0x20));
+        if (declaredReads === CHUNKS) {
+          controller.close();
+        }
       }
     });
     const declared = await call(
@@ -155,7 +162,7 @@ describe("PUT /v1/devices/:id/buckets", () => {
           "Content-Type": "application/json",
           "Content-Length": "1000001"
         },
-        body: endless,
+        body: declaredBody,
         duplex: "half"
       } as RequestInit)
     );
@@ -165,14 +172,17 @@ describe("PUT /v1/devices/:id/buckets", () => {
     // would mean the handler started consuming, which the declared-length refusal must not do.
     expect(declaredReads).toBeLessThanOrEqual(1);
 
-    // No declared length: the reader cuts the body off as soon as the limit is crossed. The stream
-    // could produce far more than 1 MB, so few pulls prove the connection was cancelled, not drained.
+    // No declared length: reading stops as soon as the limit is crossed. The stream holds far more than
+    // 1 MB, so few pulls prove the body was cut off, not drained.
     let produced = 0;
     const chunk = new Uint8Array(600_000).fill(0x20);
     const oversized = new ReadableStream<Uint8Array>({
       pull(controller) {
         produced += 1;
         controller.enqueue(chunk);
+        if (produced === CHUNKS) {
+          controller.close();
+        }
       }
     });
     const streamed = await call(
@@ -186,8 +196,8 @@ describe("PUT /v1/devices/:id/buckets", () => {
     );
     expect(streamed.status).toBe(413);
     expect(z.parse(httpErrorSchema, streamed.body).error.code).toBe("payload-too-large");
-    // One pull fills the stream's queue, two more cross the limit and cancel: a drained body would
-    // keep producing indefinitely instead of stopping at three.
+    // One pull fills the stream's queue and two more cross the limit: a drained body would be pulled all
+    // ten times instead of stopping at three.
     expect(produced).toBeLessThanOrEqual(3);
   });
 
