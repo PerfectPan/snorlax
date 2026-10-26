@@ -13,8 +13,8 @@ class SnapshotUnreadable extends Data.TaggedError("SnapshotUnreadable")<{ readon
 
 /**
  * The current snapshot, read on every call and never written here — the snapshot file is written by
- * `refresh`. A missing or unreadable snapshot fails the command; reading creates nothing (plan 3.13), so
- * a fresh machine can answer `snapshot` without gaining a data directory.
+ * `refresh` and rewritten by `unpair`. A missing or unreadable snapshot fails the command; reading
+ * creates nothing (plan 3.13), so a fresh machine can answer `snapshot` without gaining a data directory.
  */
 export const snapshotFlow = Effect.gen(function* () {
   const platform = yield* SnorlaxPlatform;

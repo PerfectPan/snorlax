@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { acquireProcessLock } from "@rivus/agent-kit-collab/process-lock";
-import { failureSchema, httpPushRequestSchema, okSchema, pairResultSchema } from "@rivus/snorlax-protocol";
+import {
+  failureSchema,
+  httpPushRequestSchema,
+  okSchema,
+  pairResultSchema,
+  snapshotOutputSchema
+} from "@rivus/snorlax-protocol";
 import { createApp } from "@rivus/snorlax-worker";
 import { createSqliteD1 } from "@rivus/snorlax-worker/sqlite-d1";
 import { Duration, Effect, Fiber, Layer } from "effect";
@@ -664,6 +670,40 @@ describe("unpair", () => {
       expect(
         calls.some((call) => call.stdin.includes("delete-generic-password") && call.argv.slice(2).join(" ") === "-i")
       ).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("rewrites the snapshot so it is unpaired and lists only this device", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      const registered = await harness.fetchImpl(
+        new Request(`${BASE}/v1/devices`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" },
+          body: JSON.stringify({ deviceId: PLANT, name: "Planted" })
+        })
+      );
+      expect(registered.status).toBe(201);
+      const paired = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(paired.exitCode).toBe(0);
+      const before = await harness.run(["snapshot", "--json"]);
+      expect(before.exitCode).toBe(0);
+      const beforeSnapshot = z.parse(snapshotOutputSchema, JSON.parse(before.stdout)).snapshot;
+      expect(beforeSnapshot.status.paired).toBe(true);
+      expect(beforeSnapshot.byDevice.some((device) => device.deviceId === PLANT && !device.isThisDevice)).toBe(true);
+
+      const text = await harness.run(["unpair"]);
+      expect(text.exitCode).toBe(0);
+      const printed = await harness.run(["snapshot", "--json"]);
+      expect(printed.exitCode).toBe(0);
+      const snapshot = z.parse(snapshotOutputSchema, JSON.parse(printed.stdout)).snapshot;
+      expect(snapshot.status.paired).toBe(false);
+      expect(snapshot.status.sync).toEqual({ state: "unpaired", at: null });
+      expect(snapshot.byDevice.map((device) => device.deviceId)).toEqual([deviceIdOf(harness.setup.dataDir)]);
+      expect(snapshot.byDevice.every((device) => device.isThisDevice)).toBe(true);
     } finally {
       await harness.close();
     }
