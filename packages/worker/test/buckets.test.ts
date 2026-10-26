@@ -11,7 +11,7 @@ import {
   deviceBId,
   jsonRequest,
   registerDevice
-} from "./support.ts";
+} from "./fixtures/backend.ts";
 
 /**
  * The bucket endpoints of plan 3.2.4: absolute-value upserts, server-assigned sequence numbers that

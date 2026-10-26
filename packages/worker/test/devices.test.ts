@@ -22,7 +22,7 @@ import {
   deviceBId,
   jsonRequest,
   registerDevice
-} from "./support.ts";
+} from "./fixtures/backend.ts";
 
 /**
  * Device ownership (Spec R11, S9): only the owning device's token writes, a revoked device's later

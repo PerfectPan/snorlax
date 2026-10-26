@@ -2,8 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { DatabaseSync } from "node:sqlite";
 import * as z from "zod/mini";
 
-import { applyMigrations, createTestBackend } from "./support.ts";
-import { SqliteD1Error, createSqliteD1 } from "../src/sqlite-d1.ts";
+import { applyMigrations, createTestBackend } from "../test/fixtures/backend.ts";
+import { SqliteD1Error, createSqliteD1 } from "./sqlite-d1.ts";
 
 const countRows = (database: DatabaseSync, table: "devices" | "buckets"): number =>
   z.parse(z.object({ n: z.int() }), database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).n;

@@ -143,21 +143,8 @@ const schemas: Readonly<Record<string, z.core.$ZodType>> = {
   "pair-result": protocol.pairResultSchema,
   status: protocol.statusSchema,
   doctor: protocol.doctorSchema,
-  "uninstall-result": protocol.uninstallResultSchema,
-  // HTTP wire shapes (plan 3.2.4); generate-swift.ts skips them because the app has no HTTP client.
-  "http-bucket": protocol.strictBucketSchema,
-  "http-device": protocol.httpDeviceSchema,
-  "http-devices-response": protocol.httpDevicesResponseSchema,
-  "http-device-register-request": protocol.httpDeviceRegisterRequestSchema,
-  "http-device-register-response": protocol.httpDeviceRegisterResponseSchema,
-  "http-push-request": protocol.httpPushRequestSchema,
-  "http-push-response": protocol.httpPushResponseSchema,
-  "http-pull-response": protocol.httpPullResponseSchema,
-  "http-health-response": protocol.httpHealthResponseSchema,
-  "http-error": protocol.httpErrorSchema
+  "uninstall-result": protocol.uninstallResultSchema
 };
-
-const sampleDeviceToken = "M6y7wQ5x1nBv3zR8kLp0aDf2gHj4mNq9sTuCvWxYzAb";
 
 const fixtures: Readonly<Record<string, unknown>> = {
   bucket: sampleBucket,
@@ -185,40 +172,7 @@ const fixtures: Readonly<Record<string, unknown>> = {
   },
   status: sampleStatus,
   doctor: sampleDoctor,
-  "uninstall-result": { schemaVersion: 1, ok: true, keptEntries: ["logs/notes.txt", "photos"] },
-  "http-bucket": sampleBucket,
-  "http-device": {
-    id: "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
-    name: "MacBook Pro",
-    lastPushAt: "2026-10-23T02:35:11.901Z",
-    revoked: false
-  },
-  "http-devices-response": {
-    devices: [
-      {
-        id: "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
-        name: "MacBook Pro",
-        lastPushAt: "2026-10-23T02:35:11.901Z",
-        revoked: false
-      },
-      {
-        id: "0b2a4d6c-8e9f-4a1b-b3c5-d7e9f0a1b2c3",
-        name: "Mac mini",
-        lastPushAt: null,
-        revoked: true
-      }
-    ]
-  },
-  "http-device-register-request": {
-    deviceId: "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
-    name: "MacBook Pro"
-  },
-  "http-device-register-response": { deviceToken: sampleDeviceToken },
-  "http-push-request": { buckets: [sampleBucket] },
-  "http-push-response": { seq: 9 },
-  "http-pull-response": { buckets: [sampleBucket], next: null },
-  "http-health-response": { ok: true },
-  "http-error": { error: { code: "unauthorized", message: "unknown or revoked token" } }
+  "uninstall-result": { schemaVersion: 1, ok: true, keptEntries: ["logs/notes.txt", "photos"] }
 };
 
 async function writeGenerated(subdir: string, documents: Readonly<Record<string, unknown>>): Promise<number> {

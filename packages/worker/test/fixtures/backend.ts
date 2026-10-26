@@ -6,9 +6,9 @@ import { DatabaseSync } from "node:sqlite";
 import { httpDeviceRegisterResponseSchema, type Bucket } from "@rivus/snorlax-protocol";
 import * as z from "zod/mini";
 
-import type { Handler } from "../src/handler.ts";
-import { createHandler } from "../src/handler.ts";
-import { createSqliteD1 } from "../src/sqlite-d1.ts";
+import type { Handler } from "../../src/handler.ts";
+import { createHandler } from "../../src/handler.ts";
+import { createSqliteD1 } from "../../src/sqlite-d1.ts";
 
 /**
  * Builds the handler over an in-memory SQLite database whose schema is the committed D1 migration, with
@@ -18,7 +18,7 @@ import { createSqliteD1 } from "../src/sqlite-d1.ts";
 export const ADMIN_TOKEN = "test-admin-token-do-not-use";
 export const NOW_MS = Date.UTC(2026, 9, 26, 12, 0, 0);
 
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export const applyMigrations = (database: DatabaseSync): void => {
   database.exec(readFileSync(join(packageRoot, "migrations", "0001_init.sql"), "utf8"));
