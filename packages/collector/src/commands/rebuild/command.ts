@@ -1,13 +1,15 @@
+import type { RefreshResult } from "@rivus/snorlax-protocol";
 import { Flag } from "effect/cli";
 import { Data, Effect } from "effect";
 
+import { syncLine } from "../../core/sync-text/sync-text.ts";
 import { rebuildFlow, REBUILD_MAX_DAYS, REBUILD_MIN_DAYS } from "./flow.ts";
 
 /** `--days` parsed as a whole number outside `REBUILD_MIN_DAYS`–`REBUILD_MAX_DAYS`. */
 class RebuildDaysOutOfRange extends Data.TaggedError("RebuildDaysOutOfRange")<{ readonly message: string }> {}
 
-const humanSummary = (days: number, records: number, failures: number): string =>
-  `rebuilt the last ${days} days: ${records} records, ${failures} failures\nsync: not paired\n`;
+const humanSummary = (days: number, result: RefreshResult): string =>
+  `rebuilt the last ${days} days: ${result.records} records, ${result.failures} failures\n${syncLine(result.sync)}\n`;
 
 /** `snorlax rebuild --days <n>` (plan 3.1, 3.4.3): zero and rescan the last n days; 1 ≤ n ≤ 30. */
 export const rebuildCommand = {
@@ -26,6 +28,6 @@ export const rebuildCommand = {
         });
       }
       const { result } = yield* rebuildFlow(days);
-      return { payload: result, human: humanSummary(days, result.records, result.failures) };
+      return { payload: result, human: humanSummary(days, result) };
     })
 };

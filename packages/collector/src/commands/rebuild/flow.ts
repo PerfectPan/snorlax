@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 
+import { pairedSync } from "../../capabilities/backend/backend.ts";
 import { ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { scanAndCommit, type ScanRun } from "../../modules/ledger/ledger.ts";
 import { appendingLogger } from "../../modules/log/log.ts";
@@ -48,5 +49,6 @@ export const rebuildFlow = (days: number) =>
     const dataDir = resolveDataDir(platform);
     yield* ensureDataDir(platform, nodeFiles, dataDir);
     const log = appendingLogger(platform, nodeFiles, dataDir);
-    return yield* scanAndCommit({ platform, dataDir, log, timeZone: yield* TimeZone }, rebuildScan(days));
+    const sync = yield* pairedSync({ platform, dataDir });
+    return yield* scanAndCommit({ platform, dataDir, log, timeZone: yield* TimeZone, sync }, rebuildScan(days));
   });

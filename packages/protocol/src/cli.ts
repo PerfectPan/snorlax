@@ -36,6 +36,7 @@ export type FailureCode =
   | "keychain"
   | "network"
   | "unauthorized"
+  | "conflict"
   | "forbidden"
   | "invalid-response"
   | "pricing"
@@ -80,8 +81,14 @@ export const refreshResultSchema = z.object({
   failures: nonNegativeIntSchema,
   sync: z.object({
     ok: z.boolean(),
+    state: syncStateSchema,
     pushed: nonNegativeIntSchema,
-    pulled: nonNegativeIntSchema
+    pulled: nonNegativeIntSchema,
+    /**
+     * Plain-text reason for `failed` or `revoked`, and for `unpaired` when the store program is missing.
+     * Omitted when the sync has nothing to explain.
+     */
+    message: z.optional(z.string())
   })
 });
 export type RefreshResult = z.output<typeof refreshResultSchema>;

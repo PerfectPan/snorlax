@@ -3,12 +3,13 @@ import { Effect } from "effect";
 import { doctorFlow } from "./flow.ts";
 
 /**
- * `snorlax doctor` (plan 3.1): local checks — Node version, data directory, config and the scheduled
- * refresh. The command exits 0 whenever it completes; `healthy` reports whether any check failed.
+ * `snorlax doctor` (plan 3.1): Node version, data directory, config, the scheduled refresh, and, when
+ * paired, the keychain and the backend. The command exits 0 whenever it completes; `healthy` reports
+ * whether any check failed.
  */
 export const doctorCommand = {
   name: "doctor",
-  description: "local checks: node version, data directory, config, scheduled refresh",
+  description: "checks: node, data directory, config, schedule, and the backend when paired",
   flags: {},
   run: () =>
     Effect.map(doctorFlow, (payload) => ({

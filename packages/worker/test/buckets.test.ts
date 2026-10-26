@@ -69,7 +69,7 @@ describe("PUT /v1/devices/:id/buckets", () => {
     const after = await pull(handler, b.token, "?after=2");
     expect(z.parse(httpPullResponseSchema, after.body)).toEqual({
       buckets: [bucketFixture(deviceAId, { hour: HOUR, requests: 100 })],
-      next: null
+      next: 3
     });
   });
 
@@ -265,7 +265,7 @@ describe("PUT /v1/devices/:id/buckets", () => {
 });
 
 describe("GET /v1/buckets", () => {
-  it("pulls every bucket in seq order with next null when fewer than the limit remain", async () => {
+  it("pulls every bucket in seq order and returns the last seq on a short page", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");
     const b = await registerDevice(handler, deviceBId, "Device B");
@@ -282,7 +282,7 @@ describe("GET /v1/buckets", () => {
         bucketFixture(deviceAId, { hour: HOUR + 3600, agent: "codex", requests: 2 }),
         bucketFixture(deviceBId, { hour: HOUR, agent: "grok", requests: 3 })
       ],
-      next: null
+      next: 3
     });
   });
 
@@ -298,7 +298,11 @@ describe("GET /v1/buckets", () => {
 
     const second = z.parse(httpPullResponseSchema, (await pull(handler, a.token, "?after=2&limit=2")).body);
     expect(second.buckets.map((bucket) => bucket.hour)).toEqual([7200]);
-    expect(second.next).toBeNull();
+    expect(second.next).toBe(3);
+
+    const done = z.parse(httpPullResponseSchema, (await pull(handler, a.token, "?after=3&limit=2")).body);
+    expect(done.buckets).toEqual([]);
+    expect(done.next).toBeNull();
   });
 
   it("defaults to 1000 rows and rejects out-of-range or non-integer query values", async () => {
@@ -307,7 +311,7 @@ describe("GET /v1/buckets", () => {
     for (let hour = 0; hour < 3; hour += 1) {
       await push(handler, a.token, [bucketFixture(deviceAId, { hour: hour * 3600 })]);
     }
-    expect((await pull(handler, a.token)).body).toMatchObject({ next: null });
+    expect((await pull(handler, a.token)).body).toMatchObject({ next: 3 });
 
     for (const query of [
       "?limit=0",

@@ -1,17 +1,20 @@
-import { Data, Effect } from "effect";
+import type { Ok } from "@rivus/snorlax-protocol";
+import { Effect } from "effect";
 
-/** This build has no pairing to remove. */
-class UnpairNotImplemented extends Data.TaggedError("UnpairNotImplemented")<{ readonly message: string }> {}
+import { unpairFlow } from "./flow.ts";
 
-/** Unpairing arrives with Batch 7 (plan 3.1). */
+const HUMAN =
+  "local data is kept\n" +
+  "if this device was registered, the backend still lists it until it is revoked with the admin token\n";
+
+/** `snorlax unpair` (plan 3.1): drop the local pairing. The backend keeps the device until an admin revoke. */
 export const unpairCommand = {
   name: "unpair",
-  description: "remove the backend pairing; arrives with Batch 7",
+  description: "remove the local pairing; the backend device stays until it is revoked",
   flags: {},
   run: () =>
-    Effect.fail(
-      new UnpairNotImplemented({
-        message: "snorlax unpair is not implemented in this build; it arrives with Batch 7"
-      })
-    )
+    Effect.map(unpairFlow, (notice) => ({
+      payload: { schemaVersion: 1, ok: true } satisfies Ok,
+      human: notice === undefined ? HUMAN : `${HUMAN}${notice}\n`
+    }))
 };

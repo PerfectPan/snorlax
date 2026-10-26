@@ -96,5 +96,8 @@ snorlax data directory is not deleted, and the timer is left loaded.
 
 ## Pairing
 
-Pairing on Linux needs `secret-tool` (libsecret), which stores the device token. The pairing guide arrives with
-Batch 8b of the plan.
+Pairing on Linux needs `secret-tool` (libsecret), which stores the device token. If `secret-tool` is not
+installed, a token stored earlier cannot be read or deleted. `unpair` and `uninstall --data` still complete,
+and they say the program could not be found and that a stored token was not deleted. A refresh reports the
+device as not paired and includes that reason. `doctor` says the same. `pair` still needs `secret-tool` to
+store the token. The pairing guide arrives with Batch 8b of the plan.

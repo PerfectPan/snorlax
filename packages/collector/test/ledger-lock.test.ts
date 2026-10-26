@@ -18,6 +18,7 @@ import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts"
 import { appendClaudeRequests, quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
 import { readLedger, rebuildRun, refreshRun, runRebuild, runRefresh, type RunDeps } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup, type TestPlatform } from "./fixtures/platform.ts";
+import { offlineCapabilities } from "./fixtures/capabilities.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
@@ -545,7 +546,8 @@ describe("a held lock", () => {
             stderr: { write: () => undefined },
             colors: false
           })
-        )
+        ),
+        offlineCapabilities
       );
       const exit = await Effect.runPromise(
         Effect.gen(function* () {

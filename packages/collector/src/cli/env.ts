@@ -16,5 +16,10 @@ export class CliEnv extends Context.Service<
     readonly stdout: Sink;
     readonly stderr: Sink;
     readonly colors: boolean;
+    /**
+     * The whole stdin, when a test injects it. Absent, `runCli` reads `process.stdin` when `pair` asks for
+     * the admin token. The promise starts only then.
+     */
+    readonly stdin?: string;
   }
 >()("snorlax/cli/CliEnv") {}

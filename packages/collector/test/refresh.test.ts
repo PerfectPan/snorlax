@@ -211,7 +211,7 @@ describe("S1: the first run counts the history", () => {
     // Four of the six agents have no home here; a missing root is detection, not a decode failure.
     expect(outcome.result).toMatchObject({ ok: true, records: 6, failures: 0 });
     expect(outcome.result.scannedAt).toBe(new Date(NOW).toISOString());
-    expect(outcome.result.sync).toEqual({ ok: false, pushed: 0, pulled: 0 });
+    expect(outcome.result.sync).toEqual({ ok: false, state: "unpaired", pushed: 0, pulled: 0 });
 
     expect((await buckets()).map(({ dirty: _dirty, ...row }) => row)).toEqual(expectedS1Buckets());
 
@@ -435,7 +435,9 @@ describe("logging", () => {
       .split("\n")
       .filter((line) => / refresh \{"records":/.test(line))
       .at(-1);
-    expect(refreshLine).toMatch(/"records":\d+,"failures":\d+,"pushed":0,"pulled":0,"durationMs":\d+}/);
+    expect(refreshLine).toMatch(
+      /"records":\d+,"failures":\d+,"pushed":0,"pulled":0,"sync":"unpaired","durationMs":\d+}/
+    );
   });
 });
 
@@ -518,7 +520,12 @@ describe("bundled CLI end to end", () => {
       expect(refreshed.stderr).toBe("");
       expect(refreshed.status).toBe(0);
       const result: unknown = JSON.parse(refreshed.stdout);
-      expect(result).toMatchObject({ ok: true, records: 3, failures: 0, sync: { ok: false, pushed: 0, pulled: 0 } });
+      expect(result).toMatchObject({
+        ok: true,
+        records: 3,
+        failures: 0,
+        sync: { ok: false, state: "unpaired", pushed: 0, pulled: 0 }
+      });
 
       const printed = run(["snapshot", "--json"]);
       expect(printed.status).toBe(0);

@@ -21,7 +21,7 @@ export interface BucketRow {
 /** What a scan adds to one bucket before it is written; `dirty` is always set on write. */
 export type BucketDelta = Omit<BucketRow, "dirty">;
 
-/** One `remote_buckets` row as pulled from the backend; empty until sync arrives (Batch 7). */
+/** One `remote_buckets` row as pulled from the backend. `seq` is the page high-water mark, not a per-row id. */
 export interface RemoteBucketRow extends Omit<BucketRow, "dirty"> {
   readonly deviceId: string;
   readonly seq: number;

@@ -1,19 +1,24 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 
+import { serve, type ServerType } from "@hono/node-server";
 import {
   doctorSchema,
   failureSchema,
   okSchema,
+  pairResultSchema,
   refreshResultSchema,
   uninstallResultSchema
 } from "@rivus/snorlax-protocol";
+import { createApp } from "@rivus/snorlax-worker";
+import { createSqliteD1 } from "@rivus/snorlax-worker/sqlite-d1";
 import * as plist from "plist";
 import * as z from "zod/mini";
 import { Effect } from "effect";
@@ -29,7 +34,16 @@ import {
 import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { resolveDataDir } from "../src/modules/data-dir/data-dir.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
-import { bundle, runBundle, spawnBundle } from "./fixtures/bundle.ts";
+import { bundle, runBundle, runBundleAsync, spawnBundle } from "./fixtures/bundle.ts";
+import { writeSecretStubs } from "./fixtures/secret-stubs.ts";
+
+/**
+ * `bundleEnv` points the host's store tool at a path under the temporary home that is not there.
+ * Redaction prints that home as `~`. A ledger plus `uninstall --data` then says the token was not deleted.
+ */
+const missingStoreNotice =
+  `cannot find ~/${process.platform === "linux" ? "no-secret-tool" : "no-security"}. ` +
+  "If the keychain has this device's token, it was not deleted\n";
 
 /**
  * `install` / `uninstall` against the built bundle under a temporary HOME. `SNORLAX_LAUNCHCTL`
@@ -95,12 +109,39 @@ interface InstallEnv {
   readonly bootstrapPid: string;
 }
 
-const run = (env: InstallEnv, args: readonly string[], overrides?: { readonly snorlaxHome?: string }) =>
+const run = (
+  env: InstallEnv,
+  args: readonly string[],
+  overrides?: {
+    readonly snorlaxHome?: string;
+    readonly input?: string;
+    readonly security?: string;
+    readonly secretTool?: string;
+    readonly extraEnv?: Readonly<Record<string, string>>;
+  }
+) =>
   runBundle(args, {
     home: env.home,
     dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
     launchctl: env.launchctl,
-    os: env.os
+    os: env.os,
+    input: overrides?.input,
+    security: overrides?.security,
+    secretTool: overrides?.secretTool,
+    extraEnv: overrides?.extraEnv
+  });
+
+/** Same as `run`, without blocking the event loop, so an in-process backend can answer `pair` and `refresh`. */
+const runAsync = (env: InstallEnv, args: readonly string[], overrides?: Parameters<typeof run>[2]) =>
+  runBundleAsync(args, {
+    home: env.home,
+    dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
+    launchctl: env.launchctl,
+    os: env.os,
+    input: overrides?.input,
+    security: overrides?.security,
+    secretTool: overrides?.secretTool,
+    extraEnv: overrides?.extraEnv
   });
 
 const writeStub = async (dir: string): Promise<string> => {
@@ -671,7 +712,8 @@ describe("install and uninstall", () => {
       expect(await listFiles(dataDir)).toEqual(["logs/keep.txt"]);
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
-          "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n"
+          "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n" +
+          missingStoreNotice
       );
     });
   });
@@ -902,7 +944,8 @@ describe("install and uninstall", () => {
       // Human output is redacted in cli/, so the data directory is spelled relative to the home.
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
-          "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n"
+          "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n" +
+          missingStoreNotice
       );
       expect(existsSync(join(dataDir, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
@@ -976,6 +1019,89 @@ describe("install and uninstall", () => {
       expect((await readdir(env.home)).sort()).toEqual([...topBefore, "Library", "data"].sort());
     });
   });
+
+  it("S14: install, pair, refresh, and uninstall --data leave agent directories unchanged and delete the keychain item", async () => {
+    const adminToken = "s14-admin-token-not-a-device-token";
+    const migration = readFileSync(
+      fileURLToPath(new URL("../../worker/migrations/0001_init.sql", import.meta.url)),
+      "utf8"
+    );
+    const database = new DatabaseSync(":memory:");
+    database.exec(migration);
+    const app = createApp({ db: createSqliteD1(database), adminToken, now: () => Date.now() });
+    const { server, port } = await new Promise<{ server: ServerType; port: number }>((resolve, reject) => {
+      const started = serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => app.fetch(request) }, (info) =>
+        resolve({ server: started, port: info.port })
+      );
+      started.on("error", reject);
+    });
+    const url = `http://127.0.0.1:${port}`;
+    try {
+      await withInstallHome("darwin", async (env) => {
+        const stubDir = join(env.home, "stub");
+        await mkdir(stubDir);
+        const stubs = await writeSecretStubs(stubDir);
+        const secret = {
+          security: stubs.security,
+          secretTool: stubs.secretTool,
+          extraEnv: { STUB_LOG: stubs.logPath, STUB_STORE: stubs.storePath }
+        };
+        await ensureAgentDirs(env.home);
+        await writeUsageFixtures(env.home);
+        const before = await hashAgentDirs(env.home);
+
+        expect((await runAsync(env, ["install", "--json"], secret)).status).toBe(0);
+        const paired = await runAsync(env, ["pair", "--url", url, "--name", "S14", "--json"], {
+          ...secret,
+          input: `${adminToken}\n`
+        });
+        expect(paired.status, `${paired.stdout}\n${paired.stderr}`).toBe(0);
+        expect(z.parse(pairResultSchema, json(paired.stdout)).name).toBe("S14");
+        expect(paired.stdout).not.toContain(adminToken);
+        expect(paired.stderr).not.toContain(adminToken);
+
+        const refreshed = await runAsync(env, ["refresh", "--json"], secret);
+        expect(refreshed.status).toBe(0);
+        expect(z.parse(refreshResultSchema, json(refreshed.stdout)).ok).toBe(true);
+
+        const removed = await runAsync(env, ["uninstall", "--data", "--json"], secret);
+        expect(removed.status).toBe(0);
+        expect(existsSync(dataDirOf(env.home))).toBe(false);
+        expect(await hashAgentDirs(env.home)).toBe(before);
+
+        const secretCalls = z.array(z.object({ argv: z.array(z.string()), stdin: z.string() })).parse(
+          (await readFile(stubs.logPath, "utf8"))
+            .split("\n")
+            .filter((line) => line !== "")
+            .map((line) => JSON.parse(line))
+        );
+        const stored = secretCalls.some(
+          (call) => call.stdin.includes("add-generic-password") || call.argv.includes("store")
+        );
+        const deleted = secretCalls.some(
+          (call) => call.stdin.includes("delete-generic-password") || call.argv.includes("clear")
+        );
+        expect(stored).toBe(true);
+        expect(deleted).toBe(true);
+        for (const call of secretCalls) {
+          for (const arg of call.argv) {
+            expect(arg).not.toContain(adminToken);
+          }
+          expect(call.stdin).not.toContain(adminToken);
+        }
+        const storeText = existsSync(stubs.storePath) ? await readFile(stubs.storePath, "utf8") : "{}";
+        expect(z.parse(z.record(z.string(), z.string()), JSON.parse(storeText))).toEqual({});
+      });
+    } finally {
+      if ("closeAllConnections" in server) {
+        server.closeAllConnections();
+      }
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      database.close();
+    }
+  }, 60_000);
 
   it("fails on win32 without creating the data directory", async () => {
     const home = await mkdtemp(join(tmpdir(), "snorlax-win32-"));
@@ -1419,7 +1545,8 @@ describe("systemd user timer", () => {
       expect(removed.status).toBe(0);
       expect(removed.stdout).toBe(
         "systemd user timer removed\n" +
-          "the data directory ~/data is kept; entries snorlax did not write remain: photo.jpg\n"
+          "the data directory ~/data is kept; entries snorlax did not write remain: photo.jpg\n" +
+          missingStoreNotice
       );
       expect(removed.stdout).not.toContain("LaunchAgent");
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
