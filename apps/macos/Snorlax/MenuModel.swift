@@ -17,8 +17,10 @@ final class MenuModel: ObservableObject {
     @Published private(set) var deviceName = "…"
     @Published private(set) var diagnostics: Doctor?
     @Published private(set) var diagnosticsError: String?
+    /// `snapshot.status`. Settings uses it for paired, sync state, and last sync.
+    @Published private(set) var snapshotStatus: SnapshotStatus?
 
-    let deviceNameNote = "No collector command changes the device name yet. Pairing sets it in a later batch."
+    let deviceNameNote = "Shown from snorlax status. Pairing sets the name; this field does not edit it."
     let timeZoneHelp =
         "Days follow the time zone recorded in the snapshot. A bucket belongs to the local day that contains its UTC hour. In a time zone whose offset is not a whole number of hours, that assignment is an approximation."
 
@@ -27,18 +29,28 @@ final class MenuModel: ObservableObject {
     private let watcher: SnapshotWatcher
     private let reloader: WidgetCenterReloader
     private var publisher: AppGroupSnapshotPublisher?
+    let pairing: PairingModel
 
     init() {
         let directory = DataDirectory.resolve()
         dataDirectory = directory
-        client = CollectorClient(executable: CollectorBundle.launcherURL())
+        let client = CollectorClient(executable: CollectorBundle.launcherURL())
+        self.client = client
         reloader = WidgetCenterReloader()
         let watcher = SnapshotWatcher(scheduler: DispatchWatchScheduler())
         self.watcher = watcher
+        let pairing = PairingModel(client: client)
+        self.pairing = pairing
         watcher.setHandler { [weak self] in
             Task { @MainActor in
                 self?.reloadSnapshot()
             }
+        }
+        pairing.refreshSnapshot = { [weak self] in
+            guard let self else { return nil }
+            self.reloadSnapshot()
+            await self.reloadDeviceName()
+            return self.snapshotStatus
         }
         Task { bootstrap() }
     }
@@ -50,6 +62,7 @@ final class MenuModel: ObservableObject {
             summary = nil
             menuTitle = "Snorlax"
             loadError = nil
+            snapshotStatus = nil
             noteContainer()
             return
         }
@@ -60,11 +73,13 @@ final class MenuModel: ObservableObject {
             summary = next
             menuTitle = next.menuTitle
             loadError = nil
+            snapshotStatus = snapshot.status
             publish(data)
         } catch {
             summary = nil
             menuTitle = "Snorlax"
             loadError = Presenter.message(for: error)
+            snapshotStatus = nil
             noteContainer()
         }
     }
@@ -85,15 +100,17 @@ final class MenuModel: ObservableObject {
     }
 
     func loadDeviceName() {
-        Task {
-            do {
-                let status = try await client.run(["status"], as: Status.self)
-                let name = status.device.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                deviceName = name.isEmpty ? "Unnamed" : name
-            } catch {
-                deviceName = "Unavailable"
-                diagnosticsError = Presenter.message(for: error)
-            }
+        Task { await reloadDeviceName() }
+    }
+
+    private func reloadDeviceName() async {
+        do {
+            let status = try await client.run(["status"], as: Status.self)
+            let name = status.device.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            deviceName = name.isEmpty ? "Unnamed" : name
+        } catch {
+            deviceName = "Unavailable"
+            diagnosticsError = Presenter.message(for: error)
         }
     }
 

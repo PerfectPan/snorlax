@@ -77,6 +77,16 @@ exists. For each package:
 3. Under **Publishing access**, select "Require two-factor authentication and disallow tokens" so that only the
    trusted workflow can publish.
 
+`@rivus/snorlax` (`packages/collector`) is the only package this repository publishes. `@rivus/snorlax-protocol`
+and `@rivus/snorlax-worker` are private: they need no trusted publisher and no placeholder release. The
+`versioning.fixed` group lists that same one name.
+
+The workflow filename in the form is `publish-npm.yml`, the file `.github/workflows/publish-npm.yml`. Its
+`publish` job sets `permissions.id-token: write` (that permission is the OIDC token the exchange requires) and
+sets no `environment:`, which is why the form's environment stays empty. The job does not read `NPM_TOKEN` or
+`NODE_AUTH_TOKEN`. A form whose workflow filename or environment does not match this file fails the exchange even
+after the placeholder publish.
+
 One package's trusted publisher does not authorize another. A publish for an unconfigured package fails with an
 authentication error for that package only.
 
