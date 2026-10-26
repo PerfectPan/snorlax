@@ -1,8 +1,8 @@
 # Plan 0001: snorlax
 
 - Status: accepted (owner decisions recorded 2026-10-22 to 2026-10-26). Milestones 1 and 2 are merged and
-  accepted. Milestone 3 starts with Batch 6 on Cloudflare's `cf` CLI (D13) and needs the owner's Cloudflare
-  account (6.1)
+  accepted. Milestone 3 starts with Batch 6 on Cloudflare's `cf` CLI (D13); Batch 6b reworks that Worker on Hono
+  in layers (D14, 3.12.1) on the same PR before it merges. Milestone 3 needs the owner's Cloudflare account (6.1)
 - Owner: PerfectPan
 - Reviewer: unconfirmed
 - Last updated: 2026-10-26
@@ -119,6 +119,7 @@ this Mac
 | D11 | GPL-3.0-only | MIT | Repository convention for applications. |
 | D12 | The collector CLI is built on `effect/cli` (Effect 4); flows are written in Effect and external capabilities are Effect services; pure rules stay plain TypeScript (3.13) | An own `node:util` `parseArgs` dispatcher; citty | Layers build a service only when a command uses it, so read-only commands such as `doctor` cause no side effects; the typed error channel ties every failure to a `FailureCode`; test layers and `TestClock` cover the injected-clock rule; agent-kit already ships Effect 4 entries (`PlatformService`, `NodePlatformLive`). `effect/cli` is marked unstable, so `effect` is pinned to the exact version agent-kit's peer names and both are upgraded together. Owner decision. |
 | D13 | The Worker is configured, run locally and deployed with Cloudflare's `cf` CLI (`cloudflare.config.ts`), with Wrangler as the bundler `cf` delegates to (3.12) | Wrangler alone with `wrangler.jsonc`; `cf` with Vite and the Cloudflare Vite plugin 2.0 beta | Owner decision to use `cf`, which takes over from Wrangler as Cloudflare's CLI. In this workspace `vite` is the vite-plus core alias, which has no `vite` executable, so on the Vite route `cf build` ran `npx vite build` with a Vite fetched outside the lockfile (checked 2026-10-26); builds would have to go through `vp build` plus `cf deploy --prebuilt`, the plugin's `vite` peer is met only through `allowAny`, and the plugin starts the Workers runtime under `vp test`. With Wrangler declared in the package, `cf dev`, `cf build` and `cf deploy` work as documented, and the Worker's `vite.config.ts` stays the lint, format and test config every package has. |
+| D14 | The Worker's HTTP entry is a Hono app, and the code splits into that entry, use cases per domain (`devices`, `buckets`) and each domain's SQL store (3.12.1) | One plain `fetch` handler with `URLPattern` routes (Batch 6's first version); folders named `controllers/`, `models/` and `views/`; DDD aggregates, repositories and domain events | The first version hand-wrote what Hono ships (routing, a streaming body limit, bearer parsing, a constant-time compare, one error funnel) and mixed HTTP parsing, rules and SQL in one 340-line file whose rules raised HTTP error codes. In MVC terms the Hono routes are the controllers, the use cases with their stores are the model, and the protocol's HTTP shapes are the view; folders are named by domain so one change stays in one folder, and the view stays in `packages/protocol`, shared with the collector. DDD's aggregate cycle (load, change, save) is a read-then-write, the race Batch 6's registration fix removed: the invariants here hold because each is one atomic statement or batch, and a repository interface would have one implementation behind the D1 subset, which already abstracts the database. Owner decision. |
 
 ## 3. Detailed design
 
@@ -199,7 +200,9 @@ approximation, stated in the app's help). Day boundaries use `date-fns` with `@d
 
 1. `packages/protocol` defines every interface above and in 3.2.4 with `zod/mini`. The collector and the Worker
    parse with these schemas at their boundaries; object schemas reject unknown keys on HTTP request bodies.
-2. Its build exports JSON Schema files with `z.toJSONSchema` to `packages/protocol/schema/*.json` (committed).
+2. Its build exports JSON Schema files with `z.toJSONSchema` to `packages/protocol/schema/*.json` (committed) for the
+   shapes the app decodes: the snapshot and the CLI outputs. The HTTP bodies are not exported, because the app has no
+   HTTP client (2.1) and the collector and the Worker use the zod schemas directly.
 3. `quicktype` (a devDependency of `packages/protocol`) generates Swift `Codable` types from those files into
    `apps/macos/SnorlaxKit/Sources/SnorlaxKit/Generated/` (committed).
 4. CI fails when regeneration changes either output. Swift tests decode the sample snapshot and CLI outputs that the
@@ -220,6 +223,19 @@ All bodies are JSON. Authentication is `Authorization: Bearer <token>`.
 
 Errors: `400` invalid body, `401` missing, unknown or revoked token, `403` device token used for another device's
 path, `404` unknown route. Error bodies are `{ "error": { "code", "message" } }`.
+
+Request rules, which a replacement backend keeps and the collector's client (Batch 7) follows:
+
+- A request body is sent with `Content-Type: application/json`; without it the request is 400 `invalid-body`,
+  however valid the body.
+- A query parameter given more than once is 400 `invalid-body`.
+- The scheme name `Bearer` matches case-insensitively. A token is RFC 6750 `b64token` characters
+  (`[A-Za-z0-9._~+/-]+=*`); device tokens are base64url, so they qualify. A header of any other form is 401.
+- A 401 may carry `WWW-Authenticate: Bearer …`: the Worker sends it for a missing or malformed header and a wrong
+  admin token, not for an unknown or revoked device token. Clients read the status and the error body only.
+- A push to another device's path is checked after its body is validated, so an invalid or oversized body there
+  answers 400 or 413 before 403.
+- `HEAD` on a `GET` route answers like `GET` without a body; it is not part of the interface.
 
 Any backend that implements these endpoints with the same token rules and sequence semantics (3.5) can replace the
 Worker; the collector only needs its URL. Inside the collector, `SyncBackend` has two implementations: the HTTP
@@ -416,8 +432,12 @@ backend rows. `n` is capped at 30 because Claude Code deletes older logs by defa
 
 - Uploads contain only bucket fields (R10); the protocol schemas are strict, and S15 checks it.
 - Device tokens: 32 random bytes, base64url; D1 stores SHA-256 hex; lookup by hash. The admin token is the Worker
-  secret `ADMIN_TOKEN`, compared with `crypto.subtle.timingSafeEqual`, and is only sent by `pair` and revocation.
-  The owner uploads it with `cf deploy --secrets-file` (3.12), never as a command-line argument.
+  secret `ADMIN_TOKEN`, compared by Hono's `bearerAuth` with its `timingSafeEqual` (3.12.1), which runs on Node too —
+  `crypto.subtle.timingSafeEqual` exists only in workerd. It hashes both sides with SHA-256 and compares the two
+  digests and the two raw strings, each in a loop over the longer string with no early exit, so timing can reveal
+  only whether a guess is longer than the token; the generated token's length (64 characters, 3.12) is public
+  anyway. The admin token is only sent by `pair` and revocation. The owner uploads it with
+  `cf deploy --secrets-file` (3.12), never as a command-line argument.
 - The data directory is mode 0700; `config.json` holds no secrets.
 - Logs and `doctor` output pass through `redactText` from `@rivus/agent-kit/redact` so home paths and secret-shaped
   strings are hidden.
@@ -504,10 +524,10 @@ spellings.
 
 ### 3.12 Worker
 
-- `packages/worker` (`@rivus/snorlax-worker`, private): a plain `fetch` handler with `URLPattern` routes, no
-  framework. The handler takes `{ db, adminToken }` where `db` is the subset of `D1Database` it uses (`prepare`,
-  `bind`, `first`, `all`, `run`, `batch`), declared in the package, so neither the handler nor its tests need the
-  Workers runtime types.
+- `packages/worker` (`@rivus/snorlax-worker`, private): a Hono app (D14) built by `createApp({ db, adminToken, now })`,
+  where `db` is the subset of `D1Database` it uses (`prepare`, `bind`, `first`, `all`, `run`, `batch`), declared in
+  the package, and `now` an injected clock, so neither the app nor its tests need the Workers runtime types. Code
+  structure in 3.12.1.
 - Request bodies over 1 MB are rejected with 413. A push validates every row with the protocol schema before any
   write.
 - Toolchain (D13): `cf` and `wrangler` are devDependencies of the package, pinned exactly in the catalog to the
@@ -521,14 +541,16 @@ spellings.
   release yet and is not adopted. The collector's `engines` (`>= 22.13`, the Node that runs the published CLI) does
   not change.
 - `cloudflare.config.ts` returns its configuration from a function of `--mode`. `--mode production` reads the D1
-  database id from `SNORLAX_D1_DATABASE_ID` and the custom domain from `SNORLAX_DOMAIN` and throws when either is
-  missing, so no account's ids or domain are committed; it publishes on that domain with `workersDev: false`
-  (6.1). Any other mode, including `cf dev`'s, binds a fixed local database id, because the local D1 commands
+  database id from `SNORLAX_D1_DATABASE_ID` and throws without it, so no account's ids or domain are committed.
+  With `SNORLAX_DOMAIN` set it publishes on that custom domain with `workersDev: false`; without it, on the
+  Worker's `workers.dev` URL (`workersDev: true`), which is where the owner deploys first (owner, 2026-10-27).
+  `*.workers.dev` often does not resolve from mainland China (6.1), so a device on such a network needs a custom
+  domain later; a redeploy with `SNORLAX_DOMAIN` moves the Worker, and each device then pairs again. Any other mode, including `cf dev`'s, binds a fixed local database id, because the local D1 commands
   accept only an id. `ADMIN_TOKEN` is declared with `bindings.secret()`; `cf dev` reads it from `.dev.vars`.
 - Migrations live in `packages/worker/migrations/` (the default `--dir`) and are applied with
   `cf d1 migrations apply <database id>`; adding `--local --persist-to .wrangler/state` applies them to the state
   `cf dev` uses. The bookkeeping table is Wrangler's `d1_migrations`, so Wrangler can apply later migrations too.
-- Tests run the handler against an adapter that implements the D1 subset over `node:sqlite` (a `batch` is one
+- Tests run the app (`app.fetch`) against an adapter that implements the D1 subset over `node:sqlite` (a `batch` is one
   `BEGIN … COMMIT`), under `vp test` like the other packages. The Workers Vitest integration is not used:
   `@cloudflare/vitest-pool-workers` 0.23.0 needs vitest 4, and vite-plus 1.3.0 ships vitest 5. The smoke test
   below covers the difference between Node and the Workers runtime.
@@ -539,10 +561,60 @@ spellings.
   PR.
 - Deployment (owner), from `packages/worker` after `cf auth login` (`cf` does not reuse Wrangler's login):
   `cf d1 create --name snorlax --read-replication-mode disabled` once, `cf d1 migrations apply <id>`, then
-  `SNORLAX_D1_DATABASE_ID=<id> SNORLAX_DOMAIN=<domain> pnpm exec cf deploy --mode production --secrets-file <file>`,
-  where `<file>` holds `ADMIN_TOKEN`, sits outside the repository with mode 0600, and is deleted afterwards. `cf`
-  cannot set a single secret yet, and `cf workers secrets update` would take the value as an argument. Whether a
-  later deploy without `--secrets-file` keeps the secret is checked on the second deploy (section 7).
+  `SNORLAX_D1_DATABASE_ID=<id> [SNORLAX_DOMAIN=<domain>] pnpm exec cf deploy --mode production --secrets-file <file>`,
+  where `<file>` holds `ADMIN_TOKEN`, sits outside the repository with mode 0600, and is deleted afterwards. The
+  owner generates the token with `openssl rand -hex 32`: 64 hex characters, which are RFC 6750 token characters
+  (3.2.4); a token with any other character makes every admin call 401. `cf` cannot set a single secret yet, and
+  `cf workers secrets update` would take the value as an argument. Whether a later deploy without `--secrets-file`
+  keeps the secret is checked on the second deploy (section 7).
+
+### 3.12.1 Worker code structure
+
+```text
+packages/worker/src/
+  index.ts           Workers entry: builds the app once per isolate from env.DB, env.ADMIN_TOKEN and Date.now
+  http/
+    app.ts           createApp: routes (3.2.4), middleware, validation, the error funnel
+    failures.ts      the table from every use-case error `_tag` to an HTTP status and error code
+  devices/
+    devices.ts       use cases: register, revoke, list, authenticate a device token; the devices errors
+    store.ts         SQL on `devices`
+  buckets/
+    buckets.ts       use cases: push (a device writes only its own rows), pull (cursor); the buckets errors
+    store.ts         SQL on `buckets`, including the push batch's `devices.last_push_at` update (3.3.3)
+  tokens.ts          device token generation and hashing (3.8)
+  db.ts              the D1 subset
+  sqlite-d1.ts       the D1 subset over node:sqlite (tests, and a later self-hosted server)
+```
+
+In MVC terms (D14), `http/` holds the controllers, each domain folder the model, and `packages/protocol/src/http.ts`
+the view. Rules, checked by `test/structure.test.ts` where they are about imports:
+
+1. Imports go one way: `index.ts` → `http/` → `devices/`, `buckets/` → `tokens.ts`, `db.ts`. Only `http/` and
+   `index.ts` import `hono` or `@hono/*`; nothing under `devices/` or `buckets/` imports `http/`; the two domain
+   folders do not import each other; a `store.ts` is imported only by its own folder's use-case file and by tests.
+2. HTTP stays in `http/`: the `Authorization` header, status codes, the `{ error: { code, message } }` body, the
+   1 MB limit, and validation of bodies and queries with the protocol schemas. Use cases take parsed values and the
+   authenticated device, return plain results, and throw their own errors.
+3. Errors belong to their domain. Each use-case file declares classes with a literal `_tag` that say what went
+   wrong (for example `DeviceAlreadyActive`, `DeviceNotFound`, `DeviceTokenRejected`, `ForeignDeviceWrite`) and know
+   no HTTP code. `http/failures.ts` maps every tag to a status and an `HttpErrorCode` in one table typed so that a tag
+   without a row fails the type check; anything else is a 500 `internal` with a fixed message, the original going to
+   `console.error`.
+4. SQL lives only in the `store.ts` files. An invariant that must hold under concurrency stays one statement or one
+   `db.batch()` (the guarded registration upsert, the push batch with its `MAX(seq) + 1` rows): a use case never
+   reads, decides and then writes the same rows.
+5. Stores parse D1 rows with `zod/mini` at their boundary; use cases see typed values.
+6. Middleware: `bodyLimit` (1 MB; `onError` answers 413 `payload-too-large`) on every route with a body.
+   `bearerAuth` with `token: adminToken` on `POST /v1/devices` and `DELETE /v1/devices/:id`, and with `verifyToken`
+   calling the devices `authenticate` use case on the device routes, which puts the authenticated device in the
+   context. Both pass every failure message as a function returning the JSON error `Response` with status 401,
+   because Hono answers a malformed `Authorization` header with 400 by default and 3.2.4 says 401. `bearerAuth`
+   compares the admin token with Hono's `timingSafeEqual` (3.8: SHA-256 digests and raw strings compared without
+   an early exit), which replaces the package's own comparison. A JSON route first checks `Content-Type` with a
+   copy of the JSON validator's pattern and answers 400 `invalid-body` naming the header when it does not match.
+   `@hono/standard-validator` validates JSON bodies and the pull query with the protocol's `zod/mini` schemas, its
+   hook answering 400 `invalid-body`. `app.notFound` answers 404 `not-found`; `app.onError` is the funnel of rule 3.
 
 ### 3.13 Collector code structure
 
@@ -653,7 +725,7 @@ real machine), with known per-model totals. Tests cover Spec S1, S2, S4, S5, S10
 ### 5.2 Failure and retry checks
 
 Killed run (S3) by throwing between decode and commit; offline backend (S7) with the in-memory `SyncBackend`
-switched to failing; token rules (S9) against the Worker handler.
+switched to failing; token rules (S9) against the Worker app.
 
 ### 5.3 Compatibility checks
 
@@ -688,7 +760,8 @@ The plan ships in three milestones. Finish Milestone 1 before starting Milestone
 - M2 needs an agent-kit release that contains K1 and K2 (3.10; K2 is
   [agent-kit#190](https://github.com/PerfectPan/agent-kit/issues/190)).
 - M3 needs the owner's Cloudflare account with `cf auth login` done on the owner's machine, a domain whose DNS is
-  on Cloudflare (`*.workers.dev` often does not resolve from mainland China), and a second Mac. Batches 6 and 7
+  on Cloudflare once a device needs one (the Worker starts on its `workers.dev` URL, which often does not resolve
+  from mainland China; 3.12), and a second Mac. Batches 6 and 7
   themselves need no account: tests and smoke tests run locally (3.12).
 
 ### 6.2 Working agreement
@@ -854,19 +927,59 @@ Each batch leaves `pnpm run check` green.
   body, 413), `protocol.test.ts` (S15 schemas).
 - Exit: tests pass; `pnpm exec cf deploy --dry-run --mode production` with placeholder `SNORLAX_D1_DATABASE_ID`
   and `SNORLAX_DOMAIN` builds and lists the D1 binding without an account; the `cf dev` smoke test (3.12) with its
-  output in the PR. Owner: create the database, apply the migration and deploy to `snorlax.<domain>` (3.12), then
+  output in the PR. Owner: create the database, apply the migration and deploy (3.12; the `workers.dev` URL first), then
   record in section 7 that `GET /v1/health` answers from every network the devices use, and whether the secret
   survived the second deploy.
+
+#### Batch 6b (M3): Worker on Hono, in layers
+
+- Lands on `feat/worker` (PR #27) as added commits before that PR merges, an exception to one PR per batch; Batch 6's
+  behavior and HTTP interface definitions do not change.
+- Files: `packages/worker/src/**` to the layout of 3.12.1 (`handler.ts` with its `RequestFailure` and
+  `STATUS_BY_CODE` goes away; `tokens.ts` keeps generation and hashing and drops `secretsEqual`);
+  `packages/worker/package.json` (`exports["."]` → `./src/http/app.ts`; `hono` and `@hono/standard-validator` beside
+  `zod` in devDependencies, since `cf build` bundles them); `packages/worker/test/fixtures/backend.ts` (builds
+  `createApp` and gives tests `app.fetch`); `packages/worker/test/structure.test.ts` (new); `pnpm-workspace.yaml`
+  (catalog); 6.8.
+- Versions: `hono` and `@hono/standard-validator` pinned exactly in the catalog to the newest npmjs releases older
+  than the repository's one-day `minimumReleaseAge`, with no exclusion added. On 2026-10-26 that is `hono` 4.13.14;
+  `@hono/standard-validator` 0.4.1 was published that day, so 0.4.0 until 0.4.1 is a day old. Resolve with
+  `--registry https://registry.npmjs.org/`.
+- Change:
+  1. Move each rule out of `handler.ts` into its use case: registration (the guarded upsert unchanged; `changes` 0
+     → `DeviceAlreadyActive`), revocation (an unknown id → `DeviceNotFound`), listing, token authentication (an
+     unknown or revoked token → `DeviceTokenRejected`), push (a path or row device other than the authenticated one
+     → `ForeignDeviceWrite`; one batch answering `base + row count`), pull (cursor and `next`).
+  2. Move every SQL statement, unchanged, into its domain's `store.ts`.
+  3. Write `http/app.ts` with the middleware of 3.12.1 rule 6 and the routes of 3.2.4, and `http/failures.ts`.
+  4. `src/index.ts` builds the app once per isolate.
+- Must keep, each pinned by a test that already exists in `test/devices.test.ts`, `test/buckets.test.ts`,
+  `src/sqlite-d1.test.ts` or `src/http.test.ts` (these stay and pass with only the backend helper changed): 401 for
+  a missing, unknown or revoked token and for the admin token on a device endpoint; 403 for a foreign path or row;
+  409 for an active id, and exactly one 201 for two concurrent registrations of one id; 201 for a revoked id,
+  keeping `created_at` and `last_push_at`; `DELETE` of an unknown id 404, of a revoked id 204; 413 by declared
+  length and for a streamed body, which is not read to the end; 400 for unknown keys, 0 or 201 rows, and
+  `after`/`limit` that are not plain decimal integers; a fixed 500 body; seq order, replacement and pagination; error
+  bodies `{ error: { code, message } }` with the protocol's codes.
+- Tests: the existing suites, unchanged except the helper; `test/structure.test.ts` for the import rules of 3.12.1
+  (a `hono` import in a use case, an `http/` import from a domain folder, a cross-domain import and a foreign
+  `store.ts` import each fail it); a test that a malformed `Authorization` header gets 401 with the JSON error body,
+  if no existing test pins it.
+- Exit: `pnpm run check`; `gh repo-checks repository`; `grep -c bnpm pnpm-lock.yaml` is 0;
+  `pnpm exec cf deploy --dry-run --mode production` with the Batch 6 placeholders passes, its upload size in the
+  PR; the `cf dev` smoke test of 3.12 rerun with its output in the PR, stopping the whole process tree (`cf dev`,
+  `cf-wrangler.js dev`, `workerd`) and confirming nothing is left running; each structure rule shown failing once
+  when broken on purpose.
 
 #### Batch 7 (M3): sync in the collector
 
 - Files: `packages/collector/src/{sync,keychain,pair}/**`.
 - Change: 3.4.1 step 6, 3.4.2, `unpair`, backend checks in `doctor`, `byDevice` in the snapshot.
-- Tests: `sync.test.ts` (S6–S8, S15, failure codes; two collectors against the Worker handler on in-memory
+- Tests: `sync.test.ts` (S6–S8, S15, failure codes; two collectors against the Worker app on in-memory
   `node:sqlite`), `install-uninstall.test.ts` extended with `pair` (S14), `keychain.test.ts` with stubbed
   `security` and `secret-tool` that checks the token is passed on stdin only, `pair.test.ts`.
-- Precondition: the owner has decided whether the first push after pairing sends buckets older than 30 days
-  (section 7).
+- The first push after pairing sends every local bucket, those older than 30 days included (owner, 2026-10-27;
+  section 7).
 - Exit: tests pass; two local collectors against `cf dev` converge (steps in the PR).
 
 #### Batch 8 (M3): pairing in the app, Linux, release setup
@@ -889,6 +1002,7 @@ Each batch leaves `pnpm run check` green.
 | 2, 5, 7 | `pnpm --filter @rivus/snorlax run test` | the batch's scenarios pass |
 | 4, 8 | `xcodebuild -scheme Snorlax test` (CI `macos`) | pass; regeneration leaves no diff |
 | 6 | `pnpm --filter @rivus/snorlax-worker run test`; `cf deploy --dry-run --mode production`; `cf dev` smoke (3.12) | pass |
+| 6b | the same as 6, plus `test/structure.test.ts` | pass; Batch 6's behavior unchanged |
 | M1 | owner, three days on one Mac | token totals match ccusage for every finished day (4.1 step 2) |
 | M2 | owner | cost totals match ccusage for finished days, or differences explained |
 | M3 | owner, 5.4 | converged totals on all devices |
@@ -921,7 +1035,8 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | 4d | merged | #20 | A bucket after today (a clock running ahead) is in no window and opens no agent or model group in the snapshot. The `scan_state` row and `user_version` are parsed with zod/mini, and a bad value is `LedgerUnreadable` naming the table or pragma; `openLedger` reads `user_version` and hands it to the migrations, which avoids an import cycle. A `status` that cannot open the ledger reports `LedgerUnreadable` (`data-dir`) with the path. Both ledger connections set `busy_timeout` 5000 ms and the ledger stays in the rollback journal (3.3.2, 3.5); WAL was rejected because a read-only open creates `-wal`/`-shm` and backups would need a checkpoint. The lock tests match probe events by name, settle overlapping runs, and cover `LedgerLockHeld` → `locked` through the CLI; three `toMatchObject({ message: /re/ })` assertions that matched anything became `expect.stringMatching`. `uninstall --data` deletes only in a directory whose `ledger.db` is a regular file with a rollback-journal SQLite header and a `meta` row read through `readLedgerStatus`; a WAL header is refused without opening it, a missing or empty directory passes, and anything else refuses the whole command (`data-dir`) before `launchctl` runs, which also stops the old unlink of a file at `SNORLAX_HOME`. The refusal names its case: no `ledger.db` is `DataDirNotSnorlax` and points at plain `snorlax uninstall` for removing only the job; a `ledger.db` that is not snorlax's (not a regular file, not a rollback-journal SQLite header, or no `meta` table, which `readLedgerStatus` reports as `LedgerNotSnorlax`, also `data-dir` for `status`) is `DataDirNotSnorlax` with no advice, since a refresh would migrate such a database into a ledger; a ledger that cannot be read (a hot journal a read-only connection cannot roll back, a lock past the busy timeout, damage) is `DataDirLedgerUnreadable` with SQLite's reason and one `snorlax refresh` before retrying. Failures that reject the data directory itself carry `refusesDataDir` in the `cli/` table, and a successful `uninstall --data` returns `deletedDataDir`; either way the run writes no command log line into that directory. The scheduler gained a read-only `inspect` (the CLI plist and `launchctl print`, any failure folded into an unknown source), and the plist's Node path is read back from the layout `renderLaunchAgentPlist` writes rather than with the `plist` package (about 260 KB in the bundle). `doctor`'s `schedule` check: no launchd → warn; loaded by the app with no CLI plist → ok, with a CLI plist too → warn; the CLI plist's Node missing, not executable, or not checkable (its `stat` fails, say with EACCES) → error; no Node path readable from the plist → warn; CLI plist, executable Node and loaded → ok; anything else → warn; only an error makes `healthy` false. An interrupted `launchctl` run stops the child and waits for it to exit — the kit settles `run` after the child closes — at most 5 s on the Effect clock; an install interrupted inside `bootstrap` then boots out a service loaded from its plist before removing the plist, in an uninterruptible cleanup; only interruption takes this path, so a failed `bootstrap` still just removes the plist. EPIPE on stdout is dropped in `cli/bin.ts`; other stdout errors still crash. Third-party notices come from Vite's built-in `build.license` (no new dependency); it writes only the heading for a package without a LICENSE file, so a test fails on such a section instead of the file noting it. Every bundle the tests start goes through `test/fixtures/bundle.ts`, which builds the whole environment and requires HOME and the launchctl stub under the system temporary directory, with a launchctl path that does not exist by default. A kept `logs/` directory is listed only through its entries (`logs/keep.txt`, not `logs, logs/keep.txt`). | Only an interrupted `bootstrap` is undone: an interrupt during the repeat install's `bootout` or during `uninstall`'s `bootout`, and a `bootstrap` that hits the kit's 15 s timeout, leave launchd as it is, as before. The bundle test of the interrupted bootstrap cannot tell a missing exit wait apart (the stub is released milliseconds after the signal); the module test with a scripted child does. The macOS app copies only `snorlax.mjs`, so the app bundle does not carry `THIRD_PARTY_LICENSES.md` yet. The busy test covers a reader holding its lock across a refresh's COMMIT; the reverse direction cannot be driven deterministically. #13's owner check of `doctor` and `uninstall` against the real launchd is still to run. |
 | 5 | merged | #21 | agent-kit and agent-kit-collab 0.22.0 in the catalog, with `effect`, `@effect/platform-node` and the `@effect/platform-node-shared` override at 4.0.5, the kit's `peerDependencies.effect`; the `vite` alias follows `vite-plus` to 1.3.0. `core/buckets` prices each record with the kit's `priceRecord(record, pricing)` and the local `splitByModel` is gone: the agent's own amount first, the split, the multiplier and one-hour cache writes are the kit's rules, and snorlax keeps only the bucket key, `sessionsStarted` and the division of a record's requests among its parts (the Batch 2 rule, unchanged; the kit gives a part only its own share's `modelCalls`). A part without a cost adds its requests to `unpricedRequests` and nothing to `costUsd`. The pricing is `createPricing(litellmPrices)` with no overrides or fallbacks, created once per run in the ledger module's `commitScan` and passed to core's accumulator, because that flow is where records are priced and where `pricing_version` is written, in the same transaction. `meta.pricing_version` is the version that priced the stored buckets: a ledger's first scan (`last_scan_completed_at` still NULL before the commit) writes `litellmPricesVersion`, a refresh keeps a recorded version, and only `rebuild --days 30` writes the current one (a shorter rebuild leaves older days of the snapshot window at their old prices, so it keeps the version and `status` keeps suggesting the full rebuild). A ledger scanned before Batch 5 keeps its NULL version on refresh, because its older buckets were priced by no table; the rule settles that upgrade instead of a note to run the rebuild by hand. `status.pricingChanged` comes from `readLedgerStatus`: true when the ledger has been scanned and its version is not the bundled one (NULL included), false without a ledger or before its first scan, so a fresh install reads false after its first refresh and a pre-Batch-5 ledger reads true until `rebuild --days 30`; the human output adds a `pricing:` line naming `snorlax rebuild --days 30` only then. `uninstall --json` returns `UninstallResult` (#19): `keptEntries` lists the entries `--data` kept, as the human output does, and is `[]` when the directory was removed; without `--data` it is absent, so an untouched data directory does not read as nothing kept. Test expectations for models the kit's snapshot prices (`claude-opus-5-5`, `claude-haiku-4-5`) are computed from `litellmPrices` by `test/fixtures/pricing.ts`, so a price change in a kit release does not break them; `gpt-6.2` and the Grok fixture models are not in the snapshot and stay unpriced. Cold start of `snorlax status --json` (median of 20 alternating runs, fresh temporary `HOME` each, one machine): 80.7 ms on the bundle of main 58a973a, 81.2 ms here; `dist/snorlax.mjs` 1,027,096 → 1,073,148 bytes. | Ids with a reasoning suffix (`claude-opus-4-8-thinking`, `gpt-5.6-sol-high`, `deepseek-v4-pro-thinking`) are not the same model to the kit's table and are unpriced without a fallback; the M2 comparison found none in the owner's logs of the last 30 days. `pricingChanged` compares versions only, so a kit release whose snapshot changed no price the ledger used still reports it. The app decodes `pricingChanged` but does not show it. |
 | — (kit 0.23.0 upgrade) | merged | #22 | agent-kit and agent-kit-collab 0.23.0 in the catalog. A request whose total input — cache reads and writes included — strictly exceeds the model's long-context threshold bills whole at the tier's rates (`Price.longContext`); the tier is judged per part, and a part counts as one request only when the record's granularity is `request` or the record's or that part's `modelCalls` is 1, so any other part of a `turn`/`session` record — `modelCalls` absent included — keeps the base price. Claude Code `<synthetic>` entries yield no record. `litellmPricesVersion` now digests the table's content, so the upgrade moves `PRICING_VERSION` and every scanned ledger reads `pricingChanged` until `snorlax rebuild --days 30`, which is expected: its buckets were priced at base rates and still count the `<synthetic>` requests an older kit turned into records. New tests: the tier through `accumulateRecord` (`gpt-6.1-sol`, 272k threshold), the synthetic entry through a Claude Code refresh fixture; both fail on 0.22.0. | Models the LiteLLM table does not price stay unpriced; the owner cannot supply a price yet (#23). |
-| 6 | not started | | | |
+| 6 | PR open; Batch 6b reworks it on the same branch before merge | #27 | The admin token is compared by hashing both sides with `crypto.subtle.digest("SHA-256")` and walking the two fixed-length digests with no early exit, because `crypto.subtle.timingSafeEqual` exists only in workerd and the handler runs on Node for tests and self-hosting. The handler and everything below it uses only cross-runtime APIs (`URLPattern`, `crypto.getRandomValues`, `crypto.subtle.digest`, `btoa`); `src/index.ts` is the only Workers-specific file, and the node:sqlite adapter of the D1 subset is production code under `src/` (exported as `./sqlite-d1`), so a later self-hosted server can reuse them (section 7). The error body's codes are enumerated in the protocol (`invalid-body` 400, `unauthorized` 401, `forbidden` 403, `not-found` 404, `conflict` 409, `payload-too-large` 413, `internal` 5xx), unlike the CLI's open failure-code string. A push answers `base + row count`, where `base` is read by the batch's first statement (`SELECT COALESCE(MAX(seq), 0)`), so the number comes from inside the batch's transaction and never counts a concurrent push; the batch still ends with the `devices` update (3.3.3), and a read inside the batch sees the batch's earlier writes. A row whose `deviceId` differs from the path id is 403, the same rule as a foreign path (S9). Re-registering a revoked id returns 201 with a fresh token and clears `revoked_at`, keeping `created_at` and `last_push_at` so the usage history stays (R11). `DELETE` of an unknown id is 404, which keeps the section 7 secret-survival check (any non-401) unambiguous; deleting an already revoked device stays 204. D1 timestamps are epoch milliseconds (the ledger's convention); `GET /v1/devices` renders them as ISO `Z` strings, null before the first push. The HTTP shapes get no JSON Schema export, fixtures or Swift types (3.2.3): the app has no HTTP client (2.1). Unit tests sit next to the file they test (`src/http.test.ts`, `src/sqlite-d1.test.ts`); the handler tests that go through HTTP and the database stay in `test/`, with the shared backend helper in `test/fixtures/` (AGENTS.md). `cf dev --port N` passes the port through as a direct flag; the `--`-forwarded form validated under `--dry-run` but still bound 8787. Fix round 1 (review, no blocking findings): registration is one atomic `INSERT … ON CONFLICT (id) DO UPDATE … WHERE devices.revoked_at IS NOT NULL` statement whose `meta.changes` (0 → 409) leaves no read-then-write race for two concurrent registrations, so the adapter reports real change counts (`run` for statements without result columns, `all` otherwise, in `run`/`all` and per batch statement). A body over 1 MB is refused by its declared `Content-Length` and, while chunks stream in, by its actual bytes — the reader cancels at the limit instead of draining the body. An unexpected error answers a fixed `internal error` body and logs the original with `console.error` instead of echoing it. Pull query values must be plain decimal integer strings (`0x10`, `1e1`, `-1`, `1.5`, empty all read 400) with `after` ≥ 0 and 1 ≤ `limit` ≤ 1000 (default 1000). `RequestFailure` takes only the code and message; the status comes from a `Record<HttpErrorCode, number>` that fails to compile when a code is missing, and the class is not exported. A batch's rollback runs only while a transaction is open and never replaces the original error — a failing rollback is reported on top of it with the original error as its `cause`. | Owner steps remain: create the database, apply the migration, deploy with the secrets file (3.12), and record reachability in section 7. The push's first-statement read and `MAX(seq)` semantics ran against the node:sqlite adapter; real D1's batch order is documented to match but is only exercised by the owner's deploy. The admin token on device endpoints reads 401 — only device tokens list devices and buckets. The collector bundle's hash moved with no behavior change (the shared bucket field shape of the lenient and strict schemas; the HTTP shapes tree-shake out) — no changeset: the bundle only gains unreachable zod code from the protocol's HTTP shapes until Batch 7's sync client uses them. |
+| 6b | done on feat/worker | #27 (same branch) | `hono` 4.13.14 and `@hono/standard-validator` 0.4.0 in the catalog: the install refused 0.4.1 (published 2026-10-26T00:12Z) with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, and no exclusion was added; the validator brings its peer `@standard-schema/spec` 1.1.0. The pull query's schema moved unchanged from `handler.ts` to `packages/protocol/src/http.ts` as `httpPullQuerySchema`, which now also applies the defaults (`after` 0, `limit` 1000), because 3.12.1 rules 2 and 6 validate queries with the protocol's schemas while the 6b file list did not name the protocol; the collector bundle keeps two unreachable zod expressions from it (about 100 bytes) and, as in Batch 6, gets no changeset. Use-case errors are unexported `Error` subclasses with a literal `_tag`; each use-case file exports the list of its classes (`devicesErrors`, `bucketsErrors`), from which `http/failures.ts` derives the tag union of its one table (`ANSWERS`: tag → status and code), so a tag without a row fails the type check (checked by deleting a row); a class left out of its file's list would be a 500, since TypeScript has no typed throws. The same table holds the failures the HTTP layer finds itself (`Unauthenticated`, `InvalidBody`, `PayloadTooLarge`, `NoRoute`, `Internal`), so no other file names a status or an error code. Besides the tags, the funnel answers the two `HTTPException`s Hono's middleware throws — `bearerAuth`'s, which carries the JSON 401 its message functions built, and the JSON validator's bare 400 for a body that does not parse (`invalid-body` with Hono's message) — and everything else is the fixed 500. `verifyToken` calls `authenticateDevice`, whose `DeviceTokenRejected` the funnel answers 401, so the device routes' `invalidToken` option is set (rule 6) but never reached. Each route runs bearer auth, then `bodyLimit`, then the validator, so the body of an unauthenticated request is never read; the push's path check sits in the use case with the row check, after validation, where Batch 6 answered a foreign path 403 first. Further differences from Batch 6, none on the Must keep list and each checked against the app, are the request rules now in 3.2.4 (`Content-Type`, repeated query parameters, the `Bearer` scheme and token characters, `WWW-Authenticate`, `HEAD`, the foreign path's 400 or 413); an oversized body without a declared length stops being read at the limit, but Hono does not cancel the stream. Stores keep Batch 6's parse outcomes: a token-owner row that does not parse reads as absent (401), a listed or pulled row that does not parse is a 500. Use cases take `{ db, now }` when they read the clock and `db` otherwise; `listDevices` returns epoch milliseconds and `http/app.ts` renders ISO. The existing tests keep their assertions; besides the helper, the 500 test builds its app with `createApp(…).fetch`, and the 413 test's bodies end after ten 600 kB chunks: without the limit the validator drains the body, and an endless stream that its pull refills synchronously never yields to the timers (a probe's 500 ms timer had not fired after 4 s), so removing `bodyLimit` hung that test, fresh chunks piling up, instead of failing it. New tests: `test/structure.test.ts` (rule 1 as a pure check over `src/` without unit tests, in the collector's style: `framework-import`, `upward-import`, `cross-domain`, `foreign-store`, and `layout` for a file outside the layout), a malformed `Authorization` header (`Token x`, `Basic …`, `Bearer`, `Bearer two words`) on every protected route answering 401 `unauthorized`, and a body sent as JSON that does not parse answering 400. The 13 SQL literals equal Batch 6's after whitespace normalization. `cf deploy --dry-run --mode production` with the Batch 6 placeholders: Total Upload 161.52 KiB / gzip 36.94 KiB. The `cf dev` smoke test answered health 200, registration 201 then 409, push 200 `{seq:1}`, pull from a second device 200, a foreign path 403, a wrong token 401, `Authorization: Token x` 401 with the JSON body on a device and the admin route, an unknown body field 400, and 413 for a 1.1 MB body with a declared length and chunked; no `cf dev`, `cf-wrangler.js dev` or `workerd` process was left running. Fix round 1 (review, no blocking findings): revocation is one `UPDATE devices SET revoked_at = COALESCE(revoked_at, ?1) WHERE id = ?2` whose `meta.changes` 0 is `DeviceNotFound` (rule 4), so revoking again stays 204 and keeps the first `revoked_at`, which a new test reads from the database. A JSON route checks `Content-Type` with a copy of Hono's JSON validator pattern before validating, and answers a request without it 400 `invalid-body` "request body must be sent with Content-Type: application/json" instead of a shape mismatch. `test/structure.test.ts` resolves a specifier naming `src/` or a layout folder to that folder's `index.ts` and the package's own name through its `exports`, so `../http`, `..` and `@rivus/snorlax-worker` from a domain file count as upward imports and `../devices` from `buckets/` as cross-domain. 3.2.4 records the request rules a replacement backend and the Batch 7 client need, and the Worker sends `WWW-Authenticate` on every 401 except an unknown or revoked device token's, which comes from the use case; 3.8 and rule 6 describe the admin comparison as Hono 4.13.14 runs it; 3.12 generates the admin token with `openssl rand -hex 32`. | The `ADMIN_TOKEN` format, which an admin call needs in RFC 6750 token characters, is settled by 3.12's deploy step (`openssl rand -hex 32`). `@hono/standard-validator` 0.4.1 replaces 0.4.0 on purpose once it is a day old. Batch 6's owner steps and its note on real D1's batch order still apply. |
 | 7 | not started | | | |
 | 8 | not started | | | |
 
@@ -942,9 +1057,11 @@ re-applied build migrates it again. Batch 6 adds D1 tables that later Workers ke
 | Worker reachability | open | domain | owner | record here after Batch 6 |
 | `cf` and `cloudflare.config.ts` are in beta | risk | a `cf` release changes commands, the configuration format or Build Output | maintainer | `cf` and `wrangler` are pinned exactly and upgraded on purpose; Wrangler with `wrangler.jsonc` stays a fallback, since both use the same D1 migration table (3.12) |
 | `ADMIN_TOKEN` across deploys | open | if a deploy without `--secrets-file` drops the secret, `pair` and revocation answer 401 | owner | after the second deploy, send `DELETE /v1/devices/<an unused id>` with the admin token: any answer other than 401 means the secret was kept; otherwise every deploy passes the file (3.12) |
-| Buckets older than 30 days on the first push | open | pairing marks every local bucket dirty (3.4.2), including the M1 buckets of 2026-09-23 to 09-25 that no rebuild can reprice (M2 results); no window shows them, so they cost writes and storage only | owner | decide before Batch 7: push them, so the backend stays a full copy of the ledger, or push only the last 30 days |
+| Buckets older than 30 days on the first push | resolved | pairing marks every local bucket dirty (3.4.2), including the M1 buckets of 2026-09-23 to 09-25 that no rebuild can reprice (M2 results); no window shows them, so they cost writes and storage only | owner | Owner decision on 2026-10-27: push them, so the backend stays a full copy of the ledger (3.4.2 unchanged) |
 | K1, K2 in agent-kit | resolved | — | agent-kit maintainer | Released in agent-kit 0.22.0 (`/cost/prices`, `priceRecord`); Batch 5 pins it |
 | Presence on this collector | follow-up | — | owner | separate Spec and Plan (8.3) |
+| Self-hosted backend | follow-up | — | owner | The Hono app and the node:sqlite D1 adapter run on Node too (3.12.1), so a Node server (`@hono/node-server`) on a SQLite file could serve the same HTTP API later; not planned now (owner, 2026-10-26) |
+| Several users per backend | follow-up | — | owner | Out of scope (1.4). The change stays additive: a `users` table, `devices.user_id` defaulting to one user, pulls filtered by user (a `(user_id, seq)` index, or a join on `devices` to avoid a backfill), and `ADMIN_TOKEN` redefined as a server or per-user enrollment token; device endpoints and bodies keep their shape. Needs its own Spec and Plan |
 
 ## 8. Appendix
 

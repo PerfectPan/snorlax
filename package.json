@@ -18,13 +18,13 @@
     "publish:dry-run": "pnpm publish -r --access public --no-git-checks --dry-run --json"
   },
   "engines": {
-    "node": "^24.11.0"
+    "node": "^24.22.0"
   },
   "devEngines": {
     "runtime": [
       {
         "name": "node",
-        "version": "^24.11.0",
+        "version": "^24.22.0",
         "onFail": "error"
       }
     ]

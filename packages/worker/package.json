@@ -1,0 +1,38 @@
+{
+  "name": "@rivus/snorlax-worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "snorlax backend: the sync HTTP API on a Worker and D1, with a node:sqlite adapter of the same database interface for tests and self-hosting. Private; not published.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/http/app.ts",
+      "default": "./src/http/app.ts"
+    },
+    "./sqlite-d1": {
+      "types": "./src/sqlite-d1.ts",
+      "default": "./src/sqlite-d1.ts"
+    }
+  },
+  "scripts": {
+    "build": "cf build",
+    "lint": "vp lint 2>&1",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vp test 2>&1",
+    "format": "vp fmt .",
+    "format:check": "vp fmt --check ."
+  },
+  "devDependencies": {
+    "@hono/standard-validator": "catalog:",
+    "@perfectpan/lint-config": "catalog:",
+    "@rivus/snorlax-protocol": "workspace:*",
+    "@types/node": "catalog:",
+    "cf": "catalog:",
+    "hono": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "wrangler": "catalog:",
+    "zod": "catalog:"
+  }
+}
