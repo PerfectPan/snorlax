@@ -25,7 +25,7 @@ each machine
   project names and session ids stay local.
 - **Your own backend.** Sync goes through a Worker deployed to your Cloudflare account. Without one, snorlax works
   on a single machine. Any service that implements the same HTTP interface can replace it.
-- **Linux too.** On Linux machines the collector runs headless and only uploads.
+- **Linux too.** On Linux machines the collector runs headless and only uploads. Install and the systemd timer are described in [docs/development/linux.md](docs/development/linux.md).
 
 ## Planned layout
 
@@ -41,7 +41,8 @@ apps/macos/          menu bar app, desktop widget and the SnorlaxKit Swift packa
 The repository is a pnpm workspace created from
 [PerfectPan/project-template-pnpm](https://github.com/PerfectPan/project-template-pnpm). Commands, conventions and
 project rules for contributors and coding agents are in [AGENTS.md](AGENTS.md) and
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md). Deploying a Worker is described in
+[docs/development/worker.md](docs/development/worker.md).
 
 ```bash
 ./scripts/install-git-hooks.sh

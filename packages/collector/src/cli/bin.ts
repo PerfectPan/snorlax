@@ -3,26 +3,27 @@ import process from "node:process";
 import { NodePlatformLive } from "@rivus/agent-kit/node/effect";
 import { Effect, Layer, Runtime } from "effect";
 
-import { Scheduler } from "../capabilities/scheduler/scheduler.ts";
+import { Scheduler, schedulerOs } from "../capabilities/scheduler/scheduler.ts";
 import { NodeFiles, SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
 
 /**
  * The scheduler of the system the CLI runs on (plan 3.13 rule 5). `SNORLAX_OS` (`darwin`, `linux` or
- * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run the launchd path on the Linux
- * CI job; it is not copied into the job. Picking one only reads the environment, and the implementations
- * for other systems fail install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
+ * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run either scheduler on any CI
+ * job; it is not copied into the job. Picking one only reads the environment, and the win32 implementation
+ * fails install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
  */
 const schedulerLive = Layer.unwrap(
   Effect.gen(function* () {
-    const platform = yield* SnorlaxPlatform;
-    const override = platform.env.SNORLAX_OS;
-    const os = override === undefined || override === "" ? platform.os : override;
+    const os = schedulerOs(yield* SnorlaxPlatform);
     if (os === "darwin") {
       return Scheduler.launchd;
     }
-    if (os === "linux" || os === "win32") {
+    if (os === "linux") {
+      return Scheduler.systemd;
+    }
+    if (os === "win32") {
       return Scheduler.unsupported(os);
     }
     // `platform.os` is always one of the three, so only the override names another system.
