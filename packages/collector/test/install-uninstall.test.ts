@@ -20,6 +20,12 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { launchAgentNodePath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
+import {
+  renderRefreshService,
+  renderRefreshTimer,
+  serviceEnvironment,
+  serviceNodePath
+} from "../src/capabilities/scheduler/units.ts";
 import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 import { bundle, runBundle, spawnBundle } from "./fixtures/bundle.ts";
@@ -970,22 +976,324 @@ describe("install and uninstall", () => {
     });
   });
 
-  it("fails on linux without writing a plist, calling launchctl, or deleting the data directory", async () => {
-    await withInstallHome("linux", async (env) => {
-      const installed = run(env, ["install", "--json"]);
+  it("fails on win32 without creating the data directory", async () => {
+    const home = await mkdtemp(join(tmpdir(), "snorlax-win32-"));
+    try {
+      const installed = runBundle(["install", "--json"], { home, os: "win32" });
       expect(installed.status).toBe(1);
-      const installFailure = z.parse(failureSchema, json(installed.stdout));
-      expect(installFailure.error.code).toBe("internal");
-      expect(installFailure.error.message).toContain("Batch 8");
-      expect(existsSync(plistPathOf(env.home))).toBe(false);
-      // The refusal happens in the scheduler before any preparation, so nothing was created either.
-      expect(existsSync(dataDirOf(env.home))).toBe(false);
-
-      const removed = run(env, ["uninstall", "--data", "--json"]);
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("no scheduler on win32");
+      expect(existsSync(join(home, "data"))).toBe(false);
+      const removed = runBundle(["uninstall", "--data", "--json"], { home, os: "win32" });
       expect(removed.status).toBe(1);
-      expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain("Batch 8");
-      expect(existsSync(dataDirOf(env.home))).toBe(false);
+      expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain("no scheduler on win32");
+      expect(existsSync(join(home, "data"))).toBe(false);
+      expect(existsSync(join(home, ".config", "systemd"))).toBe(false);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * `install` / `uninstall` on Linux against the built bundle. `SNORLAX_OS=linux` selects the systemd scheduler
+ * on this machine, and `SNORLAX_SYSTEMCTL` points at a stub, so the real systemctl never runs and no unit is
+ * enabled in the caller's user manager. HOME and `XDG_CONFIG_HOME` stay under the system temporary directory.
+ */
+describe("systemd user timer", () => {
+  const SHOW = [
+    "--user",
+    "show",
+    "snorlax-refresh.timer",
+    "--property=LoadState",
+    "--property=UnitFileState",
+    "--property=ActiveState",
+    "--property=FragmentPath",
+    "--no-pager"
+  ];
+  const RELOAD = ["--user", "daemon-reload"];
+  const ENABLE = ["--user", "enable", "--now", "snorlax-refresh.timer"];
+  const DISABLE = ["--user", "disable", "--now", "snorlax-refresh.timer"];
+
+  interface SystemdEnv {
+    readonly home: string;
+    readonly systemctl: string;
+    readonly record: string;
+    readonly enabled: string;
+    readonly failEnable: string;
+  }
+
+  const writeSystemctlStub = async (dir: string): Promise<string> => {
+    const script = join(dir, "systemctl.mjs");
+    const source = [
+      `#!${process.execPath}`,
+      `import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";`,
+      `import { dirname, join } from "node:path";`,
+      `import { fileURLToPath } from "node:url";`,
+      `const dir = dirname(fileURLToPath(import.meta.url));`,
+      `appendFileSync(join(dir, "argv.jsonl"), JSON.stringify(process.argv.slice(2)) + "\\n");`,
+      `const marker = join(dir, "enabled");`,
+      `const failEnable = join(dir, "fail-enable");`,
+      `const args = process.argv.slice(2);`,
+      `const timerPath = () => {`,
+      `  const xdg = process.env.XDG_CONFIG_HOME ?? "";`,
+      `  const base = xdg.startsWith("/") ? xdg : join(process.env.HOME ?? "", ".config");`,
+      `  return join(base, "systemd", "user", "snorlax-refresh.timer");`,
+      `};`,
+      `if (args[0] === "--user" && args[1] === "show" && args[2] === "snorlax-refresh.timer") {`,
+      `  const fragment = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";`,
+      `  if (fragment === "") {`,
+      `    console.log("LoadState=not-found");`,
+      `    console.log("UnitFileState=");`,
+      `    console.log("ActiveState=inactive");`,
+      `    console.log("FragmentPath=");`,
+      `  } else {`,
+      `    console.log("LoadState=loaded");`,
+      `    console.log("UnitFileState=enabled");`,
+      `    console.log("ActiveState=active");`,
+      `    console.log("FragmentPath=" + fragment);`,
+      `  }`,
+      `  process.exit(0);`,
+      `}`,
+      `if (args[0] === "--user" && args[1] === "daemon-reload" && args.length === 2) process.exit(0);`,
+      `if (args[0] === "--user" && args[1] === "enable" && args[2] === "--now" && args[3] === "snorlax-refresh.timer") {`,
+      `  if (existsSync(failEnable)) {`,
+      `    console.error("enable refused");`,
+      `    process.exit(1);`,
+      `  }`,
+      `  writeFileSync(marker, timerPath());`,
+      `  process.exit(0);`,
+      `}`,
+      `if (args[0] === "--user" && args[1] === "disable" && args[2] === "--now" && args[3] === "snorlax-refresh.timer") {`,
+      `  if (!existsSync(marker)) process.exit(1);`,
+      `  unlinkSync(marker);`,
+      `  process.exit(0);`,
+      `}`,
+      `process.exit(2);`,
+      ``
+    ].join("\n");
+    await writeFile(script, source, "utf8");
+    await chmod(script, 0o755);
+    return script;
+  };
+
+  const withSystemdHome = async (body: (env: SystemdEnv) => Promise<void>): Promise<void> => {
+    const home = await mkdtemp(join(tmpdir(), "snorlax-systemd-"));
+    const stubDir = await mkdtemp(join(tmpdir(), "snorlax-systemctl-"));
+    try {
+      const systemctl = await writeSystemctlStub(stubDir);
+      await body({
+        home,
+        systemctl,
+        record: join(stubDir, "argv.jsonl"),
+        enabled: join(stubDir, "enabled"),
+        failEnable: join(stubDir, "fail-enable")
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(stubDir, { recursive: true, force: true });
+    }
+  };
+
+  const runSystemd = (
+    env: SystemdEnv,
+    args: readonly string[],
+    overrides?: { readonly snorlaxHome?: string; readonly xdgConfigHome?: string }
+  ) =>
+    runBundle(args, {
+      home: env.home,
+      dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
+      systemctl: env.systemctl,
+      os: "linux",
+      ...(overrides?.xdgConfigHome === undefined ? {} : { xdgConfigHome: overrides.xdgConfigHome })
+    });
+
+  const unitDirOf = (home: string, xdgConfigHome?: string): string =>
+    join(xdgConfigHome ?? join(home, ".config"), "systemd", "user");
+
+  it("writes both units, reloads, enables the timer, and can be repeated", async () => {
+    await withSystemdHome(async (env) => {
+      const units = unitDirOf(env.home);
+      const servicePath = join(units, "snorlax-refresh.service");
+      const timerPath = join(units, "snorlax-refresh.timer");
+
+      const installed = runSystemd(env, ["install"]);
+      expect(installed.stderr).toBe("");
+      expect(installed.status).toBe(0);
+      expect(installed.stdout).toBe("systemd user timer installed at ~/.config/systemd/user/snorlax-refresh.timer\n");
+
+      const service = await readFile(servicePath, "utf8");
+      const nodePath = serviceNodePath(service);
+      expect(nodePath).toBe(process.execPath);
+      expect(isAbsolute(nodePath ?? "")).toBe(true);
+      expect(service).toContain(`"${resolve(bundle)}" refresh`);
+      expect(serviceEnvironment(service)).toBe(`SNORLAX_HOME=${dataDirOf(env.home)}`);
+      const timer = await readFile(timerPath, "utf8");
+      expect(timer).toBe(renderRefreshTimer());
+      expect(timer).toContain("OnBootSec=1min");
+      expect(timer).toContain("OnUnitActiveSec=5min");
+
+      expect(runSystemd(env, ["install", "--json"]).status).toBe(0);
+      expect(existsSync(servicePath)).toBe(true);
+      expect(existsSync(timerPath)).toBe(true);
+      expect(await readInvocations(env.record)).toEqual([SHOW, RELOAD, ENABLE, SHOW, RELOAD, ENABLE]);
+    });
+  });
+
+  it("writes the units under an absolute XDG_CONFIG_HOME", async () => {
+    await withSystemdHome(async (env) => {
+      const xdg = join(env.home, "xdg");
+      const timerPath = join(unitDirOf(env.home, xdg), "snorlax-refresh.timer");
+      const installed = runSystemd(env, ["install", "--json"], { xdgConfigHome: xdg });
+      expect(installed.status).toBe(0);
+      expect(existsSync(timerPath)).toBe(true);
+      expect(existsSync(join(env.home, ".config", "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
+      expect(await readFile(env.enabled, "utf8")).toBe(timerPath);
+    });
+  });
+
+  it("copies a SNORLAX_HOME that contains spaces and quotes into Environment=", async () => {
+    await withSystemdHome(async (env) => {
+      const snorlaxHome = join(env.home, 'usage 100% "q"');
+      expect(runSystemd(env, ["install", "--json"], { snorlaxHome }).status).toBe(0);
+      const service = await readFile(join(unitDirOf(env.home), "snorlax-refresh.service"), "utf8");
+      expect(serviceEnvironment(service)).toBe(`SNORLAX_HOME=${snorlaxHome}`);
+      expect(serviceNodePath(service)).toBe(process.execPath);
+    });
+  });
+
+  it("refuses a relative data directory before calling systemctl", async () => {
+    await withSystemdHome(async (env) => {
+      const installed = runSystemd(env, ["install", "--json"], { snorlaxHome: "relative/data" });
+      expect(installed.status).toBe(1);
+      expect(z.parse(failureSchema, json(installed.stdout)).error.code).toBe("data-dir");
       expect(await readInvocations(env.record)).toEqual([]);
+      expect(existsSync(join(env.home, ".config", "systemd"))).toBe(false);
+    });
+  });
+
+  it("removes the units it just wrote when enable fails", async () => {
+    await withSystemdHome(async (env) => {
+      await writeFile(env.failEnable, "1", "utf8");
+      const units = unitDirOf(env.home);
+      const installed = runSystemd(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      const failure = z.parse(failureSchema, json(installed.stdout));
+      expect(failure.error.code).toBe("internal");
+      expect(failure.error.message).toContain("enable --now");
+      expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
+      expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
+      expect(existsSync(env.enabled)).toBe(false);
+      expect(await readInvocations(env.record)).toEqual([SHOW, RELOAD, ENABLE, RELOAD]);
+    });
+  });
+
+  it("refuses to install or uninstall over a timer loaded from another file", async () => {
+    await withSystemdHome(async (env) => {
+      const foreign = "/etc/systemd/user/snorlax-refresh.timer";
+      await writeFile(env.enabled, foreign, "utf8");
+      const units = unitDirOf(env.home);
+      await mkdir(units, { recursive: true });
+      const servicePath = join(units, "snorlax-refresh.service");
+      const timerPath = join(units, "snorlax-refresh.timer");
+      await writeFile(servicePath, "kept\n");
+      await writeFile(timerPath, "kept\n");
+
+      const installed = runSystemd(env, ["install", "--json"]);
+      expect(installed.status).toBe(1);
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain(foreign);
+      expect(existsSync(dataDirOf(env.home))).toBe(false);
+      expect(await readFile(servicePath, "utf8")).toBe("kept\n");
+
+      const removed = runSystemd(env, ["uninstall", "--json"]);
+      expect(removed.status).toBe(1);
+      expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain(foreign);
+      expect(await readFile(timerPath, "utf8")).toBe("kept\n");
+      expect(await readInvocations(env.record)).toEqual([SHOW, SHOW]);
+    });
+  });
+
+  it("disables the timer and deletes both units, and a second uninstall is a no-op", async () => {
+    await withSystemdHome(async (env) => {
+      const units = unitDirOf(env.home);
+      const servicePath = join(units, "snorlax-refresh.service");
+      const timerPath = join(units, "snorlax-refresh.timer");
+      expect(runSystemd(env, ["install", "--json"]).status).toBe(0);
+
+      const removed = runSystemd(env, ["uninstall"]);
+      expect(removed.stderr).toBe("");
+      expect(removed.status).toBe(0);
+      expect(removed.stdout).toBe("systemd user timer removed\n");
+      expect(existsSync(servicePath)).toBe(false);
+      expect(existsSync(timerPath)).toBe(false);
+      expect(existsSync(dataDirOf(env.home))).toBe(true);
+
+      expect(runSystemd(env, ["uninstall", "--json"]).status).toBe(0);
+      expect(await readInvocations(env.record)).toEqual([SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD, SHOW, RELOAD]);
+    });
+  });
+
+  it("names the systemd timer when uninstall --data keeps entries it did not write", async () => {
+    await withSystemdHome(async (env) => {
+      const dataDir = dataDirOf(env.home);
+      expect(runSystemd(env, ["install", "--json"]).status).toBe(0);
+      // A ledger has to exist before `--data` will delete anything; install only creates the directory.
+      expect(runSystemd(env, ["refresh", "--json"]).status).toBe(0);
+      await writeFile(join(dataDir, "photo.jpg"), "unrelated\n");
+      const removed = runSystemd(env, ["uninstall", "--data"]);
+      expect(removed.status).toBe(0);
+      expect(removed.stdout).toBe(
+        "systemd user timer removed\n" +
+          "the data directory ~/data is kept; entries snorlax did not write remain: photo.jpg\n"
+      );
+      expect(removed.stdout).not.toContain("LaunchAgent");
+      expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
+    });
+  });
+
+  it("doctor reports a running timer, and a unit whose Node is gone, as an error that changes nothing else", async () => {
+    await withSystemdHome(async (env) => {
+      expect(runSystemd(env, ["install", "--json"]).status).toBe(0);
+      const before = await readInvocations(env.record);
+      const healthy = z.parse(doctorSchema, json(runSystemd(env, ["doctor", "--json"]).stdout));
+      const schedule = healthy.checks.find((check) => check.id === "schedule");
+      expect(schedule?.status).toBe("ok");
+      expect(schedule?.detail).toContain("systemd user timer is running");
+      expect(healthy.healthy).toBe(true);
+
+      const servicePath = join(unitDirOf(env.home), "snorlax-refresh.service");
+      const missing = join(env.home, ".nvm", "versions", "node", "v22.13.0", "bin", "node");
+      await writeFile(
+        servicePath,
+        renderRefreshService({ nodePath: missing, cliPath: resolve(bundle), snorlaxHome: dataDirOf(env.home) })
+      );
+      const doctor = runSystemd(env, ["doctor", "--json"]);
+      expect(doctor.status).toBe(0);
+      const payload = z.parse(doctorSchema, json(doctor.stdout));
+      expect(payload.healthy).toBe(false);
+      expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
+      expect(payload.checks.find((check) => check.id === "schedule")?.detail).toContain("does not exist");
+      const calls = await readInvocations(env.record);
+      expect(calls.slice(before.length)).toEqual([SHOW, SHOW]);
+    });
+  });
+
+  it("keeps fixture agent directories unchanged across install, refresh, and uninstall", async () => {
+    await withSystemdHome(async (env) => {
+      await ensureAgentDirs(env.home);
+      await writeUsageFixtures(env.home);
+      const before = await hashAgentDirs(env.home);
+      const topBefore = (await readdir(env.home)).sort();
+      expect(runSystemd(env, ["install", "--json"]).status).toBe(0);
+
+      const refreshed = runSystemd(env, ["refresh", "--json"]);
+      expect(refreshed.status).toBe(0);
+      const result = z.parse(refreshResultSchema, json(refreshed.stdout));
+      expect(result.ok).toBe(true);
+      expect(result.records).toBeGreaterThan(0);
+
+      expect(runSystemd(env, ["uninstall", "--json"]).status).toBe(0);
+      expect(await hashAgentDirs(env.home)).toBe(before);
+      expect((await readdir(env.home)).sort()).toEqual([...topBefore, ".config", "data"].sort());
     });
   });
 });

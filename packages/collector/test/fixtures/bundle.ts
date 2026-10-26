@@ -16,6 +16,10 @@ export interface BundleHome {
   readonly dataDir?: string;
   /** The `launchctl` the run may start: a stub under the temporary directory, or by default a path that does not exist. */
   readonly launchctl?: string;
+  /** The `systemctl` the run may start: a stub under the temporary directory, or by default a path that does not exist. */
+  readonly systemctl?: string;
+  /** `XDG_CONFIG_HOME`, when a test wants the systemd units outside `~/.config`. Must be under the temporary directory. */
+  readonly xdgConfigHome?: string;
   /** SNORLAX_OS, for the tests that pick the scheduler. */
   readonly os?: string;
 }
@@ -27,14 +31,20 @@ const underTemporaryDirectory = (path: string): boolean => {
 
 /**
  * The whole environment of a bundle run; nothing of the caller's is inherited. launchd isolates by user, not by HOME,
- * so a temporary HOME alone would still let `doctor`, `install` or `uninstall` reach the caller's gui domain: the
- * launchctl is always set here, to a stub or to a path that does not exist, and both it and HOME must be temporary.
+ * and systemd's user manager is the caller's too, so a temporary HOME alone would still let `doctor`, `install` or
+ * `uninstall` reach the real one: launchctl and systemctl are always set here, to a stub or to a path that does not
+ * exist, and they and HOME must be temporary.
  */
 const bundleEnv = (where: BundleHome): Record<string, string> => {
   const launchctl = where.launchctl ?? join(where.home, "no-launchctl");
-  for (const path of [where.home, launchctl]) {
+  const systemctl = where.systemctl ?? join(where.home, "no-systemctl");
+  const paths = [where.home, launchctl, systemctl];
+  if (where.xdgConfigHome !== undefined) {
+    paths.push(where.xdgConfigHome);
+  }
+  for (const path of paths) {
     if (!underTemporaryDirectory(path)) {
-      throw new Error(`a bundle run needs its HOME and launchctl under ${tmpdir()}, got ${path}`);
+      throw new Error(`a bundle run needs its HOME, launchctl and systemctl under ${tmpdir()}, got ${path}`);
     }
   }
   if (!existsSync(bundle)) {
@@ -44,7 +54,9 @@ const bundleEnv = (where: BundleHome): Record<string, string> => {
     HOME: where.home,
     SNORLAX_HOME: where.dataDir ?? join(where.home, "data"),
     SNORLAX_LAUNCHCTL: launchctl,
+    SNORLAX_SYSTEMCTL: systemctl,
     PATH: "/usr/bin:/bin",
+    ...(where.xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: where.xdgConfigHome }),
     ...(where.os === undefined ? {} : { SNORLAX_OS: where.os })
   };
 };
