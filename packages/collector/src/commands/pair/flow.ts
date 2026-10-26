@@ -3,7 +3,7 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import { Data, Effect } from "effect";
 import * as z from "zod/mini";
 
-import { Backend, pairedSync } from "../../capabilities/backend/backend.ts";
+import { Backend, BackendInvalidResponse, pairedSync } from "../../capabilities/backend/backend.ts";
 import { Secrets } from "../../capabilities/secrets/secrets.ts";
 import { ConfigWriteFailed, backendUrlSchema, readConfig, writeConfig } from "../../modules/config/config.ts";
 import { ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
@@ -26,7 +26,10 @@ import { adminTokenText } from "./token.ts";
 /** `--url`, `--name`, or the admin token on stdin cannot be used. Exit 2. */
 export class PairUsage extends Data.TaggedError("PairUsage")<{ readonly message: string }> {}
 
-/** This device id is already registered and has not been revoked. Exit 1, `conflict`. */
+/**
+ * Revoke succeeded and registering again was still HTTP 409. Exit 1, `conflict`. The first 409 is not this:
+ * `pair` revokes that id with the admin token and registers once more.
+ */
 export class PairConflict extends Data.TaggedError("PairConflict")<{ readonly message: string }> {}
 
 /**
@@ -44,9 +47,15 @@ const URL_USAGE = "--url must be an https URL, or http on localhost, 127.0.0.1, 
 export interface Paired {
   readonly deviceId: string;
   readonly name: string;
+  /** The id was already registered. `pair` revoked it and registered again. */
+  readonly reregistered: boolean;
   readonly sync?: RefreshResult["sync"];
   readonly refreshNote?: string;
 }
+
+/** Human text and the pair log. The admin token is not in it. */
+export const REREGISTERED =
+  "this device was already registered; the old registration was revoked and the device was registered again";
 
 type PrepareFailure =
   | LedgerPlatformUnsupported
@@ -98,10 +107,16 @@ const refreshPaired = (input: {
   readonly dataDir: string;
   readonly deviceId: string;
   readonly name: string;
+  readonly reregistered: boolean;
 }) =>
   Effect.gen(function* () {
     const log = appendingLogger(input.platform, input.nodeFiles, input.dataDir);
-    yield* log.event("pair", { deviceId: input.deviceId, name: input.name });
+    yield* log.event(
+      "pair",
+      input.reregistered
+        ? { deviceId: input.deviceId, name: input.name, reregistered: true, message: REREGISTERED }
+        : { deviceId: input.deviceId, name: input.name }
+    );
     const sync = yield* pairedSync({ platform: input.platform, dataDir: input.dataDir });
     const timeZone = yield* TimeZone;
     return yield* scanAndCommit(
@@ -114,7 +129,15 @@ const refreshPaired = (input: {
       },
       refreshScan
     ).pipe(
-      Effect.map(({ result }) => ({ deviceId: input.deviceId, name: input.name, sync: result.sync }) satisfies Paired),
+      Effect.map(
+        ({ result }) =>
+          ({
+            deviceId: input.deviceId,
+            name: input.name,
+            reregistered: input.reregistered,
+            sync: result.sync
+          }) satisfies Paired
+      ),
       // Pairing is already done. A lock, a scan, or a snapshot failure must not make `pair` exit 1.
       Effect.catch((error) =>
         log
@@ -128,6 +151,7 @@ const refreshPaired = (input: {
             Effect.as({
               deviceId: input.deviceId,
               name: input.name,
+              reregistered: input.reregistered,
               refreshNote: error.message
             } satisfies Paired)
           )
@@ -143,8 +167,9 @@ const refreshPaired = (input: {
  * are cleared under the ledger lock, and `config.json` is written last: that write is what counts as paired.
  * A failure of the locked step leaves the token stored and the device not paired. A failure of the config
  * write says the buckets were already marked and remote rows were reset. A refresh failure after the write,
- * sync report or otherwise, stays in the result and does not fail `pair`. The pair log line names the device
- * and not the admin token.
+ * sync report or otherwise, stays in the result and does not fail `pair`. A 409 revokes this id with the
+ * admin token and registers again; uploaded buckets stay and the old token stops working. Only a second 409
+ * is `conflict`. The pair log line names the device and not the admin token.
  */
 export const pairFlow = (input: { readonly url: string; readonly name: string }) =>
   Effect.gen(function* () {
@@ -165,13 +190,30 @@ export const pairFlow = (input: { readonly url: string; readonly name: string })
     yield* ensureDataDir(platform, nodeFiles, dataDir);
     const deviceId = yield* withLedger(platform, dataDir, (ledger) => Effect.succeed(ledger.meta.deviceId));
     const backend = yield* Backend;
-    const registered = yield* backend
-      .registerDevice(url.data, adminToken, { deviceId, name: input.name })
-      .pipe(
-        Effect.catchTag("BackendConflict", () =>
-          Effect.fail(new PairConflict({ message: alreadyRegistered(deviceId) }))
+    const device = { deviceId, name: input.name };
+    // A 409 means this id is registered and not revoked (unpair, a new URL, a lost token). The caller already
+    // gave the admin token, so revoke and register once more. A 409 from the revoke itself is not that
+    // conflict: `BackendConflict` has no CLI code, and the call is not a second registration.
+    const registered = yield* backend.registerDevice(url.data, adminToken, device).pipe(
+      Effect.map((result) => ({ deviceToken: result.deviceToken, reregistered: false })),
+      Effect.catchTag("BackendConflict", () =>
+        backend.revokeDevice(url.data, adminToken, deviceId).pipe(
+          Effect.catchTag("BackendConflict", (error) =>
+            Effect.fail(new BackendInvalidResponse({ message: error.message }))
+          ),
+          Effect.flatMap(() =>
+            backend.registerDevice(url.data, adminToken, device).pipe(
+              Effect.map((result) => ({ deviceToken: result.deviceToken, reregistered: true })),
+              Effect.catchTag("BackendConflict", () =>
+                Effect.fail(
+                  new PairConflict({ message: `device ${deviceId} is still registered after it was revoked` })
+                )
+              )
+            )
+          )
         )
-      );
+      )
+    );
     yield* (yield* Secrets).store(deviceId, registered.deviceToken).pipe(
       Effect.catchTag("KeychainUnavailable", (error) =>
         Effect.fail(
@@ -188,5 +230,12 @@ export const pairFlow = (input: { readonly url: string; readonly name: string })
       })
     ).pipe(Effect.mapError((error) => prepareFailed(deviceId, error)));
     yield* saveConfig(platform, dataDir, url.data, input.name, deviceId);
-    return yield* refreshPaired({ platform, nodeFiles, dataDir, deviceId, name: input.name });
+    return yield* refreshPaired({
+      platform,
+      nodeFiles,
+      dataDir,
+      deviceId,
+      name: input.name,
+      reregistered: registered.reregistered
+    });
   });

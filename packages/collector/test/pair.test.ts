@@ -20,6 +20,7 @@ import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
 import { Backend, type BackendFetch } from "../src/capabilities/backend/backend.ts";
+import { REREGISTERED } from "../src/commands/pair/flow.ts";
 import { Secrets } from "../src/capabilities/secrets/secrets.ts";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
@@ -49,6 +50,7 @@ const MIGRATION = readFileSync(
 );
 
 const countSchema = z.object({ n: z.number() });
+const rowIdSchema = z.object({ id: z.number() });
 const hourSchema = z.object({ hour: z.number() });
 const deviceSchema = z.object({ device_id: z.string() });
 const invocationSchema = z.object({ argv: z.array(z.string()), stdin: z.string() });
@@ -70,6 +72,8 @@ const createLab = (fail: "put" | "register" | undefined) => {
   database.exec(MIGRATION);
   const app = createApp({ db: createSqliteD1(database), adminToken: ADMIN, now: () => NOW });
   const requests: Recorded[] = [];
+  const gate = { failRegisterAfterRevoke: false };
+  let revoked = false;
   const fetchImpl: BackendFetch = async (request) => {
     const text = request.method === "GET" || request.method === "DELETE" ? null : await request.text();
     requests.push({ method: request.method, url: request.url, body: text });
@@ -80,6 +84,21 @@ const createLab = (fail: "put" | "register" | undefined) => {
     if (fail === "put" && request.method === "PUT") {
       throw new Error("push failed");
     }
+    if (request.method === "DELETE" && path.startsWith("/v1/devices/")) {
+      const response = await app.fetch(
+        new Request(request.url, { method: request.method, headers: request.headers, signal: request.signal })
+      );
+      if (response.status === 204) {
+        revoked = true;
+      }
+      return response;
+    }
+    if (gate.failRegisterAfterRevoke && revoked && request.method === "POST" && path === "/v1/devices") {
+      return new Response(JSON.stringify({ error: { code: "conflict", message: "exists" } }), {
+        status: 409,
+        headers: { "content-type": "application/json" }
+      });
+    }
     return app.fetch(
       new Request(request.url, {
         method: request.method,
@@ -89,7 +108,7 @@ const createLab = (fail: "put" | "register" | undefined) => {
       })
     );
   };
-  return { database, fetchImpl, requests };
+  return { database, fetchImpl, requests, gate };
 };
 
 const withDb = <A>(dataDir: string, readOnly: boolean, body: (db: DatabaseSync) => A): A => {
@@ -103,6 +122,12 @@ const withDb = <A>(dataDir: string, readOnly: boolean, body: (db: DatabaseSync) 
 
 const countRows = (dataDir: string, sql: string): number =>
   withDb(dataDir, true, (db) => z.parse(countSchema, db.prepare(sql).get()).n);
+
+const bucketRowIds = (database: DatabaseSync, deviceId: string): number[] =>
+  database
+    .prepare("SELECT rowid AS id FROM buckets WHERE device_id = ? ORDER BY rowid")
+    .all(deviceId)
+    .map((row) => z.parse(rowIdSchema, row).id);
 
 const deviceIdOf = (dataDir: string): string =>
   withDb(
@@ -194,6 +219,9 @@ interface Harness {
   readonly setup: RefreshSetup;
   readonly env: Record<string, string>;
   readonly requests: Recorded[];
+  readonly database: DatabaseSync;
+  /** The next `POST /v1/devices` after a successful revoke answers 409. */
+  readonly gate: { failRegisterAfterRevoke: boolean };
   readonly logPath: string;
   readonly storePath: string;
   readonly fetchImpl: BackendFetch;
@@ -264,6 +292,8 @@ const open = async (fail?: "put" | "register"): Promise<Harness> => {
     setup,
     env,
     requests: lab.requests,
+    database: lab.database,
+    gate: lab.gate,
     logPath: stubs.logPath,
     storePath: stubs.storePath,
     fetchImpl: lab.fetchImpl,
@@ -417,19 +447,73 @@ describe("pair", () => {
     }
   });
 
-  it("maps a registered device to conflict and changes nothing else", async () => {
+  it("revokes and registers again after unpair, keeps uploaded buckets, and refuses the old token", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      const first = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(first.exitCode).toBe(0);
+      const deviceId = deviceIdOf(harness.setup.dataDir);
+      const oldToken = (await readStore(harness.storePath))[deviceId];
+      const uploaded = bucketRowIds(harness.database, deviceId);
+      expect(uploaded.length).toBeGreaterThan(0);
+      expect((await harness.run(["unpair"])).exitCode).toBe(0);
+
+      const again = await harness.run(["pair", "--url", BASE, "--name", "Desk"], `${ADMIN}\n`);
+      expect(again.exitCode).toBe(0);
+      expect(again.stdout).toContain(`paired Desk (${deviceId})`);
+      expect(again.stdout).toContain(REREGISTERED);
+      expect(again.stdout).not.toContain(ADMIN);
+      expect(again.stderr).not.toContain(ADMIN);
+      const newToken = (await readStore(harness.storePath))[deviceId];
+      if (typeof oldToken !== "string" || typeof newToken !== "string") {
+        throw new Error("the device token was not stored");
+      }
+      expect(newToken).not.toBe(oldToken);
+      expect(await readConfigFile(harness.setup.dataDir)).toEqual({ backendUrl: BASE, deviceName: "Desk" });
+      expect(bucketRowIds(harness.database, deviceId)).toEqual(uploaded);
+      expect(
+        (
+          await harness.fetchImpl(
+            new Request(`${BASE}/v1/devices`, { headers: { authorization: `Bearer ${oldToken}` } })
+          )
+        ).status
+      ).toBe(401);
+      expect(
+        (
+          await harness.fetchImpl(
+            new Request(`${BASE}/v1/devices`, { headers: { authorization: `Bearer ${newToken}` } })
+          )
+        ).status
+      ).toBe(200);
+      const log = await readFile(join(harness.setup.dataDir, "logs", "snorlax.log"), "utf8");
+      expect(log).toContain(REREGISTERED);
+      expect(log).not.toContain(ADMIN);
+      expect(harness.requests.some((request) => request.method === "DELETE")).toBe(true);
+      expect(await treeText(harness.setup.dataDir)).not.toContain(ADMIN);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("reports conflict when registering again is still 409", async () => {
     const harness = await open();
     try {
       await prepareLedger(harness);
       const deviceId = deviceIdOf(harness.setup.dataDir);
-      expect((await registerAgain(harness, deviceId)).status).toBe(201);
+      expect((await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`)).exitCode).toBe(0);
+      expect((await harness.run(["unpair"])).exitCode).toBe(0);
+      harness.gate.failRegisterAfterRevoke = true;
       const failed = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
       expect(failed.exitCode).toBe(1);
       const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
       expect(error.code).toBe("conflict");
-      expect(error.message).toContain(`device ${deviceId} is already registered`);
-      expect(error.message).toContain("admin token");
-      await pairingUnchanged(harness);
+      expect(error.message).toContain(`device ${deviceId} is still registered after it was revoked`);
+      expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBeUndefined();
+      expect(await readStore(harness.storePath)).toEqual({});
+      expect(harness.requests.filter((request) => request.method === "DELETE")).toHaveLength(1);
+      expect(failed.stdout).not.toContain(ADMIN);
+      expect(await treeText(harness.setup.dataDir)).not.toContain(ADMIN);
     } finally {
       await harness.close();
     }

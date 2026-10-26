@@ -38,13 +38,14 @@ export class BackendForbidden extends Data.TaggedError("BackendForbidden")<{
 
 /**
  * The response is not one this client can use: any other 4xx (400 and 404 included), or a 2xx whose body
- * does not match the interface definition. HTTP 409 is `BackendConflict`, which `pair` reports as `conflict`.
+ * does not match the interface definition. HTTP 409 is `BackendConflict`. `pair` revokes and registers again;
+ * only a second 409 is `conflict`.
  */
 export class BackendInvalidResponse extends Data.TaggedError("BackendInvalidResponse")<{
   readonly message: string;
 }> {}
 
-/** The id is already registered and has not been revoked (HTTP 409). `pair` turns this into `conflict`. */
+/** The id is already registered and has not been revoked (HTTP 409). `pair` revokes it and registers again. */
 export class BackendConflict extends Data.TaggedError("BackendConflict")<{
   readonly message: string;
 }> {}

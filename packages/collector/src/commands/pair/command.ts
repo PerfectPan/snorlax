@@ -3,7 +3,7 @@ import { Flag } from "effect/cli";
 import { Effect } from "effect";
 
 import { syncLine } from "../../core/sync-text/sync-text.ts";
-import { pairFlow } from "./flow.ts";
+import { REREGISTERED, pairFlow } from "./flow.ts";
 
 /**
  * `snorlax pair --url <url> --name <name>` (plan 3.1, 3.4.2). The admin token is read from stdin. JSON output
@@ -32,9 +32,10 @@ export const pairCommand = {
         "sync" in paired
           ? syncLine(paired.sync)
           : `refresh did not finish (${paired.refreshNote}). The next scheduled refresh will catch up.`;
+      const replaced = paired.reregistered ? `${REREGISTERED}\n` : "";
       return {
         payload,
-        human: `paired ${paired.name} (${paired.deviceId})\n${detail}\n`
+        human: `paired ${paired.name} (${paired.deviceId})\n${replaced}${detail}\n`
       };
     })
 };
