@@ -27,9 +27,14 @@ export const pairCommand = {
         deviceId: paired.deviceId,
         name: paired.name
       } satisfies PairResult;
+      // A refresh that never produced a report still leaves the pairing in place. The next scheduled run retries.
+      const detail =
+        "sync" in paired
+          ? syncLine(paired.sync)
+          : `refresh did not finish (${paired.refreshNote}). The next scheduled refresh will catch up.`;
       return {
         payload,
-        human: `paired ${paired.name} (${paired.deviceId})\n${syncLine(paired.sync)}\n`
+        human: `paired ${paired.name} (${paired.deviceId})\n${detail}\n`
       };
     })
 };

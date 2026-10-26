@@ -4,10 +4,12 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { acquireProcessLock } from "@rivus/agent-kit-collab/process-lock";
 import { failureSchema, httpPushRequestSchema, okSchema, pairResultSchema } from "@rivus/snorlax-protocol";
 import { createApp } from "@rivus/snorlax-worker";
 import { createSqliteD1 } from "@rivus/snorlax-worker/sqlite-d1";
-import { Effect, Layer } from "effect";
+import { Duration, Effect, Fiber, Layer } from "effect";
+import { TestClock } from "effect/testing";
 import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,6 +18,7 @@ import { Secrets } from "../src/capabilities/secrets/secrets.ts";
 import { CliEnv } from "../src/cli/env.ts";
 import { runCli } from "../src/cli/run.ts";
 import { configSchema } from "../src/modules/config/config.ts";
+import { LOCK_WAIT_MS } from "../src/modules/ledger/lock.ts";
 import { NodeFiles, SnorlaxPlatform } from "../src/modules/platform/platform.ts";
 import { TimeZone } from "../src/modules/time-zone/time-zone.ts";
 import { quietMtime, writeClaudeSession } from "./fixtures/agents.ts";
@@ -190,7 +193,9 @@ interface Harness {
   readonly fetchImpl: BackendFetch;
   readonly run: (
     args: readonly string[],
-    stdin?: string
+    stdin?: string,
+    /** Resolves once the post-pair refresh is waiting on the ledger lock. The run then advances the test clock. */
+    advanceLockWait?: Promise<void>
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   readonly close: () => Promise<void>;
 }
@@ -210,34 +215,43 @@ const open = async (fail?: "put" | "register"): Promise<Harness> => {
     STUB_STORE: stubs.storePath
   };
   const platform: TestPlatform = { ...setup.platform, env };
-  const run = async (args: readonly string[], stdin?: string) => {
+  const run = async (args: readonly string[], stdin?: string, advanceLockWait?: Promise<void>) => {
     const out = createCapture();
     const err = createCapture();
     const platformLayer = Layer.succeed(SnorlaxPlatform, platform);
-    const exit = await Effect.runPromise(
-      Effect.flip(
-        runCli(
-          args,
-          Layer.mergeAll(
-            platformLayer,
-            NodeFiles.live,
-            fakeScheduler([], { jobFile: join(setup.home, "job") }),
-            Layer.succeed(
-              CliEnv,
-              CliEnv.of({
-                stdout: out.sink,
-                stderr: err.sink,
-                colors: false,
-                ...(stdin === undefined ? {} : { stdin })
-              })
-            ),
-            Backend.layer(lab.fetchImpl),
-            Layer.succeed(TimeZone, TIME_ZONE),
-            Layer.provide(Secrets.keychain, platformLayer)
-          )
+    const cli = Effect.flip(
+      runCli(
+        args,
+        Layer.mergeAll(
+          platformLayer,
+          NodeFiles.live,
+          fakeScheduler([], { jobFile: join(setup.home, "job") }),
+          Layer.succeed(
+            CliEnv,
+            CliEnv.of({
+              stdout: out.sink,
+              stderr: err.sink,
+              colors: false,
+              ...(stdin === undefined ? {} : { stdin })
+            })
+          ),
+          Backend.layer(lab.fetchImpl),
+          Layer.succeed(TimeZone, TIME_ZONE),
+          Layer.provide(Secrets.keychain, platformLayer)
         )
       )
     );
+    const exit =
+      advanceLockWait === undefined
+        ? await Effect.runPromise(cli)
+        : await Effect.runPromise(
+            Effect.gen(function* () {
+              const fiber = yield* Effect.forkChild(cli);
+              yield* Effect.promise(() => advanceLockWait);
+              yield* TestClock.adjust(Duration.millis(LOCK_WAIT_MS));
+              return yield* Fiber.join(fiber);
+            }).pipe(Effect.provide(TestClock.layer()))
+          );
     return { exitCode: exit.exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join("") };
   };
   return {
@@ -297,6 +311,48 @@ const registerAgain = (harness: Harness, deviceId: string) =>
       body: JSON.stringify({ deviceId, name: "Desk" })
     })
   );
+
+/**
+ * Holds the ledger lock from the moment `config.json` is written, which is after `markAllDirty`, and
+ * resolves once the following refresh has entered its own lock wait. Counts realpath calls on the lock's
+ * directory: device id, the dirty step, this hold, then the refresh.
+ */
+const holdLockAfterConfig = (harness: Harness): { readonly waiting: Promise<void>; release: () => Promise<void> } => {
+  const dataDir = harness.setup.dataDir;
+  const lockDir = `${dataDir}/`;
+  const fs = harness.setup.platform.fs;
+  const realpath = fs.realpath.bind(fs);
+  let seen = 0;
+  let resolveWaiting: () => void = () => undefined;
+  const waiting = new Promise<void>((resolve) => {
+    resolveWaiting = resolve;
+  });
+  fs.realpath = async (path) => {
+    if (path === lockDir) {
+      seen += 1;
+      if (seen === 4) {
+        resolveWaiting();
+      }
+    }
+    return realpath(path);
+  };
+  const writeAtomic = fs.writeAtomic.bind(fs);
+  let release = (): Promise<void> => Promise.resolve();
+  fs.writeAtomic = async (path, data, options) => {
+    await writeAtomic(path, data, options);
+    if (typeof data === "string" && path.endsWith("config.json") && data.includes("backendUrl")) {
+      const acquired = await acquireProcessLock(harness.setup.platform, join(dataDir, "ledger.lock"));
+      if (!acquired.ok) {
+        throw new Error("the test could not hold the ledger lock");
+      }
+      release = () => acquired.value.release();
+    }
+  };
+  return {
+    waiting,
+    release: () => release()
+  };
+};
 
 describe("pair", () => {
   it("stores the token on security stdin, marks every bucket dirty, clears remote rows, and pushes", async () => {
@@ -467,6 +523,119 @@ describe("pair", () => {
       expect(error.code).toBe("network");
       await pairingUnchanged(harness);
       expect(await treeText(harness.setup.dataDir)).not.toContain(ADMIN);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("exits 0 when the ledger lock is held for the refresh after pairing", async () => {
+    const harness = await open();
+    let held: ReturnType<typeof holdLockAfterConfig> | undefined;
+    try {
+      await prepareLedger(harness);
+      held = holdLockAfterConfig(harness);
+      const paired = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`, held.waiting);
+      expect(paired.stderr).toBe("");
+      expect(paired.exitCode).toBe(0);
+      const payload = z.parse(pairResultSchema, JSON.parse(paired.stdout));
+      const deviceId = deviceIdOf(harness.setup.dataDir);
+      expect(payload).toEqual({ schemaVersion: 1, ok: true, deviceId, name: "Desk" });
+      expect(await readConfigFile(harness.setup.dataDir)).toEqual({ backendUrl: BASE, deviceName: "Desk" });
+      expect((await readStore(harness.storePath))[deviceId]).toBeDefined();
+      const log = await readFile(join(harness.setup.dataDir, "logs", "snorlax.log"), "utf8");
+      expect(log).toContain('"refresh":"failed"');
+      expect(log).toContain("waited 60s");
+      expect(log).not.toContain(ADMIN);
+
+      const human = await open();
+      let humanHeld: ReturnType<typeof holdLockAfterConfig> | undefined;
+      try {
+        await prepareLedger(human);
+        humanHeld = holdLockAfterConfig(human);
+        const text = await human.run(["pair", "--url", BASE, "--name", "Desk"], `${ADMIN}\n`, humanHeld.waiting);
+        expect(text.exitCode).toBe(0);
+        expect(text.stdout).toContain("paired Desk");
+        expect(text.stdout).toContain("refresh did not finish");
+        expect(text.stdout).toContain("The next scheduled refresh will catch up.");
+        expect(text.stdout).not.toContain(ADMIN);
+        expect(await readConfigFile(human.setup.dataDir)).toMatchObject({ backendUrl: BASE });
+      } finally {
+        await humanHeld?.release();
+        await human.close();
+      }
+    } finally {
+      await held?.release();
+      await harness.close();
+    }
+  });
+
+  it("is not paired when marking buckets dirty fails before config is written", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      const sqlite = harness.setup.platform.sqlite;
+      const openDb = sqlite.open.bind(sqlite);
+      let ledgerOpens = 0;
+      sqlite.open = (path, options) => {
+        if (path.endsWith("ledger.db")) {
+          ledgerOpens += 1;
+          if (ledgerOpens === 2) {
+            throw new Error("ledger open refused");
+          }
+        }
+        return openDb(path, options);
+      };
+      const failed = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(failed.exitCode).toBe(1);
+      const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
+      expect(error.code).toBe("data-dir");
+      expect(error.message).toContain("token was stored");
+      expect(error.message).toContain("not marked dirty");
+      expect(error.message).toContain("config was not written");
+      expect(error.message).toContain("not paired");
+      expect(error.message).toContain("admin token");
+      expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBeUndefined();
+      const deviceId = deviceIdOf(harness.setup.dataDir);
+      expect((await readStore(harness.storePath))[deviceId]).toBeDefined();
+      expect(countRows(harness.setup.dataDir, "SELECT COUNT(*) AS n FROM buckets WHERE dirty != 0")).toBe(0);
+      expect(
+        countRows(harness.setup.dataDir, `SELECT COUNT(*) AS n FROM remote_buckets WHERE device_id = '${PLANT}'`)
+      ).toBe(1);
+      expect(failed.stdout).not.toContain(ADMIN);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("says buckets were marked when config cannot be written after that", async () => {
+    const harness = await open();
+    try {
+      await prepareLedger(harness);
+      const fs = harness.setup.platform.fs;
+      const writeAtomic = fs.writeAtomic.bind(fs);
+      fs.writeAtomic = async (path, data, options) => {
+        if (path.endsWith("config.json") && String(data).includes("backendUrl")) {
+          throw new Error("config write refused");
+        }
+        return writeAtomic(path, data, options);
+      };
+      const failed = await harness.run(["pair", "--url", BASE, "--name", "Desk", "--json"], `${ADMIN}\n`);
+      expect(failed.exitCode).toBe(1);
+      const error = z.parse(failureSchema, JSON.parse(failed.stdout)).error;
+      expect(error.code).toBe("data-dir");
+      expect(error.message).toContain("token was stored");
+      expect(error.message).toContain("marked dirty");
+      expect(error.message).toContain("remote rows were reset");
+      expect(error.message).toContain("config.json was not written");
+      expect(error.message).toContain("not paired");
+      expect((await readConfigFile(harness.setup.dataDir))?.backendUrl).toBeUndefined();
+      const deviceId = deviceIdOf(harness.setup.dataDir);
+      expect((await readStore(harness.storePath))[deviceId]).toBeDefined();
+      expect(countRows(harness.setup.dataDir, "SELECT COUNT(*) AS n FROM buckets WHERE dirty != 0")).toBeGreaterThan(0);
+      expect(
+        countRows(harness.setup.dataDir, `SELECT COUNT(*) AS n FROM remote_buckets WHERE device_id = '${PLANT}'`)
+      ).toBe(0);
+      expect(failed.stdout).not.toContain(ADMIN);
     } finally {
       await harness.close();
     }

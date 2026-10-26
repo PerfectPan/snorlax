@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,11 @@ interface ForcedPut {
   readonly body: unknown;
 }
 
+interface PullPage {
+  readonly buckets: readonly unknown[];
+  readonly next: number | null;
+}
+
 const countDirty = (dataDir: string): number => {
   const db = new DatabaseSync(join(dataDir, "ledger.db"), { readOnly: true, timeout: 200 });
   try {
@@ -79,9 +84,22 @@ const createLab = () => {
   const dirs = new Map<string, string>();
   let down = false;
   let forced: ForcedPut | undefined;
+  let pullPage: ((after: number, seen: number) => PullPage | undefined) | undefined;
+  let pullSeen = 0;
   const fetchImpl: BackendFetch = async (request) => {
     const text = request.method === "GET" || request.method === "DELETE" ? null : await request.text();
     requests.push({ method: request.method, url: request.url, body: text });
+    if (pullPage !== undefined && request.method === "GET" && new URL(request.url).pathname.endsWith("/v1/buckets")) {
+      pullSeen += 1;
+      const after = Number(new URL(request.url).searchParams.get("after") ?? "0");
+      const page = pullPage(after, pullSeen);
+      if (page !== undefined) {
+        return new Response(JSON.stringify(page), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+    }
     if (request.method === "PUT") {
       const deviceId = decodeURIComponent(new URL(request.url).pathname.split("/")[3] ?? "");
       const dataDir = dirs.get(deviceId);
@@ -120,6 +138,10 @@ const createLab = () => {
     },
     setForcedPut: (value: ForcedPut | undefined) => {
       forced = value;
+    },
+    setPullPage: (value: ((after: number, seen: number) => PullPage | undefined) | undefined) => {
+      pullPage = value;
+      pullSeen = 0;
     }
   };
 };
@@ -678,6 +700,95 @@ describe("collector sync", () => {
       expect(snap.kind === "ok" && snap.snapshot.generatedAt).toBe(new Date(NOW + 60_000).toISOString());
       expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("failed");
       expect(snap.kind === "ok" && snap.snapshot.status.paired).toBe(true);
+    } finally {
+      await setup.remove();
+    }
+  });
+
+  it("fails a pull whose next does not move past after, and does not request another page", async () => {
+    const harness = await open();
+    try {
+      const hour9 = Date.UTC(2026, 9, 22, 9) / 1000;
+      const alpha = await harness.pair([{ hour: hour9, inputTokens: 10, outputTokens: 1 }], "Alpha");
+      const before = harness.lab.requests.length;
+      // The second answer would let an unguarded client finish. The guard must stop on the first page.
+      harness.lab.setPullPage((after, seen) =>
+        seen === 1 ? { buckets: [], next: after } : { buckets: [], next: null }
+      );
+      const failed = await harness.run(alpha.setup);
+      expect(failed.result.sync.state).toBe("failed");
+      expect(failed.result.sync.message).toContain("not past after");
+      const pulls = harness.lab.requests
+        .slice(before)
+        .filter((request) => request.method === "GET" && request.url.includes("/v1/buckets"));
+      expect(pulls).toHaveLength(1);
+      expect((await snapshotOf(alpha.setup)).status.sync.state).toBe("failed");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("reports sync failed when security throws while starting", async () => {
+    const setup = await createRefreshSetup({ now: NOW });
+    const stub = join(setup.home, "security-noshebang");
+    try {
+      await writeFile(stub, "not a script\n");
+      await chmod(stub, 0o755);
+      await writeClaudeSession(setup.home, {
+        sessionId: "noshebang",
+        mtimeMs: quietMtime(NOW),
+        requests: [
+          {
+            requestId: "noshebang-1",
+            model: "claude-haiku-4-5",
+            timestampMs: NOW - 60_000,
+            usage: usage(1, 1)
+          }
+        ]
+      });
+      const platform = {
+        ...setup.platform,
+        env: {
+          ...setup.platform.env,
+          PATH: "/usr/bin:/bin",
+          SNORLAX_HOME: setup.dataDir,
+          SNORLAX_SECURITY: stub
+        }
+      };
+      const layers = Layer.mergeAll(
+        Layer.succeed(SnorlaxPlatform, platform),
+        NodeFiles.live,
+        Layer.provide(Secrets.keychain, Layer.succeed(SnorlaxPlatform, platform)),
+        Backend.layer(() => Promise.reject(new Error("a keychain that cannot start must not call the backend"))),
+        Layer.succeed(TimeZone, TIME_ZONE)
+      );
+      // Create the ledger while unpaired, then point config at a backend so the next refresh starts security.
+      await Effect.runPromise(refreshFlow.pipe(Effect.provide(layers)));
+      await writeFile(join(setup.dataDir, "config.json"), JSON.stringify({ backendUrl: BASE, deviceName: "Broken" }));
+      const stdout: string[] = [];
+      const exit = await Effect.runPromise(
+        Effect.flip(
+          runCli(
+            ["refresh"],
+            Layer.mergeAll(
+              layers,
+              fakeScheduler([], { jobFile: join(setup.home, "job") }),
+              Layer.succeed(
+                CliEnv,
+                CliEnv.of({
+                  stdout: { write: (text) => void stdout.push(text) },
+                  stderr: { write: () => undefined },
+                  colors: false
+                })
+              )
+            )
+          )
+        )
+      );
+      expect(exit.exitCode).toBe(0);
+      expect(stdout.join("")).toContain("sync: failed");
+      const snap = await readSnapshotFile(setup.platform, setup.dataDir);
+      expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("failed");
     } finally {
       await setup.remove();
     }

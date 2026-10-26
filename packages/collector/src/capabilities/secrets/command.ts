@@ -48,6 +48,9 @@ const readAll = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]
   }
 };
 
+const cannotRun = (command: string, error: unknown): KeychainUnavailable =>
+  new KeychainUnavailable({ message: `cannot run ${command}: ${errorMessage(error)}` });
+
 /**
  * Runs `command` with `args` and writes `stdin` to the child, then closes it. The token a caller puts in
  * `stdin` is never placed in `args` (plan 3.4.2). Failing to start, a signal, or no answer within 15s on the
@@ -60,56 +63,71 @@ export const runStdinCommand = (
   args: readonly string[],
   stdin: string
 ): Effect.Effect<CommandResult, KeychainUnavailable> =>
-  Effect.callback<CommandResult, KeychainUnavailable>((resume) => {
-    const controller = new AbortController();
-    const child = platform.process.spawn(command, args, {
-      cwd: platform.home,
-      env: platform.env,
-      signal: controller.signal
-    });
-    const encoder = new TextEncoder();
-    const written = (async (): Promise<void> => {
-      const writer = child.stdin.getWriter();
+  // `spawn` throws synchronously for ENOEXEC, ENOTDIR and E2BIG, and `Writable.toWeb` (reached by
+  // `getWriter`) throws EMFILE. A throw inside `Effect.callback` is a defect, so refresh would fail
+  // `internal` and skip the snapshot. `Effect.try` keeps it on the `KeychainUnavailable` channel.
+  Effect.try({
+    try: () => {
+      const controller = new AbortController();
       try {
-        await writer.write(encoder.encode(stdin));
-        await writer.close();
-      } catch {
-        // The child can exit before it reads; its status is the result that matters.
+        const child = platform.process.spawn(command, args, {
+          cwd: platform.home,
+          env: platform.env,
+          signal: controller.signal
+        });
+        return { controller, child, writer: child.stdin.getWriter() };
+      } catch (error) {
+        controller.abort();
+        throw error;
       }
-    })();
-    const finished = Promise.all([readAll(child.stdout), readAll(child.stderr), child.exited, written]).then(
-      ([stdout, stderr, status]) => ({ stdout: decode(stdout), stderr: decode(stderr), status })
-    );
-    let settled = false;
-    const finish = (effect: Effect.Effect<CommandResult, KeychainUnavailable>): void => {
-      if (!settled) {
-        settled = true;
-        resume(effect);
-      }
-    };
-    void finished.then(
-      ({ stdout, stderr, status }) => {
-        if (status.signal !== null || status.code === null) {
-          finish(
-            Effect.fail(
-              new KeychainUnavailable({
-                message: `${command} stopped (${status.signal ?? "no exit code"})`
-              })
-            )
-          );
-          return;
-        }
-        finish(Effect.succeed({ code: status.code, stdout, stderr }));
-      },
-      (error: unknown) =>
-        finish(Effect.fail(new KeychainUnavailable({ message: `cannot run ${command}: ${errorMessage(error)}` })))
-    );
-    return Effect.sync(() => controller.abort());
+    },
+    catch: (error) => cannotRun(command, error)
   }).pipe(
-    Effect.timeoutOrElse({
-      duration: COMMAND_TIMEOUT,
-      orElse: () => Effect.fail(new KeychainUnavailable({ message: `${command} did not finish within 15s` }))
-    })
+    Effect.flatMap(({ controller, child, writer }) =>
+      Effect.callback<CommandResult, KeychainUnavailable>((resume) => {
+        const encoder = new TextEncoder();
+        const written = (async (): Promise<void> => {
+          try {
+            await writer.write(encoder.encode(stdin));
+            await writer.close();
+          } catch {
+            // The child can exit before it reads; its status is the result that matters.
+          }
+        })();
+        const finished = Promise.all([readAll(child.stdout), readAll(child.stderr), child.exited, written]).then(
+          ([stdout, stderr, status]) => ({ stdout: decode(stdout), stderr: decode(stderr), status })
+        );
+        let settled = false;
+        const finish = (effect: Effect.Effect<CommandResult, KeychainUnavailable>): void => {
+          if (!settled) {
+            settled = true;
+            resume(effect);
+          }
+        };
+        void finished.then(
+          ({ stdout, stderr, status }) => {
+            if (status.signal !== null || status.code === null) {
+              finish(
+                Effect.fail(
+                  new KeychainUnavailable({
+                    message: `${command} stopped (${status.signal ?? "no exit code"})`
+                  })
+                )
+              );
+              return;
+            }
+            finish(Effect.succeed({ code: status.code, stdout, stderr }));
+          },
+          (error: unknown) => finish(Effect.fail(cannotRun(command, error)))
+        );
+        return Effect.sync(() => controller.abort());
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_TIMEOUT,
+          orElse: () => Effect.fail(new KeychainUnavailable({ message: `${command} did not finish within 15s` }))
+        })
+      )
+    )
   );
 
 /** `SNORLAX_SECURITY` or `SNORLAX_SECRET_TOOL` when set, otherwise the system binary. */

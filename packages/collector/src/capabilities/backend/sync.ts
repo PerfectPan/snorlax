@@ -7,7 +7,7 @@ import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../../core/buc
 import { readConfig, type ConfigInvalid } from "../../modules/config/config.ts";
 import { type Ledger, type LedgerUnreadable, type SyncReport } from "../../modules/ledger/ledger.ts";
 import type { Secrets } from "../secrets/secrets.ts";
-import type { Backend, BackendCallFailure } from "./backend.ts";
+import { BackendInvalidResponse, type Backend, type BackendCallFailure } from "./backend.ts";
 
 /**
  * How many dirty rows one push sends. Plan 3.2.4 allows 1–200; the client never sends more, and it does not
@@ -54,8 +54,9 @@ const toBucket = (deviceId: string, row: BucketRow): Bucket => ({
  * row's seq; only an empty page sets `next` to null. Each stored row takes that high-water mark (`next`,
  * or the request's `after` when `next` is null). `meta.pull_cursor` moves to every non-null `next` after
  * the upsert, and the client keeps pulling until `next` is null, so the next refresh starts after the rows
- * already stored. A crash before the cursor write retries the page; the upsert is idempotent. Rows for
- * this device are skipped.
+ * already stored. A `next` that is not greater than this request's `after` is an illegal response: the
+ * sync is reported failed and the loop stops, so a repeated cursor cannot hold the lock. A crash before
+ * the cursor write retries the page; the upsert is idempotent. Rows for this device are skipped.
  */
 export const synchronize = (
   input: SyncInput & {
@@ -143,6 +144,14 @@ export const synchronize = (
         return reportFor(outcome.error);
       }
       const page = outcome.value;
+      // Applied before the upsert: a page that does not advance the cursor is not stored and not retried.
+      if (page.next !== null && page.next <= after) {
+        return reportFor(
+          new BackendInvalidResponse({
+            message: `the backend returned a pull page whose next ${page.next} is not past after ${after}`
+          })
+        );
+      }
       const seq = page.next ?? after;
       const rows: RemoteBucketRow[] = [];
       for (const bucket of page.buckets) {
