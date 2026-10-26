@@ -81,6 +81,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            SyncSection(pairing: model.pairing)
             Section("Launch at login") {
                 Toggle("Launch at login", isOn: Binding(
                     get: { loginItem.enabled },
@@ -135,6 +136,52 @@ struct SettingsView: View {
         .onAppear {
             loginItem.refreshStatus()
             model.loadDeviceName()
+            model.pairing.apply(status: model.snapshotStatus)
+            Task { await model.pairing.loadDefaultDeviceName() }
+        }
+        .onChange(of: model.snapshotStatus) { _, status in
+            model.pairing.apply(status: status)
+        }
+    }
+}
+
+/// Backend URL, admin token, and pair or unpair. The fields and the buttons bind
+/// to `PairingModel`; this view does not run the collector itself.
+private struct SyncSection: View {
+    @ObservedObject var pairing: PairingModel
+
+    var body: some View {
+        Section("Sync") {
+            if pairing.paired {
+                Text("Paired")
+                Text("Sync: \(pairing.syncStateText)")
+                Text("Last sync: \(pairing.lastSyncText)")
+                Button("Unpair") {
+                    Task { await pairing.unpair() }
+                }
+                .disabled(pairing.running)
+            } else {
+                TextField("Backend URL", text: $pairing.backendURL)
+                    .autocorrectionDisabled()
+                    .disabled(pairing.running)
+                TextField("Device name", text: $pairing.deviceName)
+                    .autocorrectionDisabled()
+                    .disabled(pairing.running)
+                SecureField("Admin token", text: $pairing.adminToken)
+                    .disabled(pairing.running)
+                Text("The admin token is used only for this pairing. It is not saved.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Pair") {
+                    Task { await pairing.pair() }
+                }
+                .disabled(!pairing.canPair)
+            }
+            if let notice = pairing.notice {
+                Text(notice)
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
         }
     }
 }

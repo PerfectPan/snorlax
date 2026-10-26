@@ -7,7 +7,7 @@ Keep collaboration policy in `CONTRIBUTING.md`, AI-agent instructions in `AGENTS
 ## What Belongs Here
 
 - `architecture/` for the current system shape: domain boundaries, module boundaries, data flow, trust boundaries, storage, integrations, deployment topology, and major tradeoffs.
-- `development/` for local setup, common development tasks, debugging workflows, test strategy, fixtures, release dry-runs, and stack-specific commands. Installing the collector on Linux is [development/linux.md](development/linux.md). Deploying the Worker is [development/worker.md](development/worker.md). The release runbook is [development/release.md](development/release.md).
+- `development/` for local setup, common development tasks, debugging workflows, test strategy, fixtures, release dry-runs, and stack-specific commands. Installing the collector on Linux is [development/linux.md](development/linux.md). Pairing a machine is [development/pairing.md](development/pairing.md). Deploying the Worker is [development/worker.md](development/worker.md). The release runbook is [development/release.md](development/release.md).
 - `reference/` for stable factual material such as APIs, CLI commands, configuration, protocols, schemas, error codes, and generated interfaces.
 - `operations/` for runbooks, incident response, monitoring, backups, migrations, and rollback procedures when the project has operational responsibilities.
 - `tutorials/` for guided onboarding exercises when a new contributor needs a start-to-finish learning path.

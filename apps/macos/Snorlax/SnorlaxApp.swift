@@ -15,7 +15,7 @@ struct SnorlaxApp: App {
 
         Window("Settings", id: "settings") {
             SettingsView(model: model)
-                .frame(minWidth: 440, minHeight: 420)
+                .frame(minWidth: 440, minHeight: 560)
         }
     }
 }

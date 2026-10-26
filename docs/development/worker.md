@@ -71,8 +71,8 @@ SNORLAX_D1_DATABASE_ID=<d1-database-id> SNORLAX_DOMAIN=<domain> \
 
 Leave `SNORLAX_DOMAIN` unset to stay on `workers.dev`.
 
-Changing the domain moves the Worker to a new origin. Each device has to pair again. Pairing steps for a machine
-are not part of this deploy.
+Changing the domain moves the Worker to a new origin. Each device has to pair again. The steps are in
+[pairing.md](pairing.md).
 
 ## Check
 
