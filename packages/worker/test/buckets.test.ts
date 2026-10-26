@@ -216,6 +216,30 @@ describe("PUT /v1/devices/:id/buckets", () => {
     expect(badCounts.status).toBe(400);
   });
 
+  it.each([
+    ["no", undefined],
+    ["a text", "text/plain;charset=UTF-8"]
+  ])("answers a valid body sent with %s Content-Type with 400 naming the header", async (_, contentType) => {
+    const { handler } = createTestBackend();
+    const a = await registerDevice(handler, deviceAId, "Device A");
+    const request = new Request(`https://snorlax.test/v1/devices/${deviceAId}/buckets`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${a.token}` },
+      body: JSON.stringify({ buckets: [bucketFixture(deviceAId)] })
+    });
+    // A string body gets `text/plain;charset=UTF-8` from the Request constructor unless the header is removed.
+    if (contentType === undefined) {
+      request.headers.delete("Content-Type");
+    }
+    expect(request.headers.get("Content-Type")).toBe(contentType ?? null);
+    const { status, body } = await call(handler, request);
+    expect(status).toBe(400);
+    expect(z.parse(httpErrorSchema, body).error).toEqual({
+      code: "invalid-body",
+      message: "request body must be sent with Content-Type: application/json"
+    });
+  });
+
   it("answers a body sent as JSON that does not parse with 400 invalid-body, not 500", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");

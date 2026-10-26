@@ -1,5 +1,5 @@
 import { sValidator } from "@hono/standard-validator";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 import { bodyLimit } from "hono/body-limit";
 
@@ -42,6 +42,13 @@ export interface AppDeps {
 /** Request bodies above 1 MB are refused (plan 3.12). */
 const MAX_BODY_BYTES = 1_000_000;
 
+/**
+ * The `Content-Type` under which Hono's JSON validator parses a body: its `jsonRegex` without the needless
+ * escapes. Under any other it validates `{}`. `requireJson` answers those requests itself, so a valid body sent
+ * without the header is not reported as one that does not match the interface definition (plan 3.2.4).
+ */
+const JSON_CONTENT_TYPE = /^application\/([a-z.-]+\+)?json(;\s*[a-zA-Z0-9-]+=([^;]+))*$/i;
+
 interface AppEnv {
   Variables: { device: AuthenticatedDevice };
 }
@@ -73,6 +80,12 @@ export const createApp = ({ db, adminToken, now }: AppDeps): Hono<AppEnv> => {
     maxSize: MAX_BODY_BYTES,
     onError: () => failureResponse("PayloadTooLarge", `request body exceeds ${MAX_BODY_BYTES} bytes`)
   });
+  const requireJson: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (!JSON_CONTENT_TYPE.test(c.req.header("Content-Type") ?? "")) {
+      return failureResponse("InvalidBody", "request body must be sent with Content-Type: application/json");
+    }
+    await next();
+  };
   const rejectInvalid = (result: { readonly success: boolean; readonly target: string }): Response | undefined =>
     result.success
       ? undefined
@@ -89,6 +102,7 @@ export const createApp = ({ db, adminToken, now }: AppDeps): Hono<AppEnv> => {
     "/v1/devices",
     adminOnly,
     limitBody,
+    requireJson,
     sValidator("json", httpDeviceRegisterRequestSchema, rejectInvalid),
     async (c) => {
       const deviceToken = await registerDevice({ db, now }, c.req.valid("json"));
@@ -100,6 +114,7 @@ export const createApp = ({ db, adminToken, now }: AppDeps): Hono<AppEnv> => {
     "/v1/devices/:id/buckets",
     anyDevice,
     limitBody,
+    requireJson,
     sValidator("json", httpPushRequestSchema, rejectInvalid),
     async (c) => {
       const seq = await pushBuckets(
