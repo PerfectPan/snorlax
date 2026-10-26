@@ -1,13 +1,18 @@
 import type { FailureCode } from "@rivus/snorlax-protocol";
 import type { Command } from "effect/cli";
 
+import type { BackendFailure } from "../capabilities/backend/backend.ts";
+import type { KeychainUnavailable } from "../capabilities/secrets/secrets.ts";
 import type { rootCommand } from "./root.ts";
 
 /**
  * Every error a command can fail with, read off the root command's error channel: the root handler's
  * usage error and the typed failures of every subcommand handler. effect/cli's own `CliError` is not in it.
+ * Refresh folds a locked keychain and the backend failures into the sync report. Both stay in this union
+ * so `pair` and `unpair` can fail with them. `BackendConflict` is not here: `pair` turns it into
+ * `PairConflict`. Type-only imports keep this file from loading those modules.
  */
-type CommandFailure = Command.Error<typeof rootCommand>;
+type CommandFailure = Command.Error<typeof rootCommand> | BackendFailure | KeychainUnavailable;
 
 export interface FailureExit {
   readonly code: FailureCode;
@@ -27,8 +32,10 @@ export interface FailureExit {
 export const FAILURES = {
   UsageError: { code: "invalid-arguments", exit: 2 },
   RebuildDaysOutOfRange: { code: "invalid-arguments", exit: 2 },
-  PairNotImplemented: { code: "internal", exit: 1 },
-  UnpairNotImplemented: { code: "internal", exit: 1 },
+  PairUsage: { code: "invalid-arguments", exit: 2 },
+  PairConflict: { code: "conflict", exit: 1 },
+  PairTokenNotStored: { code: "keychain", exit: 1 },
+  ConfigWriteFailed: { code: "data-dir", exit: 1 },
   SnapshotMissing: { code: "data-dir", exit: 1 },
   SnapshotUnreadable: { code: "data-dir", exit: 1 },
   StatusReadFailed: { code: "data-dir", exit: 1 },
@@ -49,6 +56,7 @@ export const FAILURES = {
   DataDirNotSnorlax: { code: "data-dir", exit: 1, refusesDataDir: true },
   DataDirLedgerUnreadable: { code: "data-dir", exit: 1, refusesDataDir: true },
   DataDirDeleteFailed: { code: "data-dir", exit: 1 },
+  UninstallKeychainFailed: { code: "keychain", exit: 1 },
   CollectorPathUnresolved: { code: "internal", exit: 1 },
   UserIdUnavailable: { code: "internal", exit: 1 },
   LaunchctlFailed: { code: "internal", exit: 1 },
@@ -59,7 +67,13 @@ export const FAILURES = {
   SystemctlFailed: { code: "internal", exit: 1 },
   ForeignTimerLoaded: { code: "internal", exit: 1 },
   UnitWriteFailed: { code: "internal", exit: 1 },
-  UnitRemoveFailed: { code: "internal", exit: 1 }
+  UnitRemoveFailed: { code: "internal", exit: 1 },
+  KeychainUnavailable: { code: "keychain", exit: 1 },
+  LocalTokenInvalid: { code: "keychain", exit: 1 },
+  BackendUnreachable: { code: "network", exit: 1 },
+  BackendUnauthorized: { code: "unauthorized", exit: 1 },
+  BackendForbidden: { code: "forbidden", exit: 1 },
+  BackendInvalidResponse: { code: "invalid-response", exit: 1 }
 } as const satisfies { readonly [Tag in CommandFailure["_tag"]]: FailureExit };
 
 /** Defects and errors outside `FAILURES` (effect/cli's own besides `ShowHelp`). */

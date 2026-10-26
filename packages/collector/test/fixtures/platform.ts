@@ -37,7 +37,10 @@ export async function createRefreshSetup(options: SetupOptions): Promise<Refresh
     home,
     env: {
       PATH: "/usr/bin:/bin",
-      XDG_DATA_HOME: join(home, ".local", "share")
+      XDG_DATA_HOME: join(home, ".local", "share"),
+      // A test that forgets its own stub still must not start the real store tools.
+      SNORLAX_SECURITY: join(home, "no-security"),
+      SNORLAX_SECRET_TOOL: join(home, "no-secret-tool")
     }
   });
   const readBytes = new Map<string, number>();

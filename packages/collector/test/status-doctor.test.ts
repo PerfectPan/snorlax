@@ -16,6 +16,7 @@ import type { CliJob, JobInspection, LoadedJob } from "../src/capabilities/sched
 import { runCli } from "../src/cli/run.ts";
 import { CliEnv } from "../src/cli/env.ts";
 import { doctorPayload, scheduleCheck, type ScheduleObservation } from "../src/commands/doctor/checks.ts";
+import { offlineCapabilities } from "./fixtures/capabilities.ts";
 import { RuntimeInfo } from "../src/modules/version/version.ts";
 import { memoryKitPlatform } from "./fixtures/platform.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
@@ -66,7 +67,8 @@ const runOn = async (
     Layer.succeed(NodeFiles, nodeFiles),
     fakeScheduler([], { jobFile: "/testroot/tester/job", inspection: deps?.inspection }),
     Layer.succeed(CliEnv, CliEnv.of({ stdout: out.sink, stderr: err.sink, colors: false })),
-    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" })
+    Layer.succeed(RuntimeInfo, { version: "0.1.0", nodeVersion: deps?.nodeVersion ?? "v24.11.0" }),
+    offlineCapabilities
   );
   const exit = await Effect.runPromise(Effect.flip(runCli(args, base)));
   return { exitCode: exit.exitCode, stdout: out.chunks.join(""), stderr: err.chunks.join("") };
@@ -174,7 +176,12 @@ describe("doctor", () => {
     const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig());
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(true);
-    expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config", "schedule"]);
+    expect(doctor.checks.map((check) => check.id)).toEqual(["node-version", "data-dir", "config", "schedule", "sync"]);
+    expect(doctor.checks.find((check) => check.id === "sync")).toEqual({
+      id: "sync",
+      status: "ok",
+      detail: "not paired; sync is off"
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -205,6 +212,7 @@ describe("doctor", () => {
     const { stdout } = await runCommand(["doctor", "--json"], withConfig("{oops"));
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.checks.find((check) => check.id === "config")?.status).toBe("error");
+    expect(doctor.checks.find((check) => check.id === "sync")).toBeUndefined();
     expect(doctor.healthy).toBe(false);
   });
 
@@ -268,9 +276,10 @@ describe("doctor", () => {
         ["node-version", "ok"],
         ["data-dir", "ok"],
         ["config", "ok"],
-        ["schedule", "error"]
+        ["schedule", "error"],
+        ["sync", "ok"]
       ]);
-      expect(doctor.checks.at(-1)?.detail).toMatch(
+      expect(doctor.checks.find((check) => check.id === "schedule")?.detail).toMatch(
         /^cannot check the Node at ~\/locked\/node that ~\/Library\/LaunchAgents\/job\.plist runs: EACCES/
       );
       expect(doctor.healthy).toBe(false);

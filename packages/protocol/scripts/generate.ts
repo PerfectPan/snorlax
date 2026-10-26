@@ -162,7 +162,7 @@ const fixtures: Readonly<Record<string, unknown>> = {
     scannedAt: "2026-10-23T02:35:10.205Z",
     records: 412,
     failures: 0,
-    sync: { ok: true, pushed: 9, pulled: 23 }
+    sync: { ok: true, state: "ok", pushed: 9, pulled: 23 }
   },
   "pair-result": {
     schemaVersion: 1,

@@ -1,5 +1,6 @@
 import { buildSnapshot } from "../src/core/snapshot/snapshot.ts";
-import type { BucketRow } from "../src/core/buckets/buckets.ts";
+import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../src/core/buckets/buckets.ts";
+import type { SyncState } from "@rivus/snorlax-protocol";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
@@ -28,17 +29,24 @@ const bucket = (hourUtc: string, overrides: Partial<BucketRow> = {}): BucketRow 
   ...overrides
 });
 
-const build = (options: { now: number; timeZone: string; buckets: readonly BucketRow[] }) =>
+const build = (options: {
+  now: number;
+  timeZone: string;
+  buckets: readonly BucketRow[];
+  sync?: { state: SyncState; at: string | null };
+  remoteDevices?: readonly RemoteDeviceRow[];
+  remoteBuckets?: readonly RemoteBucketRow[];
+}) =>
   buildSnapshot({
     now: options.now,
     timeZone: options.timeZone,
     thisDevice: { id: "11111111-2222-4333-8444-555555555555", name: "Test Mac" },
     buckets: options.buckets,
-    remoteBuckets: [],
-    remoteDevices: [],
+    remoteBuckets: options.remoteBuckets ?? [],
+    remoteDevices: options.remoteDevices ?? [],
     lastScanAt: options.now - 60_000,
     failuresByAgent: {},
-    paired: false
+    sync: options.sync ?? { state: "unpaired", at: null }
   });
 
 describe("S10: days follow the viewer's time zone", () => {
@@ -177,7 +185,7 @@ describe("daily and hourlyToday", () => {
 });
 
 describe("shape", () => {
-  it("carries the device entry and the unpaired status of this milestone", () => {
+  it("carries the device entry and derives paired from the sync state", () => {
     const now = Date.UTC(2026, 9, 22, 12, 0, 0);
     const snapshot = build({ now, timeZone: "Asia/Shanghai", buckets: [bucket("2026-10-22T02:00:00Z")] });
     expect(snapshot.byDevice).toEqual([
@@ -198,5 +206,82 @@ describe("shape", () => {
       paired: false
     });
     expect(snapshot.generatedAt).toBe(new Date(now).toISOString());
+
+    const pushedAt = Date.UTC(2026, 9, 22, 11, 0, 0);
+    const paired = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      buckets: [bucket("2026-10-22T02:00:00Z")],
+      sync: { state: "ok", at: new Date(now).toISOString() },
+      remoteDevices: [
+        {
+          id: "11111111-2222-4333-8444-555555555555",
+          name: "server-name",
+          lastPushAt: pushedAt,
+          revoked: false
+        },
+        {
+          id: "22222222-3333-4444-8555-666666666666",
+          name: "Other",
+          lastPushAt: pushedAt,
+          revoked: false
+        }
+      ]
+    });
+    expect(paired.status.paired).toBe(true);
+    expect(paired.status.sync).toEqual({ state: "ok", at: new Date(now).toISOString() });
+    expect(paired.byDevice.map((device) => device.deviceId)).toEqual([
+      "11111111-2222-4333-8444-555555555555",
+      "22222222-3333-4444-8555-666666666666"
+    ]);
+    expect(paired.byDevice[0]?.lastPushAt).toBe(new Date(pushedAt).toISOString());
+    expect(paired.byDevice[0]?.name).toBe("Test Mac");
+    const failed = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      buckets: [],
+      sync: { state: "failed", at: new Date(now).toISOString() }
+    });
+    expect(failed.status.paired).toBe(true);
+    const revoked = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      buckets: [],
+      sync: { state: "revoked", at: new Date(now).toISOString() }
+    });
+    expect(revoked.status.paired).toBe(false);
+  });
+
+  it("lists a revoked device so its usage is in both the totals and byDevice", () => {
+    const now = Date.UTC(2026, 9, 22, 12, 0, 0);
+    const revokedId = "33333333-4444-4555-8666-777777777777";
+    const remote = bucket("2026-10-22T03:00:00Z");
+    const snapshot = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      buckets: [bucket("2026-10-22T02:00:00Z")],
+      remoteBuckets: [
+        {
+          deviceId: revokedId,
+          hour: remote.hour,
+          agent: remote.agent,
+          model: remote.model,
+          inputTokens: remote.inputTokens,
+          cacheReadTokens: remote.cacheReadTokens,
+          cacheWriteTokens: remote.cacheWriteTokens,
+          outputTokens: remote.outputTokens,
+          reasoningTokens: remote.reasoningTokens,
+          requests: remote.requests,
+          sessionsStarted: remote.sessionsStarted,
+          costUsd: remote.costUsd,
+          unpricedRequests: remote.unpricedRequests,
+          seq: 1
+        }
+      ],
+      remoteDevices: [{ id: revokedId, name: "Revoked Mac", lastPushAt: now, revoked: true }]
+    });
+    expect(snapshot.totals.today.tokens).toBe(2200);
+    expect(snapshot.byDevice.find((device) => device.deviceId === revokedId)?.today.tokens).toBe(1100);
+    expect(snapshot.byDevice.reduce((sum, device) => sum + device.today.tokens, 0)).toBe(snapshot.totals.today.tokens);
   });
 });

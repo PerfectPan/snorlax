@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
-import type { RefreshResult } from "@rivus/snorlax-protocol";
+import type { RefreshResult, SyncState } from "@rivus/snorlax-protocol";
 import { Data, Effect, Exit, type Scope } from "effect";
 import * as z from "zod/mini";
 
@@ -118,6 +118,36 @@ export interface Ledger {
   zeroBucketsFrom(startHour: number): Effect.Effect<void>;
   /** Drops session-first-seen rows at or after `startHour`, so a rescan counts those sessions again. */
   deleteSessionsSeenFrom(startHour: number): Effect.Effect<void>;
+  /** The next dirty rows, oldest hour first, at most `limit`. The upload reads them outside any transaction. */
+  readDirtyBuckets(limit: number): Effect.Effect<BucketRow[], LedgerUnreadable>;
+  /**
+   * Clears `dirty` on exactly these keys. Called only after that batch's push returned 200, in its own
+   * transaction, so a failed push leaves the rows dirty.
+   */
+  clearDirty(keys: readonly { hour: number; agent: string; model: string }[]): Effect.Effect<void>;
+  /** Marks every local bucket dirty, so the next sync uploads the whole ledger (`pair`, plan 3.4.2). */
+  markAllDirty(): Effect.Effect<void>;
+  /** Inserts or replaces pulled rows. `seq` is the page high-water mark the caller stored on each row. */
+  upsertRemoteBuckets(rows: readonly RemoteBucketRow[]): Effect.Effect<void>;
+  /** Replaces `remote_devices` with the latest `GET /v1/devices` list, including this device. */
+  replaceRemoteDevices(devices: readonly RemoteDeviceRow[]): Effect.Effect<void>;
+  /** Stores `pull_cursor` after a pull page whose `next` is not null. */
+  setPullCursor(cursor: number): Effect.Effect<void>;
+  /** Drops remote rows and sets `pull_cursor` back to 0 (`pair`, plan 3.4.2). */
+  resetRemote(): Effect.Effect<void>;
+}
+
+/**
+ * What one sync attempt reports. `at` is null when the device is not paired, so no sync was tried.
+ * `message` is the plain-text reason for `failed` and `revoked`, and for `unpaired` when the store program
+ * is missing. It is omitted when there is none.
+ */
+export interface SyncReport {
+  readonly state: SyncState;
+  readonly pushed: number;
+  readonly pulled: number;
+  readonly at: string | null;
+  readonly message?: string;
 }
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
@@ -320,19 +350,36 @@ const ledgerOn = (
   db: SqliteDatabase,
   meta: LedgerMeta,
   scanState: PersistedScanState | undefined
-): Ledger => ({
-  meta,
-  scanState,
-  transaction: (body) =>
-    Effect.acquireUseRelease(
-      Effect.sync(() => db.exec("BEGIN IMMEDIATE")),
-      () => Effect.tap(body, () => Effect.sync(() => db.exec("COMMIT"))),
-      (_, exit) => (Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => db.exec("ROLLBACK")))
-    ),
-  addBuckets: (buckets) =>
+): Ledger => {
+  // `setPullCursor` and `resetRemote` publish the new cursor on this object. The sync loop also keeps its
+  // own `after`, so a reader of `ledger.meta` after those calls sees the stored cursor.
+  let metaState = meta;
+  const writeTransaction = (body: () => void): Effect.Effect<void> =>
     Effect.sync(() => {
-      const statement = db.prepare(
-        `INSERT INTO buckets (${BUCKET_COLUMNS}, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        body();
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  return {
+    get meta() {
+      return metaState;
+    },
+    scanState,
+    transaction: (body) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => db.exec("BEGIN IMMEDIATE")),
+        () => Effect.tap(body, () => Effect.sync(() => db.exec("COMMIT"))),
+        (_, exit) => (Exit.isSuccess(exit) ? Effect.void : Effect.sync(() => db.exec("ROLLBACK")))
+      ),
+    addBuckets: (buckets) =>
+      Effect.sync(() => {
+        const statement = db.prepare(
+          `INSERT INTO buckets (${BUCKET_COLUMNS}, dirty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT (hour, agent, model) DO UPDATE SET
            input_tokens = input_tokens + excluded.input_tokens,
            cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
@@ -344,127 +391,222 @@ const ledgerOn = (
            cost_usd = cost_usd + excluded.cost_usd,
            unpriced_requests = unpriced_requests + excluded.unpriced_requests,
            dirty = 1`
-      );
-      for (const bucket of buckets) {
-        statement.run(...bucketParams(bucket));
-      }
-    }),
-  addSessionsSeen: (sessions) =>
-    Effect.sync(() => {
-      const statement = db.prepare(
-        "INSERT INTO sessions_seen (agent, session_id, first_hour) VALUES (?, ?, ?) ON CONFLICT (agent, session_id) DO NOTHING"
-      );
-      for (const session of sessions) {
-        statement.run(session.agent, session.sessionId, session.firstHour);
-      }
-    }),
-  sessionsSeen: () =>
-    Effect.suspend(() =>
-      parseRows(
-        path,
-        "sessions_seen",
-        sessionSeenRowSchema,
-        db.prepare("SELECT agent, session_id FROM sessions_seen").all()
-      )
-    ).pipe(
-      Effect.map((rows) => {
-        const seen = new Map<string, Set<string>>();
-        for (const row of rows) {
-          const sessions = seen.get(row.agent) ?? new Set<string>();
-          sessions.add(row.session_id);
-          seen.set(row.agent, sessions);
+        );
+        for (const bucket of buckets) {
+          statement.run(...bucketParams(bucket));
         }
-        return seen;
-      })
-    ),
-  setScanState: (state) =>
-    Effect.sync(() => {
-      db.prepare(
-        "INSERT INTO scan_state (id, state) VALUES (0, ?) ON CONFLICT (id) DO UPDATE SET state = excluded.state"
-      ).run(JSON.stringify(state));
-    }),
-  setLastScanCompleted: (atMs) =>
-    Effect.sync(() => {
-      db.prepare("UPDATE meta SET last_scan_completed_at = ? WHERE id = 0").run(atMs);
-    }),
-  setPricingVersion: (version) =>
-    Effect.sync(() => {
-      db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run(version);
-    }),
-  readBuckets: () =>
-    Effect.suspend(() =>
-      parseRows(
-        path,
-        "buckets",
-        bucketRowSchema,
-        db.prepare(`SELECT ${BUCKET_COLUMNS}, dirty FROM buckets ORDER BY hour, agent, model`).all()
-      )
-    ).pipe(Effect.map((rows) => rows.map(bucketOf))),
-  readRemoteBuckets: () =>
-    Effect.suspend(() =>
-      parseRows(
-        path,
-        "remote_buckets",
-        remoteBucketRowSchema,
-        db
-          .prepare(
-            `SELECT device_id, seq, ${BUCKET_COLUMNS} FROM remote_buckets ORDER BY device_id, hour, agent, model`
-          )
-          .all()
-      )
-    ).pipe(
-      Effect.map((rows) =>
-        rows.map((bucket): RemoteBucketRow => ({
-          deviceId: bucket.device_id,
-          seq: bucket.seq,
-          hour: bucket.hour,
-          agent: bucket.agent,
-          model: bucket.model,
-          inputTokens: bucket.input_tokens,
-          cacheReadTokens: bucket.cache_read_tokens,
-          cacheWriteTokens: bucket.cache_write_tokens,
-          outputTokens: bucket.output_tokens,
-          reasoningTokens: bucket.reasoning_tokens,
-          requests: bucket.requests,
-          sessionsStarted: bucket.sessions_started,
-          costUsd: bucket.cost_usd,
-          unpricedRequests: bucket.unpriced_requests
-        }))
-      )
-    ),
-  readRemoteDevices: () =>
-    Effect.suspend(() =>
-      parseRows(
-        path,
-        "remote_devices",
-        remoteDeviceRowSchema,
-        db.prepare("SELECT id, name, last_push_at, revoked FROM remote_devices").all()
-      )
-    ).pipe(
-      Effect.map((rows) =>
-        rows.map((device): RemoteDeviceRow => ({
-          id: device.id,
-          name: device.name,
-          lastPushAt: device.last_push_at,
-          revoked: device.revoked !== 0
-        }))
-      )
-    ),
-  zeroBucketsFrom: (startHour) =>
-    Effect.sync(() => {
-      db.prepare(
-        `UPDATE buckets SET
+      }),
+    addSessionsSeen: (sessions) =>
+      Effect.sync(() => {
+        const statement = db.prepare(
+          "INSERT INTO sessions_seen (agent, session_id, first_hour) VALUES (?, ?, ?) ON CONFLICT (agent, session_id) DO NOTHING"
+        );
+        for (const session of sessions) {
+          statement.run(session.agent, session.sessionId, session.firstHour);
+        }
+      }),
+    sessionsSeen: () =>
+      Effect.suspend(() =>
+        parseRows(
+          path,
+          "sessions_seen",
+          sessionSeenRowSchema,
+          db.prepare("SELECT agent, session_id FROM sessions_seen").all()
+        )
+      ).pipe(
+        Effect.map((rows) => {
+          const seen = new Map<string, Set<string>>();
+          for (const row of rows) {
+            const sessions = seen.get(row.agent) ?? new Set<string>();
+            sessions.add(row.session_id);
+            seen.set(row.agent, sessions);
+          }
+          return seen;
+        })
+      ),
+    setScanState: (state) =>
+      Effect.sync(() => {
+        db.prepare(
+          "INSERT INTO scan_state (id, state) VALUES (0, ?) ON CONFLICT (id) DO UPDATE SET state = excluded.state"
+        ).run(JSON.stringify(state));
+      }),
+    setLastScanCompleted: (atMs) =>
+      Effect.sync(() => {
+        db.prepare("UPDATE meta SET last_scan_completed_at = ? WHERE id = 0").run(atMs);
+      }),
+    setPricingVersion: (version) =>
+      Effect.sync(() => {
+        db.prepare("UPDATE meta SET pricing_version = ? WHERE id = 0").run(version);
+      }),
+    readBuckets: () =>
+      Effect.suspend(() =>
+        parseRows(
+          path,
+          "buckets",
+          bucketRowSchema,
+          db.prepare(`SELECT ${BUCKET_COLUMNS}, dirty FROM buckets ORDER BY hour, agent, model`).all()
+        )
+      ).pipe(Effect.map((rows) => rows.map(bucketOf))),
+    readRemoteBuckets: () =>
+      Effect.suspend(() =>
+        parseRows(
+          path,
+          "remote_buckets",
+          remoteBucketRowSchema,
+          db
+            .prepare(
+              `SELECT device_id, seq, ${BUCKET_COLUMNS} FROM remote_buckets ORDER BY device_id, hour, agent, model`
+            )
+            .all()
+        )
+      ).pipe(
+        Effect.map((rows) =>
+          rows.map((bucket): RemoteBucketRow => ({
+            deviceId: bucket.device_id,
+            seq: bucket.seq,
+            hour: bucket.hour,
+            agent: bucket.agent,
+            model: bucket.model,
+            inputTokens: bucket.input_tokens,
+            cacheReadTokens: bucket.cache_read_tokens,
+            cacheWriteTokens: bucket.cache_write_tokens,
+            outputTokens: bucket.output_tokens,
+            reasoningTokens: bucket.reasoning_tokens,
+            requests: bucket.requests,
+            sessionsStarted: bucket.sessions_started,
+            costUsd: bucket.cost_usd,
+            unpricedRequests: bucket.unpriced_requests
+          }))
+        )
+      ),
+    readRemoteDevices: () =>
+      Effect.suspend(() =>
+        parseRows(
+          path,
+          "remote_devices",
+          remoteDeviceRowSchema,
+          db.prepare("SELECT id, name, last_push_at, revoked FROM remote_devices").all()
+        )
+      ).pipe(
+        Effect.map((rows) =>
+          rows.map((device): RemoteDeviceRow => ({
+            id: device.id,
+            name: device.name,
+            lastPushAt: device.last_push_at,
+            revoked: device.revoked !== 0
+          }))
+        )
+      ),
+    zeroBucketsFrom: (startHour) =>
+      Effect.sync(() => {
+        db.prepare(
+          `UPDATE buckets SET
            input_tokens = 0, cache_read_tokens = 0, cache_write_tokens = 0, output_tokens = 0,
            reasoning_tokens = 0, requests = 0, sessions_started = 0, cost_usd = 0, unpriced_requests = 0,
            dirty = 1
          WHERE hour >= ?`
-      ).run(startHour);
-    }),
-  deleteSessionsSeenFrom: (startHour) =>
-    Effect.sync(() => {
-      db.prepare("DELETE FROM sessions_seen WHERE first_hour >= ?").run(startHour);
-    })
-});
+        ).run(startHour);
+      }),
+    deleteSessionsSeenFrom: (startHour) =>
+      Effect.sync(() => {
+        db.prepare("DELETE FROM sessions_seen WHERE first_hour >= ?").run(startHour);
+      }),
+    readDirtyBuckets: (limit) =>
+      Effect.suspend(() =>
+        parseRows(
+          path,
+          "buckets",
+          bucketRowSchema,
+          db
+            .prepare(
+              `SELECT ${BUCKET_COLUMNS}, dirty FROM buckets WHERE dirty != 0 ORDER BY hour, agent, model LIMIT ?`
+            )
+            .all(limit)
+        )
+      ).pipe(Effect.map((rows) => rows.map(bucketOf))),
+    clearDirty: (keys) => {
+      if (keys.length === 0) {
+        return Effect.void;
+      }
+      return writeTransaction(() => {
+        const statement = db.prepare("UPDATE buckets SET dirty = 0 WHERE hour = ? AND agent = ? AND model = ?");
+        for (const key of keys) {
+          statement.run(key.hour, key.agent, key.model);
+        }
+      });
+    },
+    markAllDirty: () =>
+      writeTransaction(() => {
+        db.prepare("UPDATE buckets SET dirty = 1").run();
+      }),
+    upsertRemoteBuckets: (rows) => {
+      if (rows.length === 0) {
+        return Effect.void;
+      }
+      return writeTransaction(() => {
+        const statement = db.prepare(
+          `INSERT INTO remote_buckets (device_id, ${BUCKET_COLUMNS}, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (device_id, hour, agent, model) DO UPDATE SET
+           input_tokens = excluded.input_tokens,
+           cache_read_tokens = excluded.cache_read_tokens,
+           cache_write_tokens = excluded.cache_write_tokens,
+           output_tokens = excluded.output_tokens,
+           reasoning_tokens = excluded.reasoning_tokens,
+           requests = excluded.requests,
+           sessions_started = excluded.sessions_started,
+           cost_usd = excluded.cost_usd,
+           unpriced_requests = excluded.unpriced_requests,
+           seq = excluded.seq`
+        );
+        for (const row of rows) {
+          statement.run(
+            row.deviceId,
+            row.hour,
+            row.agent,
+            row.model,
+            row.inputTokens,
+            row.cacheReadTokens,
+            row.cacheWriteTokens,
+            row.outputTokens,
+            row.reasoningTokens,
+            row.requests,
+            row.sessionsStarted,
+            row.costUsd,
+            row.unpricedRequests,
+            row.seq
+          );
+        }
+      });
+    },
+    replaceRemoteDevices: (devices) =>
+      writeTransaction(() => {
+        db.prepare("DELETE FROM remote_devices").run();
+        const statement = db.prepare(
+          "INSERT INTO remote_devices (id, name, last_push_at, revoked) VALUES (?, ?, ?, ?)"
+        );
+        for (const device of devices) {
+          statement.run(device.id, device.name, device.lastPushAt, device.revoked ? 1 : 0);
+        }
+      }),
+    setPullCursor: (cursor) =>
+      Effect.sync(() => {
+        db.prepare("UPDATE meta SET pull_cursor = ? WHERE id = 0").run(cursor);
+        metaState = { ...metaState, pullCursor: cursor };
+      }),
+    resetRemote: () =>
+      writeTransaction(() => {
+        db.prepare("DELETE FROM remote_buckets").run();
+        db.prepare("DELETE FROM remote_devices").run();
+        db.prepare("UPDATE meta SET pull_cursor = 0 WHERE id = 0").run();
+      }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            metaState = { ...metaState, pullCursor: 0 };
+          })
+        )
+      )
+  };
+};
 
 /**
  * Opens (creating on first run) `<data>/ledger.db` for the rest of the scope, migrates it to `SCHEMA_VERSION`
@@ -558,12 +700,18 @@ export class LedgerPlatformUnsupported extends Data.TaggedError("LedgerPlatformU
 }> {}
 
 /** What a refresh or rebuild runs on, besides the window it scans. */
-export interface ScanAndCommitDeps {
+export interface ScanAndCommitDeps<E = never> {
   readonly platform: Platform;
   readonly dataDir: string;
   readonly log: Logger;
   /** IANA time zone of this device; the snapshot's day windows follow it (plan 3.2.2). */
   readonly timeZone: string;
+  /**
+   * Plan 3.4.1 step 6, supplied by the caller. `modules/` cannot import `capabilities/` (plan 3.13 rule 1),
+   * so the sync flow lives with the backend client and is passed in. Omitted, the run reports unpaired and
+   * does not touch a keychain.
+   */
+  readonly sync?: (ledger: Ledger) => Effect.Effect<SyncReport, E>;
 }
 
 /** What a command adds to the shared run: where its scan starts and the summary line it logs. */
@@ -575,23 +723,68 @@ export interface ScanRun {
   readonly window: (ledger: Ledger, now: number) => ScanWindow;
 }
 
+/** The scan margin: records and sources this much before the last completed scan are read again, so the
+ *  kit's 30-minute quiet window cannot leave a late record outside the scan (plan 3.4.1 step 3). */
+const RESCAN_MARGIN_MS = 2 * 3_600_000;
+
+/**
+ * Refresh's and `pair`'s scan window: incremental from the saved scan state. It lives here so `pair` can run
+ * the same window as `refresh` without importing another command (plan 3.13 rule 2).
+ */
+export const refreshScan: ScanRun = {
+  event: "refresh",
+  window: (ledger) => {
+    const lastScan = ledger.meta.lastScanCompletedAt;
+    return { since: lastScan === null ? 0 : lastScan - RESCAN_MARGIN_MS, state: ledger.scanState };
+  }
+};
+
+/**
+ * Holds the ledger lock and opens the ledger for `body`. The lock and the connection stay in a scope, so a
+ * failure or an interrupt closes the ledger and releases the lock. `pair` uses this to read the device id
+ * before it registers, which creates the ledger when this data directory does not have one yet (plan 3.4.2).
+ */
+export const withLedger = <A, E, R>(
+  platform: Platform,
+  dataDir: string,
+  body: (ledger: Ledger) => Effect.Effect<A, E, R>
+): Effect.Effect<
+  A,
+  LedgerPlatformUnsupported | LedgerLockHeld | LedgerUnreadable | LedgerSchemaTooNew | LedgerBackupFailed | E,
+  R
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { sqlite } = platform;
+      if (sqlite === undefined) {
+        return yield* new LedgerPlatformUnsupported({
+          message: "this platform has no SQLite; the ledger cannot run here"
+        });
+      }
+      yield* holdLedgerLock(platform, dataDir);
+      const ledger = yield* openLedger({ fs: platform.fs, sqlite }, dataDir);
+      return yield* body(ledger);
+    })
+  );
+
 export interface ScanAndCommitOutcome {
   readonly result: RefreshResult;
   readonly failuresByAgent: Record<string, number>;
 }
 
 /**
- * One refresh or rebuild over the ledger (plan 3.4.1 steps 2–8, minus the sync of step 6 that arrives with
- * Batch 7): take the ledger lock, open the ledger under it, scan the command's window and commit buckets and
- * scan state in one transaction, then build and atomically write the snapshot and log the summary line. Opening
+ * One refresh or rebuild over the ledger (plan 3.4.1 steps 2–8): take the ledger lock, open the ledger under
+ * it, scan the command's window and commit buckets and scan state in one transaction, run the sync step while
+ * still holding the lock, then build and atomically write the snapshot and log the summary line. Opening
  * under the lock puts the migration, the meta write and the read of meta and scan state after the previous
  * run's commit, so two overlapping runs queue instead of the second reading the first's pre-commit state. The
  * lock and the ledger are held in a scope, so a run that fails or is interrupted rolls back, closes the ledger
- * and releases the lock. The scan result stays committed even when the snapshot write fails; the next run
- * rewrites the snapshot.
+ * and releases the lock. The scan result stays committed even when sync or the snapshot write fails; the next
+ * run rewrites the snapshot. A sync failure that is a report (`failed`, `revoked`, including a keychain that
+ * cannot be read) still writes the snapshot.
  */
-export const scanAndCommit = (
-  deps: ScanAndCommitDeps,
+export const scanAndCommit = <E>(
+  deps: ScanAndCommitDeps<E>,
   run: ScanRun
 ): Effect.Effect<
   ScanAndCommitOutcome,
@@ -602,6 +795,7 @@ export const scanAndCommit = (
   | LedgerBackupFailed
   | ConfigInvalid
   | SnapshotWriteFailed
+  | E
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -617,6 +811,8 @@ export const scanAndCommit = (
       const now = platform.clock.now();
       const ledger = yield* openLedger({ fs: platform.fs, sqlite }, dataDir);
       const scanned = yield* commitScan(platform, ledger, run.window(ledger, now), now);
+      const report: SyncReport =
+        deps.sync === undefined ? { state: "unpaired", pushed: 0, pulled: 0, at: null } : yield* deps.sync(ledger);
       const config = yield* readConfig(platform, dataDir);
       const snapshot = buildSnapshot({
         now,
@@ -627,17 +823,28 @@ export const scanAndCommit = (
         remoteDevices: yield* ledger.readRemoteDevices(),
         lastScanAt: now,
         failuresByAgent: scanned.failuresByAgent,
-        paired: false
+        sync: { state: report.state, at: report.at }
       });
       yield* writeSnapshot(platform, dataDir, snapshot);
-      yield* deps.log.event(run.event, {
+      const fields: Record<string, LogFieldValue> = {
         ...run.fields,
         records: scanned.records,
         failures: scanned.failures,
-        pushed: 0,
-        pulled: 0,
-        durationMs: Math.round(platform.clock.monotonic() - startedAt)
-      });
+        pushed: report.pushed,
+        pulled: report.pulled,
+        sync: report.state
+      };
+      if (report.message !== undefined) {
+        fields.message = report.message;
+      }
+      fields.durationMs = Math.round(platform.clock.monotonic() - startedAt);
+      yield* deps.log.event(run.event, fields);
+      const sync = {
+        ok: report.state === "ok",
+        state: report.state,
+        pushed: report.pushed,
+        pulled: report.pulled
+      };
       return {
         result: {
           schemaVersion: 1,
@@ -645,8 +852,7 @@ export const scanAndCommit = (
           scannedAt: new Date(now).toISOString(),
           records: scanned.records,
           failures: scanned.failures,
-          // Not paired in this milestone: the sync fields say no sync ran (Batch 7 pairs a backend).
-          sync: { ok: false, pushed: 0, pulled: 0 }
+          sync: report.message === undefined ? sync : { ...sync, message: report.message }
         },
         failuresByAgent: scanned.failuresByAgent
       };

@@ -33,9 +33,15 @@ export const httpDeviceRegisterRequestSchema = z.strictObject({
 });
 export type HttpDeviceRegisterRequest = z.output<typeof httpDeviceRegisterRequestSchema>;
 
+/**
+ * RFC 6750 `b64token` (plan 3.2.4). The hyphen sits at the end of the class so it is not a range, and `=` is
+ * only a suffix. A space or a newline cannot pass and later be spliced into a `security -i` command.
+ */
+export const b64TokenSchema = z.string().check(z.regex(/^[A-Za-z0-9._~+/-]+=*$/));
+
 /** Response body of `POST /v1/devices`; the token is shown once and stored only as its SHA-256 (plan 3.8). */
 export const httpDeviceRegisterResponseSchema = z.object({
-  deviceToken: z.string().check(z.minLength(1))
+  deviceToken: b64TokenSchema
 });
 export type HttpDeviceRegisterResponse = z.output<typeof httpDeviceRegisterResponseSchema>;
 
@@ -63,7 +69,10 @@ export const httpPullQuerySchema = z.object({
   limit: z._default(z.pipe(decimalIntegerSchema, z.number().check(z.minimum(1), z.maximum(1000))), 1000)
 });
 
-/** Response body of `GET /v1/buckets`; `next` is the last returned seq, or null when fewer than `limit` rows. */
+/**
+ * Response body of `GET /v1/buckets`. `next` is the last returned row's seq whenever the page has rows, and
+ * null only for an empty page. The client pulls until `next` is null.
+ */
 export const httpPullResponseSchema = z.object({
   buckets: z.array(bucketSchema),
   next: z.nullable(nonNegativeIntSchema)

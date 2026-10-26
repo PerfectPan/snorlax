@@ -46,8 +46,8 @@ export const statusFlow = Effect.gen(function* () {
   const info = yield* RuntimeInfo;
   const dataDir = resolveDataDir(platform);
   const config = yield* readConfig(platform, dataDir);
-  // Device id and last scan come from the ledger (plan 6.8, Batch 2); sync state and decode
-  // failures are the last refresh's, persisted in the snapshot, until sync owns them in Batch 7.
+  // Device id and last scan come from the ledger (plan 6.8, Batch 2). Sync state and decode
+  // failures are the last refresh's, persisted in the snapshot.
   const ledger = yield* readLedgerStatus(platform, dataDir);
   const snapshot = yield* Effect.promise(() => readSnapshotFile(platform, dataDir));
   const installations = yield* Effect.promise(() => detectAgentsStatOnly(platform));

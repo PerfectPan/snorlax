@@ -3,10 +3,29 @@ import process from "node:process";
 import { NodePlatformLive } from "@rivus/agent-kit/node/effect";
 import { Effect, Layer, Runtime } from "effect";
 
+import { Backend } from "../capabilities/backend/backend.ts";
 import { Scheduler, schedulerOs } from "../capabilities/scheduler/scheduler.ts";
+import { Secrets } from "../capabilities/secrets/secrets.ts";
 import { NodeFiles, SnorlaxPlatform } from "../modules/platform/platform.ts";
 import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
+
+/**
+ * The token store of this machine (plan 3.4.2). `platform.os` decides, not `SNORLAX_OS`: that override exists
+ * so the Linux CI job can exercise launchd, and it must not point the keychain at a binary the machine lacks.
+ */
+const secretsLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const platform = yield* SnorlaxPlatform;
+    if (platform.os === "darwin") {
+      return Secrets.keychain;
+    }
+    if (platform.os === "linux") {
+      return Secrets.libsecret;
+    }
+    return Secrets.unavailable(platform.os);
+  })
+);
 
 /**
  * The scheduler of the system the CLI runs on (plan 3.13 rule 5). `SNORLAX_OS` (`darwin`, `linux` or
@@ -37,7 +56,10 @@ const schedulerLive = Layer.unwrap(
  * one command.
  */
 const liveLayers = Layer.mergeAll(
-  Layer.provideMerge(schedulerLive, Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive)),
+  Layer.provideMerge(
+    Layer.mergeAll(schedulerLive, secretsLive, Backend.live),
+    Layer.provideMerge(SnorlaxPlatform.fromKitPlatform, NodePlatformLive)
+  ),
   NodeFiles.live,
   Layer.succeed(
     CliEnv,
