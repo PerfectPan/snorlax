@@ -2,20 +2,11 @@ import type { RefreshResult } from "@rivus/snorlax-protocol";
 import { Flag } from "effect/cli";
 import { Data, Effect } from "effect";
 
+import { syncLine } from "../../core/sync-text/sync-text.ts";
 import { rebuildFlow, REBUILD_MAX_DAYS, REBUILD_MIN_DAYS } from "./flow.ts";
 
 /** `--days` parsed as a whole number outside `REBUILD_MIN_DAYS`–`REBUILD_MAX_DAYS`. */
 class RebuildDaysOutOfRange extends Data.TaggedError("RebuildDaysOutOfRange")<{ readonly message: string }> {}
-
-const syncLine = (sync: RefreshResult["sync"]): string => {
-  if (sync.state === "unpaired") {
-    return "sync: not paired";
-  }
-  if (sync.state === "revoked") {
-    return "sync: revoked";
-  }
-  return `sync: ${sync.state}, pushed ${sync.pushed}, pulled ${sync.pulled}`;
-};
 
 const humanSummary = (days: number, result: RefreshResult): string =>
   `rebuilt the last ${days} days: ${result.records} records, ${result.failures} failures\n${syncLine(result.sync)}\n`;

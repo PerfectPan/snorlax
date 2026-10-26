@@ -221,7 +221,8 @@ export function buildSnapshot(input: BuildSnapshotInput): Snapshot {
     last30d: group.last30d
   }));
   // `GET /v1/devices` includes this device. Its `lastPushAt` fills the local row; the row itself is not
-  // listed again among the other devices.
+  // listed again among the other devices. Revoked devices stay: R11 keeps their uploaded usage, and the
+  // existing byDevice fields already describe them.
   const self = input.remoteDevices.find((device) => device.id === input.thisDevice.id);
   const byDevice: ByDeviceEntry[] = [
     {
@@ -235,7 +236,7 @@ export function buildSnapshot(input: BuildSnapshotInput): Snapshot {
       })()
     },
     ...input.remoteDevices
-      .filter((device) => !device.revoked && device.id !== input.thisDevice.id)
+      .filter((device) => device.id !== input.thisDevice.id)
       .map((device): ByDeviceEntry => {
         const own = inWindow.filter((bucket) => bucket.deviceId === device.id);
         return {

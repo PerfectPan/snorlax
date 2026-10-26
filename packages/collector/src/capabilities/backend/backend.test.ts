@@ -190,4 +190,39 @@ describe("status mapping", () => {
     expect(seen[2]?.contentType).toBeNull();
     expect(seen.map((call) => call.url).join(" ")).not.toContain(TOKEN);
   });
+
+  it("names the status, a schema mismatch and a network failure differently", async () => {
+    const forbidden = await fail(
+      async () => jsonResponse(403, { error: { code: "forbidden", message: "nope" } }),
+      (backend) => backend.listDevices(BASE, TOKEN)
+    );
+    expect(forbidden.message).toContain("HTTP 403");
+    const missing = await fail(
+      async () => jsonResponse(404, { error: { code: "not-found", message: "missing" } }),
+      (backend) => backend.health(BASE)
+    );
+    expect(missing._tag).toBe("BackendInvalidResponse");
+    expect(missing.message).toContain("HTTP 404");
+    const invalid = await fail(
+      async () => jsonResponse(200, { nope: true }),
+      (backend) => backend.health(BASE)
+    );
+    expect(invalid.message).toContain("does not match the interface definition");
+    const down = await fail(
+      async () => Promise.reject(new Error("backend down")),
+      (backend) => backend.health(BASE)
+    );
+    expect(down._tag).toBe("BackendUnreachable");
+    expect(down.message).toContain("cannot reach the backend");
+    expect(down.message).toContain("backend down");
+  });
+
+  it("turns a backend URL that is not a URL into unreachable", async () => {
+    const error = await fail(
+      async () => jsonResponse(200, { ok: true }),
+      (backend) => backend.health("snorlax.example.com")
+    );
+    expect(error._tag).toBe("BackendUnreachable");
+    expect(error.message).toContain('the backend URL "snorlax.example.com" cannot be used');
+  });
 });

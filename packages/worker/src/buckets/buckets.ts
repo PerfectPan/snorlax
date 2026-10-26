@@ -49,7 +49,7 @@ export const pushBuckets = async ({ db, now }: BucketsDeps, push: Push): Promise
 
 interface Page {
   readonly buckets: Bucket[];
-  /** The last returned seq, or null when fewer than `limit` rows remain. */
+  /** The last returned row's seq, or null when the page is empty. */
   readonly next: number | null;
 }
 
@@ -64,6 +64,6 @@ export const pullBuckets = async (
       void seq;
       return bucket;
     }),
-    next: rows.length < cursor.limit || last === undefined ? null : last.seq
+    next: last === undefined ? null : last.seq
   };
 };

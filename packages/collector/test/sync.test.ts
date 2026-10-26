@@ -266,16 +266,26 @@ describe("collector sync", () => {
       const alpha = await harness.pair([{ hour: hour9, inputTokens: 1000, outputTokens: 100 }], "Alpha");
       const beta = await harness.pair([], "Beta");
       harness.lab.setDown(true);
-      const failed = await harness.run(alpha.setup);
-      expect(failed.result.sync).toMatchObject({ ok: false, state: "failed", pushed: 0 });
-      expect(countDirty(alpha.setup.dataDir)).toBeGreaterThan(0);
-      expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(1100);
+      let dirty = 0;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const failed = await harness.run(alpha.setup);
+        expect(failed.result.sync).toMatchObject({ ok: false, state: "failed", pushed: 0 });
+        expect(failed.result.sync.message).toContain("backend down");
+        const count = countDirty(alpha.setup.dataDir);
+        if (attempt === 0) {
+          dirty = count;
+        }
+        expect(count).toBe(dirty);
+        expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(1100);
+      }
       expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(0);
+      expect(await readFile(join(alpha.setup.dataDir, "logs", "snorlax.log"), "utf8")).toContain("backend down");
 
       harness.lab.setDown(false);
       const recovered = await harness.run(alpha.setup);
       expect(recovered.result.sync.state).toBe("ok");
-      expect(recovered.result.sync.pushed).toBeGreaterThan(0);
+      expect(recovered.result.sync.pushed).toBe(dirty);
+      expect(z.parse(countSchema, harness.lab.database.prepare("SELECT COUNT(*) AS n FROM buckets").get()).n).toBe(1);
       await harness.run(beta.setup);
       expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(1100);
       expect(countDirty(alpha.setup.dataDir)).toBe(0);
@@ -291,19 +301,27 @@ describe("collector sync", () => {
       const hour10 = Date.UTC(2026, 9, 22, 10) / 1000;
       const alpha = await harness.pair([{ hour: hour9, inputTokens: 1000, outputTokens: 100 }], "Alpha");
       const beta = await harness.pair([{ hour: hour10, inputTokens: 50, outputTokens: 5 }], "Beta");
+      const serverRows = (): number =>
+        z.parse(countSchema, harness.lab.database.prepare("SELECT COUNT(*) AS n FROM buckets").get()).n;
       await harness.run(alpha.setup);
       await harness.run(beta.setup);
       await harness.run(alpha.setup);
       const before = (await snapshotOf(alpha.setup)).totals.today.tokens;
+      expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
+      expect(serverRows()).toBe(2);
 
       await harness.run(alpha.setup);
       await harness.run(beta.setup);
       expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(before);
+      expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
+      expect(serverRows()).toBe(2);
 
       await readLedger(alpha.platform, alpha.setup.dataDir, (ledger) => ledger.markAllDirty());
       const marked = await harness.run(alpha.setup);
       expect(marked.result.sync.pushed).toBeGreaterThan(0);
       expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(before);
+      expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
+      expect(serverRows()).toBe(2);
 
       const remoteBefore = await readLedger(alpha.platform, alpha.setup.dataDir, (ledger) =>
         ledger.readRemoteBuckets()
@@ -319,10 +337,17 @@ describe("collector sync", () => {
         (await readLedger(alpha.platform, alpha.setup.dataDir, (ledger) => ledger.readRemoteBuckets())).length
       ).toBe(remoteBefore.length);
       expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(before);
+      expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
+      expect(serverRows()).toBe(2);
 
       const rebuilt = await Effect.runPromise(rebuildFlow(1).pipe(Effect.provide(harness.layerFor(alpha.setup))));
       expect(rebuilt.result.sync.state).toBe("ok");
       expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(before);
+      expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
+      expect(serverRows()).toBe(2);
+      await harness.run(beta.setup);
+      expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
+      expect(serverRows()).toBe(2);
     } finally {
       await harness.close();
     }
@@ -440,11 +465,18 @@ describe("collector sync", () => {
         forbidden.lab.setForcedPut({ status: 403, body: { error: { code: "forbidden", message: "no" } } });
         const failed = await forbidden.run(device.setup);
         expect(failed.result.sync.state).toBe("failed");
+        expect(failed.result.sync.message).toContain("HTTP 403");
+        expect(await readFile(join(device.setup.dataDir, "logs", "snorlax.log"), "utf8")).toContain("HTTP 403");
         expect(countDirty(device.setup.dataDir)).toBeGreaterThan(0);
+        forbidden.lab.setForcedPut({ status: 404, body: { error: { code: "not-found", message: "missing" } } });
+        const missing = await forbidden.run(device.setup);
+        expect(missing.result.sync.state).toBe("failed");
+        expect(missing.result.sync.message).toContain("HTTP 404");
         forbidden.lab.setForcedPut({ status: 200, body: { nope: true } });
         await readLedger(device.platform, device.setup.dataDir, (ledger) => ledger.markAllDirty());
         const invalid = await forbidden.run(device.setup);
         expect(invalid.result.sync.state).toBe("failed");
+        expect(invalid.result.sync.message).toContain("does not match");
         expect((await snapshotOf(device.setup)).status.paired).toBe(true);
       } finally {
         await forbidden.close();
@@ -545,7 +577,37 @@ describe("collector sync", () => {
     }
   });
 
-  it("does not start security when unpaired, and a broken keychain fails before the snapshot", async () => {
+  it("does not re-pull a short page on the next refresh", async () => {
+    const harness = await open();
+    try {
+      const hour9 = Date.UTC(2026, 9, 22, 9) / 1000;
+      const alpha = await harness.pair([{ hour: hour9, inputTokens: 1000, outputTokens: 100 }], "Alpha");
+      await harness.run(alpha.setup);
+      const watcher = await harness.pair([], "Watcher");
+      const before = harness.lab.requests.length;
+      const first = await harness.run(watcher.setup);
+      const pullsOf = (start: number) =>
+        harness.lab.requests
+          .slice(start)
+          .filter((request) => request.method === "GET" && request.url.includes("/v1/buckets"));
+      const firstPulls = pullsOf(before);
+      expect(first.result.sync.pulled).toBe(1);
+      expect(firstPulls.length).toBeGreaterThanOrEqual(2);
+      expect(new URL(firstPulls[0]?.url ?? "").searchParams.get("after")).toBe("0");
+      const cursor = new URL(firstPulls[1]?.url ?? "").searchParams.get("after");
+      expect(cursor).not.toBe("0");
+      const secondBefore = harness.lab.requests.length;
+      const second = await harness.run(watcher.setup);
+      const secondPulls = pullsOf(secondBefore);
+      expect(second.result.sync.pulled).toBe(0);
+      expect(secondPulls).toHaveLength(1);
+      expect(new URL(secondPulls[0]?.url ?? "").searchParams.get("after")).toBe(cursor);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("does not start security when unpaired, and a broken keychain still writes the snapshot", async () => {
     const setup = await createRefreshSetup({ now: NOW });
     const stub = join(setup.home, "security-stub");
     const logPath = join(setup.home, "security.log");
@@ -585,25 +647,37 @@ describe("collector sync", () => {
         clock: { now: () => NOW + 60_000, monotonic: () => 0 }
       };
       await writeFile(join(setup.dataDir, "config.json"), JSON.stringify({ backendUrl: BASE, deviceName: "Broken" }));
-      const error = await Effect.runPromise(
+      const stdout: string[] = [];
+      const exit = await Effect.runPromise(
         Effect.flip(
-          refreshFlow.pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(SnorlaxPlatform, later),
-                NodeFiles.live,
-                Layer.provide(Secrets.keychain, Layer.succeed(SnorlaxPlatform, later)),
-                Backend.layer(() => Promise.reject(new Error("broken keychain must fail first"))),
-                Layer.succeed(TimeZone, TIME_ZONE)
+          runCli(
+            ["refresh"],
+            Layer.mergeAll(
+              Layer.succeed(SnorlaxPlatform, later),
+              NodeFiles.live,
+              Layer.provide(Secrets.keychain, Layer.succeed(SnorlaxPlatform, later)),
+              Backend.layer(() => Promise.reject(new Error("broken keychain must not call the backend"))),
+              Layer.succeed(TimeZone, TIME_ZONE),
+              fakeScheduler([], { jobFile: join(setup.home, "job") }),
+              Layer.succeed(
+                CliEnv,
+                CliEnv.of({
+                  stdout: { write: (text) => void stdout.push(text) },
+                  stderr: { write: () => undefined },
+                  colors: false
+                })
               )
             )
           )
         )
       );
-      expect(error._tag).toBe("KeychainUnavailable");
+      expect(exit.exitCode).toBe(0);
+      expect(stdout.join("")).toContain("sync: failed");
+      expect(stdout.join("")).toContain("missing-security");
       const snap = await readSnapshotFile(setup.platform, setup.dataDir);
-      expect(snap.kind === "ok" && snap.snapshot.generatedAt).toBe(new Date(NOW).toISOString());
-      expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("unpaired");
+      expect(snap.kind === "ok" && snap.snapshot.generatedAt).toBe(new Date(NOW + 60_000).toISOString());
+      expect(snap.kind === "ok" && snap.snapshot.status.sync.state).toBe("failed");
+      expect(snap.kind === "ok" && snap.snapshot.status.paired).toBe(true);
     } finally {
       await setup.remove();
     }

@@ -6,7 +6,7 @@ import { Effect } from "effect";
 import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../../core/buckets/buckets.ts";
 import { readConfig, type ConfigInvalid } from "../../modules/config/config.ts";
 import { type Ledger, type LedgerUnreadable, type SyncReport } from "../../modules/ledger/ledger.ts";
-import { KeychainUnavailable, type Secrets } from "../secrets/secrets.ts";
+import type { Secrets } from "../secrets/secrets.ts";
 import type { Backend, BackendFailure } from "./backend.ts";
 
 /**
@@ -50,10 +50,12 @@ const toBucket = (deviceId: string, row: BucketRow): Bucket => ({
  * dirty flag is cleared only after that batch's push returns 200, so a failure keeps the rows for the next
  * run. The scan result is already committed by then.
  *
- * The pull body has no per-row sequence (plan 3.2.4). Each stored row takes the page's high-water mark:
- * `next`, or the request's `after` when `next` is null. `meta.pull_cursor` moves only when `next` is not
- * null, and only after the upsert, so a crash retries the page. A short last page is pulled again next
- * time; the upsert is idempotent. Rows for this device are skipped.
+ * The pull body has no per-row sequence (plan 3.2.4). A page that returns rows sets `next` to the last
+ * row's seq; only an empty page sets `next` to null. Each stored row takes that high-water mark (`next`,
+ * or the request's `after` when `next` is null). `meta.pull_cursor` moves to every non-null `next` after
+ * the upsert, and the client keeps pulling until `next` is null, so the next refresh starts after the rows
+ * already stored. A crash before the cursor write retries the page; the upsert is idempotent. Rows for
+ * this device are skipped.
  */
 export const synchronize = (
   input: SyncInput & {
@@ -61,15 +63,31 @@ export const synchronize = (
     readonly backend: BackendClient;
     readonly ledger: Ledger;
   }
-): Effect.Effect<SyncReport, KeychainUnavailable | ConfigInvalid | LedgerUnreadable> =>
+): Effect.Effect<SyncReport, ConfigInvalid | LedgerUnreadable> =>
   Effect.gen(function* () {
     const config = yield* readConfig(input.platform, input.dataDir);
     // Unpaired runs, including the bundle tests, must not start `security`. The URL is checked first.
     if (config.backendUrl === undefined) {
       return { state: "unpaired", pushed: 0, pulled: 0, at: null };
     }
-    const token = yield* input.secrets.read(input.ledger.meta.deviceId);
-    // A missing item is "not paired". A broken keychain fails the effect instead of this report.
+    const read = yield* input.secrets.read(input.ledger.meta.deviceId).pipe(
+      Effect.match({
+        onFailure: (error) => ({ kind: "error" as const, error }),
+        onSuccess: (value) => ({ kind: "value" as const, value })
+      })
+    );
+    // A missing item is "not paired". A keychain that cannot be read is a failed sync: the snapshot is
+    // still written, and the `keychain` failure code stays for pair, unpair and doctor.
+    if (read.kind === "error") {
+      return {
+        state: "failed",
+        pushed: 0,
+        pulled: 0,
+        at: new Date(input.platform.clock.now()).toISOString(),
+        message: read.error.message
+      };
+    }
+    const token = read.value;
     if (token === undefined) {
       return { state: "unpaired", pushed: 0, pulled: 0, at: null };
     }
@@ -82,7 +100,8 @@ export const synchronize = (
       state: error._tag === "BackendUnauthorized" ? "revoked" : "failed",
       pushed,
       pulled,
-      at
+      at,
+      message: error.message
     });
 
     let batch = yield* input.ledger.readDirtyBuckets(PUSH_BATCH);

@@ -63,6 +63,10 @@ const detail = (body: unknown, fallback: string): string => {
   return parsed.success ? parsed.data.error.message : fallback;
 };
 
+/** Puts the status in front of the body text, so 403, 404 and 5xx stay distinct after the body parses. */
+const described = (status: number, body: unknown, fallback: string): string =>
+  `HTTP ${status}: ${detail(body, fallback)}`;
+
 /** Empty text is an empty body. Text that is not JSON stays `undefined` so the status can still decide. */
 const looseBody = (text: string): unknown => {
   if (text === "") {
@@ -77,13 +81,13 @@ const looseBody = (text: string): unknown => {
 
 const failureForStatus = (status: number, body: unknown): BackendFailure | undefined => {
   if (status === 401) {
-    return new BackendUnauthorized({ message: detail(body, "the backend refused the token") });
+    return new BackendUnauthorized({ message: described(status, body, "the backend refused the token") });
   }
   if (status === 403) {
-    return new BackendForbidden({ message: detail(body, "the backend forbade the request") });
+    return new BackendForbidden({ message: described(status, body, "the backend forbade the request") });
   }
   if (status >= 500) {
-    return new BackendUnreachable({ message: detail(body, `the backend returned ${status}`) });
+    return new BackendUnreachable({ message: described(status, body, `the backend returned ${status}`) });
   }
   return undefined;
 };
@@ -101,7 +105,7 @@ const parseSuccess = <S extends z.core.$ZodType>(
     }
     if (raw.status !== status) {
       return yield* new BackendInvalidResponse({
-        message: detail(body, `the backend returned ${raw.status}`)
+        message: described(raw.status, body, `the backend returned ${raw.status}`)
       });
     }
     const parsed = z.safeParse(schema, body);
@@ -115,12 +119,17 @@ const parseSuccess = <S extends z.core.$ZodType>(
 
 /**
  * Joins `path` onto `baseUrl` without dropping a base path. `path` is relative (`v1/health`); a leading
- * slash would replace the base path.
+ * slash would replace the base path. A base that is not a URL is a sync failure, not a defect: `config.json`
+ * rejects it, and a caller that still passes one (7b `pair` included) gets `BackendUnreachable`.
  */
-const joinUrl = (baseUrl: string, path: string): string => {
-  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return new URL(path, base).toString();
-};
+const endpoint = (baseUrl: string, path: string): Effect.Effect<URL, BackendUnreachable> =>
+  Effect.try({
+    try: () => new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`),
+    catch: (error) =>
+      new BackendUnreachable({
+        message: `the backend URL "${baseUrl}" cannot be used: ${errorMessage(error)}`
+      })
+  });
 
 /**
  * One HTTP call. The body is read before the effect completes, and the abort runs only when the call is
@@ -205,29 +214,26 @@ type BackendShape = {
 const createClient = (fetchImpl: BackendFetch): Context.Service.Shape<typeof Backend> => ({
   health: (baseUrl) =>
     Effect.gen(function* () {
-      const raw = yield* send(fetchImpl, joinUrl(baseUrl, "v1/health"), "GET", undefined, undefined);
+      const url = yield* endpoint(baseUrl, "v1/health");
+      const raw = yield* send(fetchImpl, url.toString(), "GET", undefined, undefined);
       return yield* parseSuccess(raw, 200, httpHealthResponseSchema);
     }),
   registerDevice: (baseUrl, adminToken, device) =>
     Effect.gen(function* () {
-      const raw = yield* send(fetchImpl, joinUrl(baseUrl, "v1/devices"), "POST", adminToken, device);
+      const url = yield* endpoint(baseUrl, "v1/devices");
+      const raw = yield* send(fetchImpl, url.toString(), "POST", adminToken, device);
       const body = yield* parseSuccess(raw, 201, httpDeviceRegisterResponseSchema);
       return { deviceToken: body.deviceToken };
     }),
   pushBuckets: (baseUrl, deviceToken, deviceId, buckets) =>
     Effect.gen(function* () {
-      const raw = yield* send(
-        fetchImpl,
-        joinUrl(baseUrl, `v1/devices/${encodeURIComponent(deviceId)}/buckets`),
-        "PUT",
-        deviceToken,
-        { buckets }
-      );
+      const url = yield* endpoint(baseUrl, `v1/devices/${encodeURIComponent(deviceId)}/buckets`);
+      const raw = yield* send(fetchImpl, url.toString(), "PUT", deviceToken, { buckets });
       return yield* parseSuccess(raw, 200, httpPushResponseSchema);
     }),
   pullBuckets: (baseUrl, deviceToken, after, limit = 1000) =>
     Effect.gen(function* () {
-      const url = new URL(joinUrl(baseUrl, "v1/buckets"));
+      const url = yield* endpoint(baseUrl, "v1/buckets");
       url.searchParams.set("after", String(after));
       url.searchParams.set("limit", String(limit));
       const raw = yield* send(fetchImpl, url.toString(), "GET", deviceToken, undefined);
@@ -235,19 +241,15 @@ const createClient = (fetchImpl: BackendFetch): Context.Service.Shape<typeof Bac
     }),
   listDevices: (baseUrl, deviceToken) =>
     Effect.gen(function* () {
-      const raw = yield* send(fetchImpl, joinUrl(baseUrl, "v1/devices"), "GET", deviceToken, undefined);
+      const url = yield* endpoint(baseUrl, "v1/devices");
+      const raw = yield* send(fetchImpl, url.toString(), "GET", deviceToken, undefined);
       const body = yield* parseSuccess(raw, 200, httpDevicesResponseSchema);
       return body.devices;
     }),
   revokeDevice: (baseUrl, adminToken, deviceId) =>
     Effect.gen(function* () {
-      const raw = yield* send(
-        fetchImpl,
-        joinUrl(baseUrl, `v1/devices/${encodeURIComponent(deviceId)}`),
-        "DELETE",
-        adminToken,
-        undefined
-      );
+      const url = yield* endpoint(baseUrl, `v1/devices/${encodeURIComponent(deviceId)}`);
+      const raw = yield* send(fetchImpl, url.toString(), "DELETE", adminToken, undefined);
       const body = looseBody(raw.text);
       const failed = failureForStatus(raw.status, body);
       if (failed !== undefined) {
@@ -255,7 +257,7 @@ const createClient = (fetchImpl: BackendFetch): Context.Service.Shape<typeof Bac
       }
       if (raw.status !== 204) {
         return yield* new BackendInvalidResponse({
-          message: detail(body, `the backend returned ${raw.status}`)
+          message: described(raw.status, body, `the backend returned ${raw.status}`)
         });
       }
     })
@@ -279,8 +281,8 @@ export { PUSH_BATCH } from "./sync.ts";
 /**
  * The sync step of a refresh or rebuild (plan 3.4.1 step 6). The caller passes the function into
  * `scanAndCommit`, because `modules/` cannot import `capabilities/` (plan 3.13 rule 1). Backend failures
- * stay inside the step and become a sync report; a broken keychain fails the effect, so the command exits
- * before the snapshot.
+ * and a keychain that cannot be read stay inside the step and become a sync report, so the snapshot is
+ * still written. The `keychain` failure code is for `pair`, `unpair` and `doctor`.
  */
 export const pairedSync = (input: SyncInput) =>
   Effect.gen(function* () {

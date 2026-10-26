@@ -230,7 +230,7 @@ describe("DELETE /v1/devices/:id", () => {
     expect((await call(handler, jsonRequest("GET", "/v1/devices", { token: a.token }))).status).toBe(401);
     const pull = await call(handler, jsonRequest("GET", "/v1/buckets", { token: b.token }));
     expect(pull.status).toBe(200);
-    expect(pull.body).toMatchObject({ buckets: [bucketFixture(deviceAId)], next: null });
+    expect(pull.body).toMatchObject({ buckets: [bucketFixture(deviceAId)], next: 1 });
   });
 
   it("answers 404 for an unknown id, keeping the owner's secret check distinguishable", async () => {

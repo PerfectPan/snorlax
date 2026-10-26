@@ -11,12 +11,6 @@ import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
 
 /**
- * The scheduler of the system the CLI runs on (plan 3.13 rule 5). `SNORLAX_OS` (`darwin`, `linux` or
- * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run the launchd path on the Linux
- * CI job; it is not copied into the job. Picking one only reads the environment, and the implementations
- * for other systems fail install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
- */
-/**
  * The token store of this machine (plan 3.4.2). `platform.os` decides, not `SNORLAX_OS`: that override exists
  * so the Linux CI job can exercise launchd, and it must not point the keychain at a binary the machine lacks.
  */
@@ -33,6 +27,12 @@ const secretsLive = Layer.unwrap(
   })
 );
 
+/**
+ * The scheduler of the system the CLI runs on (plan 3.13 rule 5). `SNORLAX_OS` (`darwin`, `linux` or
+ * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run the launchd path on the Linux
+ * CI job; it is not copied into the job. Picking one only reads the environment, and the implementations
+ * for other systems fail install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
+ */
 const schedulerLive = Layer.unwrap(
   Effect.gen(function* () {
     const platform = yield* SnorlaxPlatform;

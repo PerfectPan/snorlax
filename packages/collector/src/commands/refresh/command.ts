@@ -1,17 +1,8 @@
 import type { RefreshResult } from "@rivus/snorlax-protocol";
 import { Effect } from "effect";
 
+import { syncLine } from "../../core/sync-text/sync-text.ts";
 import { refreshFlow } from "./flow.ts";
-
-const syncLine = (sync: RefreshResult["sync"]): string => {
-  if (sync.state === "unpaired") {
-    return "sync: not paired";
-  }
-  if (sync.state === "revoked") {
-    return "sync: revoked";
-  }
-  return `sync: ${sync.state}, pushed ${sync.pushed}, pulled ${sync.pulled}`;
-};
 
 const humanSummary = (result: RefreshResult): string =>
   [`scanned ${result.records} records at ${result.scannedAt}, ${result.failures} failures`, syncLine(result.sync)].join(

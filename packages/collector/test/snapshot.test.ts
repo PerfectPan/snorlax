@@ -1,5 +1,5 @@
 import { buildSnapshot } from "../src/core/snapshot/snapshot.ts";
-import type { BucketRow, RemoteDeviceRow } from "../src/core/buckets/buckets.ts";
+import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../src/core/buckets/buckets.ts";
 import type { SyncState } from "@rivus/snorlax-protocol";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -35,13 +35,14 @@ const build = (options: {
   buckets: readonly BucketRow[];
   sync?: { state: SyncState; at: string | null };
   remoteDevices?: readonly RemoteDeviceRow[];
+  remoteBuckets?: readonly RemoteBucketRow[];
 }) =>
   buildSnapshot({
     now: options.now,
     timeZone: options.timeZone,
     thisDevice: { id: "11111111-2222-4333-8444-555555555555", name: "Test Mac" },
     buckets: options.buckets,
-    remoteBuckets: [],
+    remoteBuckets: options.remoteBuckets ?? [],
     remoteDevices: options.remoteDevices ?? [],
     lastScanAt: options.now - 60_000,
     failuresByAgent: {},
@@ -249,5 +250,38 @@ describe("shape", () => {
       sync: { state: "revoked", at: new Date(now).toISOString() }
     });
     expect(revoked.status.paired).toBe(false);
+  });
+
+  it("lists a revoked device so its usage is in both the totals and byDevice", () => {
+    const now = Date.UTC(2026, 9, 22, 12, 0, 0);
+    const revokedId = "33333333-4444-4555-8666-777777777777";
+    const remote = bucket("2026-10-22T03:00:00Z");
+    const snapshot = build({
+      now,
+      timeZone: "Asia/Shanghai",
+      buckets: [bucket("2026-10-22T02:00:00Z")],
+      remoteBuckets: [
+        {
+          deviceId: revokedId,
+          hour: remote.hour,
+          agent: remote.agent,
+          model: remote.model,
+          inputTokens: remote.inputTokens,
+          cacheReadTokens: remote.cacheReadTokens,
+          cacheWriteTokens: remote.cacheWriteTokens,
+          outputTokens: remote.outputTokens,
+          reasoningTokens: remote.reasoningTokens,
+          requests: remote.requests,
+          sessionsStarted: remote.sessionsStarted,
+          costUsd: remote.costUsd,
+          unpricedRequests: remote.unpricedRequests,
+          seq: 1
+        }
+      ],
+      remoteDevices: [{ id: revokedId, name: "Revoked Mac", lastPushAt: now, revoked: true }]
+    });
+    expect(snapshot.totals.today.tokens).toBe(2200);
+    expect(snapshot.byDevice.find((device) => device.deviceId === revokedId)?.today.tokens).toBe(1100);
+    expect(snapshot.byDevice.reduce((sum, device) => sum + device.today.tokens, 0)).toBe(snapshot.totals.today.tokens);
   });
 });

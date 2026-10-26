@@ -82,7 +82,9 @@ export const refreshResultSchema = z.object({
     ok: z.boolean(),
     state: syncStateSchema,
     pushed: nonNegativeIntSchema,
-    pulled: nonNegativeIntSchema
+    pulled: nonNegativeIntSchema,
+    /** Plain-text reason for `failed` or `revoked`. Omitted when the sync has nothing to explain. */
+    message: z.optional(z.string())
   })
 });
 export type RefreshResult = z.output<typeof refreshResultSchema>;

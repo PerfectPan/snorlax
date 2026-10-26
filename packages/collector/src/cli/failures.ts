@@ -2,15 +2,17 @@ import type { FailureCode } from "@rivus/snorlax-protocol";
 import type { Command } from "effect/cli";
 
 import type { BackendFailure } from "../capabilities/backend/backend.ts";
+import type { KeychainUnavailable } from "../capabilities/secrets/secrets.ts";
 import type { rootCommand } from "./root.ts";
 
 /**
  * Every error a command can fail with, read off the root command's error channel: the root handler's
  * usage error and the typed failures of every subcommand handler. effect/cli's own `CliError` is not in it.
- * The backend failures are included even while refresh catches them into a sync report, so `pair` (Batch 7b)
- * can fail with them and the rows already exist. A type-only import keeps this file from loading the client.
+ * Refresh folds a locked keychain and the backend failures into the sync report. Both stay in this union
+ * so `pair`, `unpair` and `doctor` (Batch 7b) can fail with them. Type-only imports keep this file from
+ * loading those modules.
  */
-type CommandFailure = Command.Error<typeof rootCommand> | BackendFailure;
+type CommandFailure = Command.Error<typeof rootCommand> | BackendFailure | KeychainUnavailable;
 
 export interface FailureExit {
   readonly code: FailureCode;

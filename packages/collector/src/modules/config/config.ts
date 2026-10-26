@@ -7,6 +7,34 @@ import * as z from "zod/mini";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { readTextFile } from "../read-text-file/read-text-file.ts";
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** `https`, or `http` only on loopback so `cf dev` can smoke the Worker. `pair` (Batch 7b) reuses this. */
+const isBackendUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    if (url.hostname === "") {
+      return false;
+    }
+    if (url.protocol === "https:") {
+      return true;
+    }
+    return url.protocol === "http:" && LOOPBACK.has(url.hostname);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * A backend URL `config.json` may store. `z.httpUrl()` accepts any `http:` host and rejects loopback `http:`,
+ * which is the opposite of this rule.
+ */
+export const backendUrlSchema = z.string().check(
+  z.refine(isBackendUrl, {
+    error: "backendUrl must be an https URL, or http on localhost, 127.0.0.1, or [::1]"
+  })
+);
+
 /**
  * `<data>/config.json` holds the user's choices that are not secrets: the device name and the backend URL
  * (plan 3.2.1, 3.4.2). It is parsed with a schema at the boundary; a file that is present but invalid fails
@@ -14,7 +42,7 @@ import { readTextFile } from "../read-text-file/read-text-file.ts";
  */
 export const configSchema = z.object({
   deviceName: z.optional(z.string().check(z.minLength(1))),
-  backendUrl: z.optional(z.string().check(z.minLength(1)))
+  backendUrl: z.optional(backendUrlSchema)
 });
 export type ConfigValue = z.output<typeof configSchema>;
 

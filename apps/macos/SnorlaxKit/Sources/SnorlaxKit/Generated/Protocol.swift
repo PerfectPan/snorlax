@@ -202,19 +202,22 @@ public struct RefreshResult: Codable, Equatable, Sendable {
 
 // MARK: - RefreshSync
 public struct RefreshSync: Codable, Equatable, Sendable {
+    public let message: String?
     public let ok: Bool
     public let pulled: Int
     public let pushed: Int
     public let state: SyncState
 
     public enum CodingKeys: String, CodingKey {
+        case message = "message"
         case ok = "ok"
         case pulled = "pulled"
         case pushed = "pushed"
         case state = "state"
     }
 
-    public init(ok: Bool, pulled: Int, pushed: Int, state: SyncState) {
+    public init(message: String?, ok: Bool, pulled: Int, pushed: Int, state: SyncState) {
+        self.message = message
         self.ok = ok
         self.pulled = pulled
         self.pushed = pushed

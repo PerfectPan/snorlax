@@ -2,7 +2,13 @@ import * as z from "zod/mini";
 import { describe, expect, it } from "vite-plus/test";
 
 import { bucketSchema, type StrictBucket } from "./bucket.ts";
-import { httpErrorSchema, httpPullResponseSchema, httpPushRequestSchema, type HttpPushRequest } from "./http.ts";
+import {
+  httpDeviceRegisterResponseSchema,
+  httpErrorSchema,
+  httpPullResponseSchema,
+  httpPushRequestSchema,
+  type HttpPushRequest
+} from "./http.ts";
 
 describe("httpPushRequestSchema (Spec R10, S15)", () => {
   const validBucket: StrictBucket = {
@@ -46,6 +52,20 @@ describe("httpPushRequestSchema (Spec R10, S15)", () => {
       buckets: [validBucket],
       next: null
     });
+  });
+});
+
+describe("httpDeviceRegisterResponseSchema", () => {
+  const token = (deviceToken: string) => z.safeParse(httpDeviceRegisterResponseSchema, { deviceToken });
+
+  it("accepts an RFC 6750 b64token and rejects a space, a newline, or an equals sign in the middle", () => {
+    expect(token("issued-token").success).toBe(true);
+    expect(token("abcABC012._~+/=").success).toBe(true);
+    expect(token("YWJjZA").success).toBe(true);
+    expect(token("").success).toBe(false);
+    expect(token("has space").success).toBe(false);
+    expect(token("has\nnewline").success).toBe(false);
+    expect(token("mid=dle").success).toBe(false);
   });
 });
 

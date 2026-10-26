@@ -80,7 +80,7 @@ process.stdin.on("end", () => {
   const account = accountAt >= 0 ? args[accountAt + 1] : undefined;
   const op = args[0];
   if (op === "store") {
-    items[account] = stdin.endsWith("\\n") ? stdin.slice(0, -1) : stdin;
+    items[account] = stdin;
     writeFileSync(storePath, JSON.stringify(items));
     process.exit(0);
   }
@@ -215,6 +215,35 @@ describe("macOS keychain through security -i", () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  it("treats a locked keychain (exit 36) as unavailable", async () => {
+    const home = await mkdtemp(join(tmpdir(), "snorlax-keychain-locked-"));
+    const stubPath = join(home, "security-stub");
+    const locked = `#!${process.execPath}
+process.stderr.write("user interaction is not allowed\\n");
+process.exit(36);
+`;
+    try {
+      await writeFile(stubPath, locked);
+      await chmod(stubPath, 0o755);
+      const platform = createNodePlatform({
+        home,
+        env: { PATH: "/usr/bin:/bin", SNORLAX_SECURITY: stubPath }
+      });
+      const error = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).read(DEVICE);
+          }).pipe(Effect.provide(Layer.provide(Secrets.keychain, Layer.succeed(SnorlaxPlatform, platform))))
+        )
+      );
+      expect(error._tag).toBe("KeychainUnavailable");
+      expect(error.message).toContain("36");
+      expect(error.message).not.toContain(TOKEN);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Linux secret service through secret-tool", () => {
@@ -250,7 +279,66 @@ describe("Linux secret service through secret-tool", () => {
       const calls = await readInvocations(logPath);
       assertTokenNotInArgv(calls, TOKEN);
       expect(calls[0]?.argv.slice(2)).toEqual(["store", "--label=snorlax", "service", "snorlax", "account", DEVICE]);
-      expect(calls[0]?.stdin).toBe(`${TOKEN}\n`);
+      expect(calls[0]?.stdin).toBe(TOKEN);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("treats exit 1 with stderr as unavailable and exit 1 with empty stderr as a missing item", async () => {
+    const home = await mkdtemp(join(tmpdir(), "snorlax-libsecret-down-"));
+    const downPath = join(home, "secret-tool-down");
+    const missingPath = join(home, "secret-tool-missing");
+    const down = `#!${process.execPath}
+process.stderr.write("Cannot connect to the secret service\\n");
+process.exit(1);
+`;
+    const missing = `#!${process.execPath}
+process.exit(1);
+`;
+    const provide = (binary: string) => {
+      const platform = createNodePlatform({
+        home,
+        env: { PATH: "/usr/bin:/bin", SNORLAX_SECRET_TOOL: binary }
+      });
+      return Layer.provide(Secrets.libsecret, Layer.succeed(SnorlaxPlatform, platform));
+    };
+    const read = (binary: string) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Secrets).read(DEVICE);
+        }).pipe(Effect.provide(provide(binary)))
+      );
+    try {
+      await writeFile(downPath, down);
+      await writeFile(missingPath, missing);
+      await chmod(downPath, 0o755);
+      await chmod(missingPath, 0o755);
+      const error = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            const secrets = yield* Secrets;
+            return yield* secrets.read(DEVICE);
+          }).pipe(Effect.provide(provide(downPath)))
+        )
+      );
+      expect(error._tag).toBe("KeychainUnavailable");
+      expect(error.message).toContain("Cannot connect to the secret service");
+      expect(error.message).not.toContain(TOKEN);
+      const cleared = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            return yield* (yield* Secrets).delete(DEVICE);
+          }).pipe(Effect.provide(provide(downPath)))
+        )
+      );
+      expect(cleared._tag).toBe("KeychainUnavailable");
+      expect(await read(missingPath)).toBeUndefined();
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Secrets).delete(DEVICE);
+        }).pipe(Effect.provide(provide(missingPath)))
+      );
     } finally {
       await rm(home, { recursive: true, force: true });
     }

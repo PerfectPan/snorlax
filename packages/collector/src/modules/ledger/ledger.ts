@@ -137,12 +137,16 @@ export interface Ledger {
   resetRemote(): Effect.Effect<void>;
 }
 
-/** What one sync attempt reports. `at` is null when the device is not paired, so no sync was tried. */
+/**
+ * What one sync attempt reports. `at` is null when the device is not paired, so no sync was tried.
+ * `message` is the plain-text reason for `failed` and `revoked`, and is omitted when there is none.
+ */
 export interface SyncReport {
   readonly state: SyncState;
   readonly pushed: number;
   readonly pulled: number;
   readonly at: string | null;
+  readonly message?: string;
 }
 
 export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db");
@@ -731,8 +735,8 @@ export interface ScanAndCommitOutcome {
  * run's commit, so two overlapping runs queue instead of the second reading the first's pre-commit state. The
  * lock and the ledger are held in a scope, so a run that fails or is interrupted rolls back, closes the ledger
  * and releases the lock. The scan result stays committed even when sync or the snapshot write fails; the next
- * run rewrites the snapshot. A sync failure that is a report (`failed`, `revoked`) still writes the snapshot.
- * A broken keychain fails the step, so no snapshot is written.
+ * run rewrites the snapshot. A sync failure that is a report (`failed`, `revoked`, including a keychain that
+ * cannot be read) still writes the snapshot.
  */
 export const scanAndCommit = <E>(
   deps: ScanAndCommitDeps<E>,
@@ -777,15 +781,25 @@ export const scanAndCommit = <E>(
         sync: { state: report.state, at: report.at }
       });
       yield* writeSnapshot(platform, dataDir, snapshot);
-      yield* deps.log.event(run.event, {
+      const fields: Record<string, LogFieldValue> = {
         ...run.fields,
         records: scanned.records,
         failures: scanned.failures,
         pushed: report.pushed,
         pulled: report.pulled,
-        sync: report.state,
-        durationMs: Math.round(platform.clock.monotonic() - startedAt)
-      });
+        sync: report.state
+      };
+      if (report.message !== undefined) {
+        fields.message = report.message;
+      }
+      fields.durationMs = Math.round(platform.clock.monotonic() - startedAt);
+      yield* deps.log.event(run.event, fields);
+      const sync = {
+        ok: report.state === "ok",
+        state: report.state,
+        pushed: report.pushed,
+        pulled: report.pulled
+      };
       return {
         result: {
           schemaVersion: 1,
@@ -793,12 +807,7 @@ export const scanAndCommit = <E>(
           scannedAt: new Date(now).toISOString(),
           records: scanned.records,
           failures: scanned.failures,
-          sync: {
-            ok: report.state === "ok",
-            state: report.state,
-            pushed: report.pushed,
-            pulled: report.pulled
-          }
+          sync: report.message === undefined ? sync : { ...sync, message: report.message }
         },
         failuresByAgent: scanned.failuresByAgent
       };
