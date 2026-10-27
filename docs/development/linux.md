@@ -16,6 +16,21 @@ Node that satisfies that range and check it with `node -v` before installing the
 npm i -g @rivus/snorlax
 ```
 
+Until `@rivus/snorlax` is published to npm, build it from a clone instead. Building needs Node.js `^24.22.0` and
+pnpm 12 (the root `package.json`'s `devEngines` and `packageManager`); the built CLI runs on Node `>= 22.13`.
+
+```bash
+git clone https://github.com/PerfectPan/snorlax.git
+cd snorlax
+pnpm install
+pnpm --filter @rivus/snorlax run build
+mkdir -p ~/.local/bin
+ln -s "$PWD/packages/collector/dist/snorlax.mjs" ~/.local/bin/snorlax
+```
+
+`~/.local/bin` must be on `PATH`. The timer runs `snorlax.mjs` from this clone, so keep the clone. After
+`git pull`, run `pnpm install` and the build again.
+
 ## Schedule refresh
 
 ```bash

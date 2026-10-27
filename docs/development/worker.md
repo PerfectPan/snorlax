@@ -75,6 +75,27 @@ Changing the domain moves the Worker to a new origin. Pair each device again wit
 revokes that device and registers it again, and usage already uploaded stays. The steps are in
 [pairing.md](pairing.md).
 
+## Deploy again
+
+Deploy from an up-to-date `main`, after `pnpm install`: `cf deploy` builds the Worker from the working tree. Later
+deploys leave out `--secrets-file`:
+
+```bash
+SNORLAX_D1_DATABASE_ID=<d1-database-id> pnpm exec cf deploy --mode production
+```
+
+`ADMIN_TOKEN` stays set across deploys that do not pass a secrets file. To replace it, write a new secrets file and
+deploy with `--secrets-file` again. Devices keep their own tokens; only admin calls (pairing and revoking) need the
+new value.
+
+When a change adds a file under `migrations/`, apply the migrations as above before that deploy. Migrations are
+additive, so the Worker that is still running keeps working on the new schema.
+
+To confirm the admin token is still set, revoke a device id that does not exist, the way
+[pairing.md](pairing.md) revokes a device (the header in a file, never on the command line), with any UUID that no
+device uses in place of `<device-id>`. 404 means the token was accepted. 401 means the secret is missing or
+different.
+
 ## Check
 
 On the default hostname:
