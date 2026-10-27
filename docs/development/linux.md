@@ -16,6 +16,21 @@ Node that satisfies that range and check it with `node -v` before installing the
 npm i -g @rivus/snorlax
 ```
 
+Until `@rivus/snorlax` is published to npm, build it from a clone instead. Building needs Node.js `^24.22.0` and
+pnpm 12 (the root `package.json`'s `devEngines` and `packageManager`); the built CLI runs on Node `>= 22.13`.
+
+```bash
+git clone https://github.com/PerfectPan/snorlax.git
+cd snorlax
+pnpm install
+pnpm --filter @rivus/snorlax run build
+mkdir -p ~/.local/bin
+ln -sf "$PWD/packages/collector/dist/snorlax.mjs" ~/.local/bin/snorlax
+```
+
+`~/.local/bin` must be on `PATH`. The timer runs the link, which points into this clone, so keep both. After
+`git pull`, run `pnpm install` and the build again; `snorlax install` does not need to run again.
+
 ## Schedule refresh
 
 ```bash
@@ -37,12 +52,13 @@ snorlax install
    not used. There is no fallback to `~/.config` or to the shell's `XDG_CONFIG_HOME`. If that entry is missing, or
    the query fails or does not parse, install writes nothing.
 4. The service is `Type=oneshot`, because `refresh` exits. `ExecStart` is three arguments: the absolute path of the
-   Node that ran `snorlax install`, the absolute path of that install's `snorlax.mjs`, and `refresh`. systemd does
-   not expand `$` in the program (the Node path) and does not collapse `$$` there, so that word leaves `$` as
-   written. The `snorlax.mjs` argument doubles `$`, because later arguments expand `$VAR` and `${VAR}`. The service
-   always sets `Environment=SNORLAX_HOME` to the absolute data directory this install resolved, so the timer and
-   that CLI use the same directory whether it came from `SNORLAX_HOME`, `XDG_DATA_HOME`, or the default. Standard
-   output and standard error are discarded. The refresh summary is appended to `<data-directory>/logs/snorlax.log`.
+   Node that ran `snorlax install`, the absolute path the CLI was started from (`snorlax.mjs`, or the link to it),
+   and `refresh`. systemd does not expand `$` in the program (the Node path) and does not collapse `$$` there, so
+   that word leaves `$` as written. The second argument doubles `$`, because later arguments expand `$VAR` and
+   `${VAR}`. The service always sets `Environment=SNORLAX_HOME` to the absolute data directory this install resolved,
+   so the timer and that CLI use the same directory whether it came from `SNORLAX_HOME`, `XDG_DATA_HOME`, or the
+   default. Standard output and standard error are discarded. The refresh summary is appended to
+   `<data-directory>/logs/snorlax.log`.
 5. The timer waits `OnBootSec=1min` after the machine boots. `OnStartupSec` would measure from the user manager's
    start; this timer uses `OnBootSec`. It then runs every `OnUnitActiveSec=5min`. The `[Install]` section is
    `WantedBy=timers.target`, which is what `systemctl enable` installs.
