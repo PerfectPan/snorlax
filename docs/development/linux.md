@@ -25,11 +25,11 @@ cd snorlax
 pnpm install
 pnpm --filter @rivus/snorlax run build
 mkdir -p ~/.local/bin
-ln -s "$PWD/packages/collector/dist/snorlax.mjs" ~/.local/bin/snorlax
+ln -sf "$PWD/packages/collector/dist/snorlax.mjs" ~/.local/bin/snorlax
 ```
 
-`~/.local/bin` must be on `PATH`. The timer runs `snorlax.mjs` from this clone, so keep the clone. After
-`git pull`, run `pnpm install` and the build again.
+`~/.local/bin` must be on `PATH`. The timer runs the link, which points into this clone, so keep both. After
+`git pull`, run `pnpm install` and the build again; `snorlax install` does not need to run again.
 
 ## Schedule refresh
 

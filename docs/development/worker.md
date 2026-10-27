@@ -84,17 +84,20 @@ deploys leave out `--secrets-file`:
 SNORLAX_D1_DATABASE_ID=<d1-database-id> pnpm exec cf deploy --mode production
 ```
 
-`ADMIN_TOKEN` stays set across deploys that do not pass a secrets file. To replace it, write a new secrets file and
-deploy with `--secrets-file` again. Devices keep their own tokens; only admin calls (pairing and revoking) need the
-new value.
+Every deploy reads `SNORLAX_DOMAIN` again. On a domain you control, set it to the same value as before, as in the
+domain command above. Leaving it unset turns `workers.dev` back on.
+
+`ADMIN_TOKEN` stays set across deploys that do not pass a secrets file. To replace it, write a new secrets file as
+above, deploy with `--secrets-file` again, and delete the file. Devices keep their own tokens; only admin calls
+(pairing and revoking) need the new value.
 
 When a change adds a file under `migrations/`, apply the migrations as above before that deploy. Migrations are
 additive, so the Worker that is still running keeps working on the new schema.
 
 To confirm the admin token is still set, revoke a device id that does not exist, the way
 [pairing.md](pairing.md) revokes a device (the header in a file, never on the command line), with any UUID that no
-device uses in place of `<device-id>`. 404 means the token was accepted. 401 means the secret is missing or
-different.
+device uses in place of `<device-id>`. A body with code `not-found` and the message `no device <device-id>` means
+the token was accepted. Code `unauthorized` means the secret is missing or different.
 
 ## Check
 
