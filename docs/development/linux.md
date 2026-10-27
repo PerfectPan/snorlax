@@ -52,7 +52,7 @@ snorlax install
    not used. There is no fallback to `~/.config` or to the shell's `XDG_CONFIG_HOME`. If that entry is missing, or
    the query fails or does not parse, install writes nothing.
 4. The service is `Type=oneshot`, because `refresh` exits. `ExecStart` is three arguments: the absolute path of the
-   Node that ran `snorlax install`, the absolute path of that install's `snorlax.mjs`, and `refresh`. systemd does
+   Node that ran `snorlax install`, the absolute path the CLI was started from (`snorlax.mjs`, or the link to it), and `refresh`. systemd does
    not expand `$` in the program (the Node path) and does not collapse `$$` there, so that word leaves `$` as
    written. The `snorlax.mjs` argument doubles `$`, because later arguments expand `$VAR` and `${VAR}`. The service
    always sets `Environment=SNORLAX_HOME` to the absolute data directory this install resolved, so the timer and
