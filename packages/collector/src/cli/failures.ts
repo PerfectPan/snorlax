@@ -61,6 +61,7 @@ export const FAILURES = {
   UserIdUnavailable: { code: "internal", exit: 1 },
   LaunchctlFailed: { code: "internal", exit: 1 },
   ForeignServiceLoaded: { code: "internal", exit: 1 },
+  LauncherWriteFailed: { code: "internal", exit: 1 },
   PlistWriteFailed: { code: "internal", exit: 1 },
   PlistRemoveFailed: { code: "internal", exit: 1 },
   UnitPathsUnresolved: { code: "internal", exit: 1 },

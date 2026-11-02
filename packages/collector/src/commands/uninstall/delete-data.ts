@@ -153,9 +153,10 @@ const listOrNothing = (fs: Platform["fs"], dir: string): Effect.Effect<readonly 
 /**
  * Every entry snorlax writes directly in the data directory (3.3.2, 3.4.2, 3.9, 3.11): the ledger
  * database with its SQLite sidecars and lock files, the config, the snapshot, the app's `node-path`,
- * and the logs directory. Migration backups and crashed atomic-write temps are matched by pattern
- * below. launchd output files no longer exist (StandardOutPath/StandardErrorPath are /dev/null); the
- * `logs` directory still removes the ones older installs wrote.
+ * the refresh launcher the job files run, and the logs directory. Migration backups and crashed
+ * atomic-write temps are matched by pattern below. launchd output files no longer exist
+ * (StandardOutPath/StandardErrorPath are /dev/null); the `logs` directory still removes the ones older
+ * installs wrote.
  */
 const KNOWN_DATA_ENTRIES = [
   "ledger.db",
@@ -167,6 +168,7 @@ const KNOWN_DATA_ENTRIES = [
   "config.json",
   "snapshot.json",
   "node-path",
+  "refresh.sh",
   "logs"
 ] as const;
 

@@ -2,11 +2,16 @@ import { isAbsolute, sep } from "node:path";
 
 import * as z from "zod/mini";
 
+import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
+
 /**
  * systemd user units that run `snorlax refresh` (plan 3.1). Program paths are absolute because
- * systemd does not search `PATH`. `Environment=` always sets `SNORLAX_HOME` to the absolute data
- * directory install resolved, so the timer does not look that directory up again. Standard output is
- * discarded: the refresh summary already goes to the rotating `logs/snorlax.log` (plan 3.9).
+ * systemd does not search `PATH`: the service starts the data directory's launcher script through
+ * `/bin/sh`, and the script resolves Node at run time — the Node `snorlax install` ran with is not
+ * named here, so removing it does not stop the timer. `Environment=` always sets `SNORLAX_HOME` to
+ * the absolute data directory install resolved, so the timer does not look that directory up again.
+ * Standard output is discarded: the refresh summary already goes to the rotating `logs/snorlax.log`
+ * (plan 3.9).
  *
  * systemd expands `%` specifiers in both settings. systemd.service(5) does not expand `$` in the
  * program — the first `ExecStart` argument — and does not collapse `$$` there; a doubled `$` would be
@@ -25,8 +30,6 @@ export const TIMER_ON_BOOT = "1min";
 export const TIMER_INTERVAL = "5min";
 
 export interface SystemdUnitSpec {
-  readonly nodePath: string;
-  readonly cliPath: string;
   /** The absolute data directory install resolved. Written as `SNORLAX_HOME` so the timer uses it. */
   readonly snorlaxHome: string;
 }
@@ -133,7 +136,7 @@ export const userConfigUnitDir = (home: string, paths: readonly string[]): strin
   return undefined;
 };
 
-/** The service unit, in one fixed layout. `serviceNodePath` reads that layout back. */
+/** The service unit, in one fixed layout. `serviceLauncherPath` reads that layout back. */
 export const renderRefreshService = (spec: SystemdUnitSpec): string => {
   const lines = [
     "[Unit]",
@@ -142,7 +145,7 @@ export const renderRefreshService = (spec: SystemdUnitSpec): string => {
     "[Service]",
     // refresh exits. `simple` would treat that exit as the daemon dying.
     "Type=oneshot",
-    `ExecStart=${quoteSystemdWord(spec.nodePath, "program")} ${quoteSystemdWord(spec.cliPath, "exec")} refresh`,
+    `ExecStart=${quoteSystemdWord(LAUNCHER_SHELL, "program")} ${quoteSystemdWord(launcherPath(spec.snorlaxHome), "exec")}`,
     "StandardOutput=null",
     "StandardError=null",
     `Environment=${quoteSystemdWord(`SNORLAX_HOME=${spec.snorlaxHome}`, "assign")}`,
@@ -171,19 +174,19 @@ export const renderRefreshTimer = (): string =>
   ].join("\n");
 
 const QUOTED_WORD = '"(?:\\\\.|[^"\\\\])*"';
-const EXEC_START = new RegExp(`^ExecStart=(${QUOTED_WORD}) (${QUOTED_WORD}) refresh$`);
+const EXEC_START = new RegExp(`^ExecStart=(${QUOTED_WORD}) (${QUOTED_WORD})$`);
 
 /**
- * The Node binary — the first `ExecStart` word — of a service in the layout `renderRefreshService` writes,
- * or undefined for any other text. This reads snorlax's own output back instead of parsing unit files.
- * `$` is left as written: systemd executes the program literally and does not collapse `$$`.
+ * The launcher script — the second `ExecStart` word, after `/bin/sh` — of a service in the layout
+ * `renderRefreshService` writes, or undefined for any other text. This reads snorlax's own output back
+ * instead of parsing unit files. `$` is collapsed the way systemd reads a later `ExecStart` argument.
  */
-export const serviceNodePath = (text: string): string | undefined => {
+export const serviceLauncherPath = (text: string): string | undefined => {
   for (const line of text.split("\n")) {
     const match = EXEC_START.exec(line);
-    const quoted = match?.[1];
+    const quoted = match?.[2];
     if (quoted !== undefined) {
-      return unquoteSystemdWord(quoted, "program");
+      return unquoteSystemdWord(quoted, "exec");
     }
   }
   return undefined;

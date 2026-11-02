@@ -8,12 +8,14 @@ import { errorMessage } from "../../core/error-message/error-message.ts";
 import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
 import {
-  LAUNCH_AGENT_LABEL,
-  launchAgentNodePath,
-  launchAgentPlistPath,
-  renderLaunchAgentPlist,
-  type LaunchAgentSpec
-} from "./plist.ts";
+  LAUNCHER_MODE,
+  LauncherWriteFailed,
+  launcherPath,
+  NODE_PATH_FILE,
+  renderNodePathSeed,
+  renderRefreshLauncher
+} from "./launcher.ts";
+import { LAUNCH_AGENT_LABEL, launchAgentLauncherPath, launchAgentPlistPath, renderLaunchAgentPlist } from "./plist.ts";
 import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 
 /**
@@ -75,23 +77,17 @@ const launchctlBinary = (platform: Pick<Platform, "env">): string => {
   return override;
 };
 
-/** The running Node binary and the `snorlax.mjs` entry this process was started with. */
-const runningCollectorPaths: Effect.Effect<
-  Pick<LaunchAgentSpec, "nodePath" | "cliPath">,
-  CollectorPathUnresolved
-> = Effect.suspend(() => {
+/** The `snorlax.mjs` entry this process was started with; the launcher script bakes it in. */
+const runningCliPath: Effect.Effect<string, CollectorPathUnresolved> = Effect.suspend(() => {
   const entry = process.argv[1];
   if (entry === undefined || entry === "") {
     return Effect.fail(new CollectorPathUnresolved({ message: "cannot resolve the running snorlax CLI path" }));
   }
-  const nodePath = process.execPath;
   const cliPath = resolve(entry);
-  if (!isAbsolute(nodePath) || !isAbsolute(cliPath)) {
-    return Effect.fail(
-      new CollectorPathUnresolved({ message: "the Node and CLI paths in the LaunchAgent must be absolute" })
-    );
+  if (!isAbsolute(cliPath)) {
+    return Effect.fail(new CollectorPathUnresolved({ message: "the CLI path in the LaunchAgent must be absolute" }));
   }
-  return Effect.succeed({ nodePath, cliPath });
+  return Effect.succeed(cliPath);
 });
 
 const currentUid: Effect.Effect<number, UserIdUnavailable> = Effect.suspend(() => {
@@ -249,13 +245,13 @@ const snorlaxHomeOverride = (platform: Pick<Platform, "env">): string | undefine
   return value;
 };
 
-/** The CLI's plist and the Node binary it names; undefined when there is no plist. */
+/** The CLI's plist and the launcher script it runs; undefined when there is no plist. */
 const readCliJob = (platform: SchedulerPlatform, plistPath: string): Effect.Effect<CliJob | undefined> =>
   Effect.promise(() =>
     readTextFile(platform, plistPath).then(
-      (xml) => (xml === undefined ? undefined : { file: plistPath, nodePath: launchAgentNodePath(xml) }),
-      // A plist that exists but cannot be read names no Node binary snorlax can check.
-      () => ({ file: plistPath, nodePath: undefined })
+      (xml) => (xml === undefined ? undefined : { file: plistPath, launcher: launchAgentLauncherPath(xml) }),
+      // A plist that exists but cannot be read names no launcher script snorlax can check.
+      () => ({ file: plistPath, launcher: undefined })
     )
   );
 
@@ -289,10 +285,25 @@ export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.S
         const loaded = yield* loadedService(platform, target);
         yield* refuseForeignService(loaded, plistPath, target);
         yield* prepare;
+        // The launcher files go into the data directory first, so a bootstrap that starts the job always
+        // finds them: the plist only names the script, and the script resolves Node at run time — seeded
+        // with the Node running this install, which the app's discovery keeps current afterwards.
+        const launcher = renderRefreshLauncher({ dataDir: job.dataDir, cliPath: yield* runningCliPath });
         const plist = renderLaunchAgentPlist({
-          ...(yield* runningCollectorPaths),
           dataDir: job.dataDir,
           snorlaxHome: snorlaxHomeOverride(platform)
+        });
+        yield* Effect.tryPromise({
+          try: async () => {
+            await platform.fs.writeAtomic(join(job.dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath), {
+              mode: LAUNCHER_MODE
+            });
+            await platform.fs.writeAtomic(launcherPath(job.dataDir), launcher, { mode: LAUNCHER_MODE });
+          },
+          catch: (error) =>
+            new LauncherWriteFailed({
+              message: `cannot write ${launcherPath(job.dataDir)}: ${errorMessage(error)}`
+            })
         });
         yield* Effect.tryPromise({
           try: async () => {

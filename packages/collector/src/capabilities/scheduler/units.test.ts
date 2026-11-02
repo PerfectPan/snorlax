@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
 import {
   parseSystemctlShow,
   parseSystemctlUnitPath,
@@ -7,7 +8,7 @@ import {
   renderRefreshService,
   renderRefreshTimer,
   serviceEnvironment,
-  serviceNodePath,
+  serviceLauncherPath,
   unquoteSystemdWord,
   userConfigUnitDir
 } from "./units.ts";
@@ -53,12 +54,8 @@ describe("systemd unit text", () => {
     expect(unquoteSystemdWord('"%"', "exec")).toBeUndefined();
   });
 
-  it("writes an absolute ExecStart and always sets SNORLAX_HOME", () => {
-    const text = renderRefreshService({
-      nodePath: "/usr/bin/node",
-      cliPath: "/usr/bin/snorlax.mjs",
-      snorlaxHome: "/var/lib/snorlax"
-    });
+  it("writes an absolute ExecStart through the launcher and always sets SNORLAX_HOME", () => {
+    const text = renderRefreshService({ snorlaxHome: "/var/lib/snorlax" });
     expect(text).toBe(
       [
         "[Unit]",
@@ -66,21 +63,19 @@ describe("systemd unit text", () => {
         "",
         "[Service]",
         "Type=oneshot",
-        'ExecStart="/usr/bin/node" "/usr/bin/snorlax.mjs" refresh',
+        `ExecStart="${LAUNCHER_SHELL}" "/var/lib/snorlax/refresh.sh"`,
         "StandardOutput=null",
         "StandardError=null",
         'Environment="SNORLAX_HOME=/var/lib/snorlax"',
         ""
       ].join("\n")
     );
-    expect(serviceNodePath(text)).toBe("/usr/bin/node");
+    expect(serviceLauncherPath(text)).toBe(launcherPath("/var/lib/snorlax"));
   });
 
   it("leaves $ literal in the ExecStart program and doubles it only in later arguments", () => {
-    const nodePath = "/opt/$HOME/${HOME}/$$/node";
-    const cliPath = "/opt/${USER}/snorlax.mjs";
     const home = "/data/$HOME/${HOME}/$$";
-    const text = renderRefreshService({ nodePath, cliPath, snorlaxHome: home });
+    const text = renderRefreshService({ snorlaxHome: home });
     // systemd executes the program as written and collapses $$ only in the arguments after it.
     expect(text).toBe(
       [
@@ -89,33 +84,30 @@ describe("systemd unit text", () => {
         "",
         "[Service]",
         "Type=oneshot",
-        'ExecStart="/opt/$HOME/${HOME}/$$/node" "/opt/$${USER}/snorlax.mjs" refresh',
+        'ExecStart="' + LAUNCHER_SHELL + '" "/data/$$HOME/$${HOME}/$$$$/refresh.sh"',
         "StandardOutput=null",
         "StandardError=null",
         'Environment="SNORLAX_HOME=/data/$HOME/${HOME}/$$"',
         ""
       ].join("\n")
     );
-    expect(serviceNodePath(text)).toBe(nodePath);
-    expect(serviceNodePath('ExecStart="/opt/a$$b/node" "/opt/$${USER}/snorlax.mjs" refresh\n')).toBe("/opt/a$$b/node");
+    expect(serviceLauncherPath(text)).toBe(launcherPath(home));
+    expect(serviceLauncherPath('ExecStart="/bin/sh" "/opt/a$$b/refresh.sh"\n')).toBe("/opt/a$b/refresh.sh");
     expect(serviceEnvironment(text)).toBe(`SNORLAX_HOME=${home}`);
   });
 
   it("keeps a SNORLAX_HOME with spaces and quotes as one Environment word", () => {
     const home = '/tmp/usage 100% "x"\\y';
-    const text = renderRefreshService({
-      nodePath: "/usr/bin/node",
-      cliPath: "/opt/snorlax/snorlax.mjs",
-      snorlaxHome: home
-    });
+    const text = renderRefreshService({ snorlaxHome: home });
     expect(serviceEnvironment(text)).toBe(`SNORLAX_HOME=${home}`);
-    expect(serviceNodePath(text)).toBe("/usr/bin/node");
+    expect(serviceLauncherPath(text)).toBe(launcherPath(home));
     expect(text.split("\n").filter((line) => line.startsWith("Environment="))).toHaveLength(1);
   });
 
-  it("reads no Node path from a service in another layout", () => {
-    expect(serviceNodePath("ExecStart=/usr/bin/node /usr/bin/snorlax.mjs refresh\n")).toBeUndefined();
-    expect(serviceNodePath("")).toBeUndefined();
+  it("reads no launcher path from a service in another layout", () => {
+    expect(serviceLauncherPath("ExecStart=/usr/bin/node /usr/bin/snorlax.mjs refresh\n")).toBeUndefined();
+    expect(serviceLauncherPath('ExecStart="/bin/sh" "/x/refresh.sh" refresh\n')).toBeUndefined();
+    expect(serviceLauncherPath("")).toBeUndefined();
     expect(serviceEnvironment("Environment=SNORLAX_HOME=/tmp/data\n")).toBeUndefined();
   });
 

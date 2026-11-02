@@ -3,6 +3,7 @@ import { Context, Data, Effect, Layer } from "effect";
 
 import type { DataDirNotAbsolute } from "../../modules/data-dir/data-dir.ts";
 import { SnorlaxPlatform } from "../../modules/platform/platform.ts";
+import { type LauncherWriteFailed } from "./launcher.ts";
 import {
   ForeignServiceLoaded,
   launchdScheduler,
@@ -12,6 +13,9 @@ import {
   type PlistWriteFailed,
   type UserIdUnavailable
 } from "./launchd.ts";
+
+/** The launcher's Node resolution knowledge, for the doctor verdicts that report it. */
+export { NODE_FALLBACKS, NODE_PATH_FILE } from "./launcher.ts";
 import {
   systemdScheduler,
   type ForeignTimerLoaded,
@@ -69,10 +73,13 @@ export type LoadedJob =
   | { readonly from: "app"; readonly file: string }
   | { readonly from: "unknown"; readonly reason: string };
 
-/** The job file `snorlax install` writes, and the Node binary it runs: undefined when the file does not read back. */
+/**
+ * The job file `snorlax install` writes, and the launcher script it runs — the script resolves Node at
+ * run time — or `undefined` for the launcher when the file does not read back.
+ */
 export interface CliJob {
   readonly file: string;
-  readonly nodePath: string | undefined;
+  readonly launcher: string | undefined;
 }
 
 /**
@@ -96,6 +103,7 @@ type InstallFailure =
   | LaunchctlFailed
   | ForeignServiceLoaded
   | CollectorPathUnresolved
+  | LauncherWriteFailed
   | PlistWriteFailed
   | SystemctlFailed
   | ForeignTimerLoaded
