@@ -64,6 +64,33 @@ final class SnapshotStoreTests: XCTestCase {
         XCTAssertEqual(reloader.reloads, 2)
         XCTAssertEqual(try Data(contentsOf: publisher.fileURL), changed)
     }
+
+    /// The uninstall path (Spec R14): the data directory's snapshot is gone, so
+    /// the copy goes too and the widget timeline reloads to its empty state.
+    func testRemovePublishedSnapshotDeletesTheCopyAndReloadsTimelines() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let reloader = RecordingReloader()
+        let copy = AppGroupSnapshotCopy(container: temp.url, reloader: reloader)
+        try copy.publish(try Fixtures.data("snapshot"))
+
+        XCTAssertTrue(copy.removePublishedSnapshot())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.fileURL.path))
+        XCTAssertEqual(reloader.reloads, 2)
+    }
+
+    func testRemovingWhenNoCopyExistsChangesNothingAndDoesNotReload() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let reloader = RecordingReloader()
+        let copy = AppGroupSnapshotCopy(container: temp.url, reloader: reloader)
+
+        XCTAssertFalse(copy.removePublishedSnapshot())
+
+        XCTAssertEqual(reloader.reloads, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.fileURL.path))
+    }
 }
 
 private final class RecordingReloader: TimelineReloading {
