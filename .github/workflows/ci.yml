@@ -84,3 +84,11 @@ jobs:
             DEVELOPMENT_TEAM= \
             build
           codesign --verify --deep --strict DerivedData/Build/Products/Debug/Snorlax.app
+      # The app ships the license notices of every package the bundled collector inlines next to it;
+      # a build phase that copies only snorlax.mjs would ship third-party code without them.
+      - name: Check the bundled collector files
+        working-directory: apps/macos
+        run: |
+          for name in snorlax.mjs THIRD_PARTY_LICENSES.md; do
+            test -f "DerivedData/Build/Products/Debug/Snorlax.app/Contents/Resources/collector/$name"
+          done
