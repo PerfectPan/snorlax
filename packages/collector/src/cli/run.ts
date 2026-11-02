@@ -166,12 +166,13 @@ export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Eff
         return { exit: 0, output: "human" } satisfies Outcome;
       }
       dataDirDeleted = output.value.deletedDataDir;
+      const exit = output.value.exitCode ?? 0;
       if (output.value.json) {
         printPayloadJson(env, home, output.value.payload);
-        return { exit: 0, output: "json" } satisfies Outcome;
+        return { exit, output: "json" } satisfies Outcome;
       }
       printHuman(env, home, output.value.human);
-      return { exit: 0, output: "human" } satisfies Outcome;
+      return { exit, output: "human" } satisfies Outcome;
     }).pipe(
       Effect.provideService(Console.Console, consoleImpl),
       Effect.catchDefect((defect) => Effect.succeed(renderFailure(UNMAPPED, errorMessage(defect)))),

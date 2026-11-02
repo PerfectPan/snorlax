@@ -57,7 +57,8 @@ Excluded:
 - R12 Widget. The desktop widget shows today's and the last 7 days' totals from the latest snapshot. It may lag the
   menu bar by the refresh budget macOS grants widgets.
 - R13 Diagnostics. `snorlax status` reports the last scan, the last sync and decode failures per agent.
-  `snorlax doctor` reports problems with Node, the data directory, the keychain, the backend and scheduling.
+  `snorlax doctor` reports problems with Node, the data directory, the keychain, the backend and scheduling,
+  and exits 0 healthy and 1 unhealthy, with the same payload either way.
 - R14 Uninstall. After the app is removed and `snorlax uninstall` runs (or the login item and the data directory
   are deleted), no snorlax file remains, and no file under any agent directory was ever created or changed.
 

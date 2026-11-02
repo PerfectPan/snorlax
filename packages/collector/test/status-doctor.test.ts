@@ -185,13 +185,23 @@ describe("doctor", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("still exits 0 when a check fails; healthy reports false", async () => {
+  it("exits 1 when a check fails; healthy reports false", async () => {
     const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig(), { nodeVersion: "v22.12.9" });
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(false);
     expect(doctor.checks.find((check) => check.id === "node-version")?.status).toBe("error");
     expect(doctor.checks.find((check) => check.id === "data-dir")?.status).toBe("ok");
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
+  });
+
+  it("ends the human output with a verdict line on healthy's own terms", async () => {
+    // The unscheduled refresh is a warning, and a warning is not a problem.
+    const healthy = await runCommand(["doctor"], withConfig());
+    expect(healthy.stdout).toContain("schedule: warn —");
+    expect(healthy.stdout).toMatch(/doctor: healthy\n$/);
+
+    const oneError = await runCommand(["doctor"], withConfig(), { nodeVersion: "v22.12.9" });
+    expect(oneError.stdout).toMatch(/doctor: 1 problem found \(1 error, 1 warning\)\n$/);
   });
 
   it("reports a missing data directory as a failed check and creates nothing", async () => {
@@ -248,7 +258,7 @@ describe("doctor", () => {
     expect(notExecutable.check?.detail).toContain("is not executable");
   });
 
-  it("fails only the schedule check, and still exits 0, when the job's Node path cannot be checked", async () => {
+  it("exits 1 with the payload intact when the job's Node path cannot be checked", async () => {
     // A real directory this user cannot search: there the kit's stat throws EACCES instead of reporting nothing.
     const home = await mkdtemp(join(tmpdir(), "snorlax-doctor-"));
     const locked = join(home, "locked");
@@ -270,7 +280,7 @@ describe("doctor", () => {
           }
         }
       );
-      expect(exitCode).toBe(0);
+      expect(exitCode).toBe(1);
       const doctor = z.parse(doctorSchema, JSON.parse(stdout));
       expect(doctor.checks.map((check) => [check.id, check.status])).toEqual([
         ["node-version", "ok"],

@@ -176,7 +176,7 @@ describe("data directory", () => {
     const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-readonly-"));
     try {
       expect(run(["status", "--json"], fresh).status).toBe(0);
-      expect(run(["doctor", "--json"], fresh).status).toBe(0);
+      expect(run(["doctor", "--json"], fresh).status).toBe(1);
       expect(run(["snapshot", "--json"], fresh).status).toBe(1);
       expect(await readdir(fresh)).toEqual([]);
     } finally {

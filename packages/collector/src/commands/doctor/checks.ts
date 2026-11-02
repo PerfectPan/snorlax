@@ -281,7 +281,7 @@ export const backendChecks = (observed: SyncObservation): DoctorCheck[] => {
   return [keychainCheck(observed.keychain), healthCheck(observed.health), devicesCheck(observed.devices)];
 };
 
-/** The whole `doctor` verdict from the per-check results (plan 3.2.1: the command still exits 0). */
+/** The whole `doctor` verdict from the per-check results (plan 3.2.1, R13: the command exits 0 healthy, 1 unhealthy). */
 export const doctorPayload = (checks: readonly DoctorCheck[]): { healthy: boolean; checks: DoctorCheck[] } => ({
   healthy: checks.every((check) => check.status !== "error"),
   checks: [...checks]

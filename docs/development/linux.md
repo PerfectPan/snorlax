@@ -93,8 +93,8 @@ The data directory is `SNORLAX_HOME` when that variable is set and non-empty, an
 
 A timer that is enabled and active, whose unit names a Node that exists and is executable, is reported as the
 systemd user timer running. A missing, non-executable, or uncheckable Node is an error, and only an error makes
-`doctor` unhealthy. No timer at all is a warning: until `snorlax install`, the snapshot changes only when something
-runs `refresh`.
+`doctor` unhealthy. The command exits 0 healthy and 1 unhealthy, with the same payload either way. No timer at
+all is a warning: until `snorlax install`, the snapshot changes only when something runs `refresh`.
 
 ## Uninstall
 

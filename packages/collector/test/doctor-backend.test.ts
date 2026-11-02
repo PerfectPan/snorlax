@@ -187,7 +187,7 @@ describe("doctor backend checks", () => {
       await writeFile(join(setup.dataDir, "config.json"), JSON.stringify({ backendUrl: BASE }) + "\n");
       const before = await hashTree(setup.dataDir);
       const { exitCode, doctor } = await runDoctor(setup, lab.fetchImpl, Secrets.memory({}));
-      expect(exitCode).toBe(0);
+      expect(exitCode).toBe(1);
       expect(doctor.healthy).toBe(false);
       expect(check(doctor, "keychain")).toEqual({
         id: "keychain",
@@ -241,7 +241,7 @@ describe("doctor backend checks", () => {
       const pathsBefore = await listPaths(setup.dataDir);
 
       const missing = await runDoctor(setup, lab.fetchImpl, Secrets.memory({}));
-      expect(missing.exitCode).toBe(0);
+      expect(missing.exitCode).toBe(1);
       expect(missing.doctor.healthy).toBe(false);
       expect(check(missing.doctor, "keychain")).toEqual({
         id: "keychain",
@@ -269,7 +269,7 @@ describe("doctor backend checks", () => {
         lab.fetchImpl,
         Secrets.memory({}, new Map([[deviceId, "not-a-device-token"]]))
       );
-      expect(revoked.exitCode).toBe(0);
+      expect(revoked.exitCode).toBe(1);
       expect(revoked.doctor.healthy).toBe(false);
       expect(check(revoked.doctor, "devices")).toEqual({
         id: "devices",

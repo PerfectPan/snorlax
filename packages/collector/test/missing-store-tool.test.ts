@@ -200,7 +200,7 @@ describe.each(["keychain", "libsecret"] as const)("missing %s program", (store) 
         `${JSON.stringify({ backendUrl: BASE, deviceName: "Desk" })}\n`
       );
       const diagnosed = await harness.run(["doctor", "--json"]);
-      expect(diagnosed.exitCode).toBe(0);
+      expect(diagnosed.exitCode).toBe(1);
       const doctor = z.parse(doctorSchema, JSON.parse(diagnosed.stdout));
       const keychain = doctor.checks.find((check) => check.id === "keychain");
       expect(keychain?.status).toBe("error");
