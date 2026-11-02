@@ -1,3 +1,4 @@
+import AppKit
 import ServiceManagement
 import SnorlaxKit
 import SwiftUI
@@ -77,9 +78,19 @@ struct SettingsView: View {
                     set: { _ in }
                 ))
                 .disabled(true)
+                if let version = model.collectorVersion {
+                    Text("Collector: \(version)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text(model.deviceNameNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let deviceNameError = model.deviceNameError {
+                    Text(deviceNameError)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
             }
             SyncSection(pairing: model.pairing)
             Section("Launch at login") {
@@ -87,6 +98,9 @@ struct SettingsView: View {
                     get: { loginItem.enabled },
                     set: { loginItem.setEnabled($0) }
                 ))
+                Text("Snorlax registers this login item; snorlax install and snorlax uninstall refuse while it is registered.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("Login item: \(loginItem.statusText)")
                     .font(.caption)
                 if let errorText = loginItem.errorText {
@@ -112,11 +126,27 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 if let doctor = model.diagnostics {
-                    Text(doctor.healthy ? "Healthy" : "Problems found")
+                    HStack {
+                        Text(doctor.healthy ? "Healthy" : "Problems found")
+                        Spacer()
+                        Button("Copy diagnostics") {
+                            let text = doctor.checks
+                                .map { "\($0.id): \($0.status.rawValue) — \($0.detail)" }
+                                .joined(separator: "\n")
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(text, forType: .string)
+                        }
+                        .buttonStyle(.borderless)
+                    }
                     ForEach(Array(doctor.checks.enumerated()), id: \.offset) { _, check in
-                        Text("\(check.id): \(check.status.rawValue) — \(check.detail)")
-                            .font(.caption)
-                            .textSelection(.enabled)
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: Self.statusIcon(check.status))
+                                .foregroundStyle(Self.statusColor(check.status))
+                                .font(.caption)
+                            Text("\(check.id): \(check.status.rawValue) — \(check.detail)")
+                                .font(.caption)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 if let diagnosticsError = model.diagnosticsError {
@@ -146,12 +176,35 @@ struct SettingsView: View {
             model.pairing.settingsDisappeared()
         }
     }
+
+    private static func statusIcon(_ status: CheckStatus) -> String {
+        switch status {
+        case .ok:
+            return "checkmark.circle.fill"
+        case .warn:
+            return "exclamationmark.triangle.fill"
+        case .error:
+            return "xmark.octagon.fill"
+        }
+    }
+
+    private static func statusColor(_ status: CheckStatus) -> Color {
+        switch status {
+        case .ok:
+            return .green
+        case .warn:
+            return .yellow
+        case .error:
+            return .red
+        }
+    }
 }
 
 /// Backend URL, admin token, and pair or unpair. The fields and the buttons bind
 /// to `PairingModel`; this view does not run the collector itself.
 private struct SyncSection: View {
     @ObservedObject var pairing: PairingModel
+    @State private var confirmingUnpair = false
 
     var body: some View {
         Section("Sync") {
@@ -159,10 +212,22 @@ private struct SyncSection: View {
                 Text("Paired")
                 Text("Sync: \(pairing.syncStateText)")
                 Text("Last sync: \(pairing.lastSyncText)")
-                Button("Unpair") {
-                    Task { await pairing.unpair() }
+                Button("Unpair", role: .destructive) {
+                    confirmingUnpair = true
                 }
                 .disabled(pairing.running)
+                .confirmationDialog(
+                    "Unpair this device?",
+                    isPresented: $confirmingUnpair,
+                    titleVisibility: .visible
+                ) {
+                    Button("Unpair", role: .destructive) {
+                        Task { await pairing.unpair() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Sync stops; the local data is kept.")
+                }
             } else {
                 TextField("Backend URL", text: $pairing.backendURL)
                     .autocorrectionDisabled()
@@ -175,6 +240,15 @@ private struct SyncSection: View {
                 Text("The admin token is used only for this pairing. It is not saved. Closing this window, finishing pairing, or unpairing clears it. Minimizing, hiding, or switching apps does not, so close the window when you are done.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if pairing.running {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Pairing can take a couple of minutes: the first sync uploads the whole local history.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Button("Pair") {
                     Task { await pairing.pair() }
                 }

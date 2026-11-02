@@ -1,10 +1,18 @@
 import Foundation
 
-/// What the widget can show (Spec R8, R12): the four states a container read
-/// can end in, plus the usable snapshot with its as-of caption.
+/// The error the `load` closure throws when no snapshot file exists at the
+/// container path: the widget's "No snapshot yet" state. Any other throw that
+/// is not a schema refusal is a file the app cannot read.
+public enum WidgetSnapshotLoadError: Error, Equatable {
+    case missing
+}
+
+/// What the widget can show (Spec R8, R12): the states a container read can
+/// end in, plus the usable snapshot with its as-of caption.
 public enum WidgetSnapshotState: Equatable {
     case containerUnavailable
     case noSnapshot
+    case unreadableSnapshot
     case newerSnapshot
     case usable(WidgetUsage)
 }
@@ -14,7 +22,9 @@ public enum WidgetSnapshotState: Equatable {
 /// totals are a past day's numbers (an app quit across midnight).
 public struct WidgetUsage: Equatable, Sendable {
     public let summary: UsageSummary
-    public let asOfCaption: String
+    /// nil when the snapshot's `generatedAt` cannot be parsed; the view omits
+    /// the caption instead of rendering a blank line.
+    public let asOfCaption: String?
     public let isToday: Bool
 
     /// Agent rows for the medium widget: the ranked lists are ordered by
@@ -27,7 +37,9 @@ public struct WidgetUsage: Equatable, Sendable {
 public enum WidgetSnapshot {
     /// - Parameters:
     ///   - timeZone: zone of the device showing the widget; the as-of clock uses it.
-    ///   - load: reads the snapshot from the container; throws to signal unreadable.
+    ///   - load: reads the snapshot from the container; throws
+    ///     `WidgetSnapshotLoadError.missing` when no file exists, and anything
+    ///     else for a file the app cannot read.
     public static func state(
         containerURL: URL?,
         now: Date,
@@ -53,12 +65,14 @@ public enum WidgetSnapshot {
                 generatedAt: snapshot.generatedAt,
                 isToday: isToday,
                 timeZone: timeZone
-            ) ?? ""
+            )
             return .usable(WidgetUsage(summary: summary, asOfCaption: caption, isToday: isToday))
         } catch SchemaError.newerCollector {
             return .newerSnapshot
-        } catch {
+        } catch WidgetSnapshotLoadError.missing {
             return .noSnapshot
+        } catch {
+            return .unreadableSnapshot
         }
     }
 

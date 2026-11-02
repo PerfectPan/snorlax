@@ -29,7 +29,14 @@ struct UsageProvider: TimelineProvider {
             containerURL: AppGroup.containerURL(),
             now: now,
             timeZone: .current,
-            load: { try SnapshotLoader.load(contentsOf: $0) }
+            load: { url in
+                // A missing file is the widget's "no data yet" state; a file
+                // that exists but cannot be read is a different message.
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    throw WidgetSnapshotLoadError.missing
+                }
+                return try SnapshotLoader.load(contentsOf: url)
+            }
         )
         return UsageEntry(date: now, state: state)
     }
@@ -46,6 +53,8 @@ struct UsageWidgetView: View {
                 message("App Group container is unavailable")
             case .noSnapshot:
                 message("No snapshot yet")
+            case .unreadableSnapshot:
+                message("Snapshot unreadable")
             case .newerSnapshot:
                 message("The collector is newer than the app; update the app.")
             case let .usable(usage):
@@ -80,9 +89,11 @@ struct UsageWidgetView: View {
                 .font(.title2)
             Text(usage.isToday ? today?.costLabel ?? "—" : "—")
                 .font(.caption)
-            Text(usage.asOfCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            if let caption = usage.asOfCaption {
+                Text(caption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
@@ -104,9 +115,11 @@ struct UsageWidgetView: View {
                 }
                 .font(.caption)
             }
-            Text(usage.asOfCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            if let caption = usage.asOfCaption {
+                Text(caption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
