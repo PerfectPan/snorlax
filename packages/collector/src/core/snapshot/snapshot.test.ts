@@ -1,5 +1,5 @@
-import { buildSnapshot } from "../src/core/snapshot/snapshot.ts";
-import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../src/core/buckets/buckets.ts";
+import { buildSnapshot } from "./snapshot.ts";
+import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../buckets/buckets.ts";
 import type { SyncState } from "@rivus/snorlax-protocol";
 import { describe, expect, it } from "vite-plus/test";
 
