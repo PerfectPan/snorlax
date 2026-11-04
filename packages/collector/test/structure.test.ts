@@ -11,6 +11,8 @@ import { describe, expect, it } from "vite-plus/test";
  * and core/ does not use Effect.
  * All three import forms count — `from "…"`, side-effect `import "…"` and dynamic `import("…")` — and
  * relative specifiers are resolved against the importing file's directory before they are judged.
+ * Unit tests sit beside the code they test (`<name>.test.ts` under `src/`); those files are not judged,
+ * because they ship nowhere and may import `test/fixtures/` and run modules across the layers.
  */
 
 /** Lowest first: a file may import its own layer or any layer before it. */
@@ -61,7 +63,11 @@ const commandFolderOf = (path: string): string | undefined => {
 
 const isEffectSpec = (spec: string): boolean => /^(?:effect(?:\/|$)|@effect\/)/.test(spec);
 
-function structureViolations(files: readonly SourceFile[]): Violation[] {
+/** A unit test beside its code: a test of its neighbours, so the layering rules do not judge it. */
+const isTestFile = (path: string): boolean => path.split("/").at(-1)?.endsWith(".test.ts") === true;
+
+function structureViolations(allFiles: readonly SourceFile[]): Violation[] {
+  const files = allFiles.filter(({ path }) => !isTestFile(path));
   const violations: Violation[] = [];
   const units = new Set<string>();
   for (const { path, text } of files) {
@@ -217,6 +223,18 @@ describe("collector structure (plan 3.13 rules 1, 2 and 4)", () => {
       { rule: "upward-import", file, import: "../../modules/log/log.ts" },
       { rule: "upward-import", file, import: "../../modules/scan/scan.ts" }
     ]);
+  });
+
+  it("leaves a unit test beside its code unjudged: it may import upward, across units and test fixtures", () => {
+    expect(
+      check({
+        "modules/log/log.test.ts": [
+          'import { runCli } from "../../cli/run.ts";',
+          'import { nodeFileOps } from "../platform/platform.ts";',
+          'import { writeClaudeSession } from "../../../test/fixtures/agents.ts";'
+        ].join("\n")
+      })
+    ).toEqual([]);
   });
 
   it.each([
