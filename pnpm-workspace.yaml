@@ -15,7 +15,7 @@ catalog:
   # The bundled vitest peers on a real `vite` range, while vite-plus provides `vite` as this core alias;
   # pnpm can only satisfy that peer through the override below. Keep the version in lockstep with the
   # `vite-plus` entry (same release train; Dependabot does not see the mapping).
-  vite: npm:@voidzero-dev/vite-plus-core@1.3.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   '@date-fns/tz': 1.5.0
   '@hono/node-server': 2.1.5
   '@hono/standard-validator': 0.4.1
@@ -26,13 +26,13 @@ catalog:
   # Pinned exactly (plan 2.4 D13): `cf` takes over from Wrangler as Cloudflare's CLI and delegates its
   # bundling to the package's Wrangler; both upgrade on purpose, not through a floating range.
   cf: 1.0.0-beta.21
-  wrangler: 4.152.0
+  wrangler: 4.155.0
   date-fns: 4.4.0
   hono: 4.13.14
   plist: 5.0.0
   quicktype: 26.0.0
   typescript: 7.0.2
-  vite-plus: 1.3.0
+  vite-plus: 1.4.0
   zod: 4.6.7
 
 # Redirect whatever declares a `vite` range to the vite-plus core alias.
