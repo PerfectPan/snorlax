@@ -4,6 +4,11 @@ Use `docs/` for durable project knowledge that a maintainer should be able to re
 
 Keep collaboration policy in `CONTRIBUTING.md`, AI-agent instructions in `AGENTS.md`, issue and review evidence requirements in templates, and automated enforcement in scripts or CI workflows.
 
+## Current guides
+
+- [snorlax architecture](architecture/snorlax.md): component boundaries, data flow, invariants and operational limits.
+- [Validation and acceptance](development/validation.md): accepted scope, synthetic performance evidence and deferred follow-ups.
+
 ## What Belongs Here
 
 - `architecture/` for the current system shape: domain boundaries, module boundaries, data flow, trust boundaries, storage, integrations, deployment topology, and major tradeoffs.

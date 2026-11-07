@@ -58,7 +58,7 @@ export const byDeviceEntrySchema = z.object({
 });
 export type ByDeviceEntry = z.output<typeof byDeviceEntrySchema>;
 
-/** One local day of the daily series; covers the last 30 local days including today. */
+/** One local day of the daily series; covers the last 180 local days including today. */
 export const dailyEntrySchema = z.object({
   date: localDateSchema,
   tokens: nonNegativeIntSchema,

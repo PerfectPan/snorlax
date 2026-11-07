@@ -7,13 +7,13 @@ import { appendingLogger } from "../../modules/log/log.ts";
 import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
 
-/** `rebuild --days` accepts 1–30 days; Claude Code deletes older logs by default (plan 3.4.3). */
+/** `rebuild --days` accepts 1–180 days. Deleted source logs cannot be recovered; their rebuilt buckets become zero. */
 export const REBUILD_MIN_DAYS = 1;
-export const REBUILD_MAX_DAYS = 30;
+export const REBUILD_MAX_DAYS = 180;
 
 /**
  * The first UTC hour a rebuild of `days` days zeroes and rescans: the window is hour-aligned so no bucket
- * is half inside it. The window rolls back from now by whole days, like the retention it mirrors.
+ * is half inside it. The window rolls back from now by whole days; source logs may already have been deleted.
  */
 export function rebuildStartHour(now: number, days: number): number {
   return Math.floor((now - days * 86_400_000) / 3_600_000) * 3600;

@@ -363,7 +363,7 @@ describe("collector sync", () => {
       expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);
       expect(serverRows()).toBe(2);
 
-      const rebuilt = await Effect.runPromise(rebuildFlow(1).pipe(Effect.provide(harness.layerFor(alpha.setup))));
+      const rebuilt = await Effect.runPromise(rebuildFlow(180).pipe(Effect.provide(harness.layerFor(alpha.setup))));
       expect(rebuilt.result.sync.state).toBe("ok");
       expect((await snapshotOf(alpha.setup)).totals.today.tokens).toBe(before);
       expect((await snapshotOf(beta.setup)).totals.today.tokens).toBe(before);

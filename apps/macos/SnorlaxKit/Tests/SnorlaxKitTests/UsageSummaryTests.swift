@@ -31,6 +31,10 @@ final class UsageSummaryTests: XCTestCase {
         XCTAssertEqual(summary.daily.map(\.date), ["2026-09-24", "2026-10-22", "2026-10-23"])
         XCTAssertEqual(summary.daily.map(\.tokens), [41_234_567, 81_234_567, 12_345_678])
         XCTAssertEqual(summary.timeZone.identifier, "Asia/Shanghai")
+        XCTAssertEqual(summary.heatmap?.endDate, "2026-10-23")
+        XCTAssertEqual(summary.heatmap?.weeks.flatMap(\.days).compactMap(\.date).count, 180)
+        XCTAssertEqual(summary.heatmap?.weeks.flatMap(\.days).first { $0.date == "2026-10-23" }?.tokens, 12_345_678)
+
 
         XCTAssertEqual(
             summary.statusLine,

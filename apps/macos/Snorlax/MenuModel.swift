@@ -18,6 +18,7 @@ final class MenuModel: ObservableObject {
     @Published private(set) var deviceName = "…"
     @Published private(set) var deviceNameError: String?
     @Published private(set) var collectorVersion: String?
+    @Published private(set) var pricingNotice: String?
     @Published private(set) var diagnostics: Doctor?
     @Published private(set) var diagnosticsError: String?
     /// `snapshot.status`. Settings uses it for paired, sync state, and last sync.
@@ -33,12 +34,14 @@ final class MenuModel: ObservableObject {
     private let reloader: WidgetCenterReloader
     private var publisher: AppGroupSnapshotPublisher?
     let pairing: PairingModel
+    let pricingRebuild: PricingRebuildModel
 
     init() {
         let directory = DataDirectory.resolve()
         dataDirectory = directory
         let client = CollectorClient(executable: CollectorBundle.launcherURL())
         self.client = client
+        pricingRebuild = PricingRebuildModel(client: client)
         reloader = WidgetCenterReloader()
         let watcher = SnapshotWatcher(scheduler: DispatchWatchScheduler())
         self.watcher = watcher
@@ -54,6 +57,10 @@ final class MenuModel: ObservableObject {
             self.reloadSnapshot()
             await self.reloadDeviceName()
             return self.snapshotStatus
+        }
+        pricingRebuild.refreshSnapshot = { [weak self] in
+            self?.reloadSnapshot()
+            await self?.reloadDeviceName()
         }
         Task { bootstrap() }
     }
@@ -98,7 +105,7 @@ final class MenuModel: ObservableObject {
     }
 
     func refreshNow() {
-        guard !refreshing else { return }
+        guard !refreshing, !pricingRebuild.running else { return }
         refreshing = true
         refreshError = nil
         Task {
@@ -106,6 +113,7 @@ final class MenuModel: ObservableObject {
             do {
                 _ = try await client.run(["refresh"], as: RefreshResult.self)
                 reloadSnapshot()
+                await reloadDeviceName()
             } catch {
                 refreshError = Presenter.message(for: error)
             }
@@ -122,6 +130,7 @@ final class MenuModel: ObservableObject {
             let name = status.device.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             deviceName = name.isEmpty ? "Unnamed" : name
             collectorVersion = status.version
+            pricingNotice = status.pricingNotice
             deviceNameError = nil
         } catch {
             deviceName = "Unavailable"

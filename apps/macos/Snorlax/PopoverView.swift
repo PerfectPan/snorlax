@@ -1,12 +1,18 @@
 import AppKit
-import Charts
 import SnorlaxKit
 import SwiftUI
 
 struct PopoverView: View {
     @ObservedObject var model: MenuModel
+    @ObservedObject private var pricingRebuild: PricingRebuildModel
+    @State private var confirmingRebuild = false
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
+
+    init(model: MenuModel) {
+        self.model = model
+        pricingRebuild = model.pricingRebuild
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -31,6 +37,30 @@ struct PopoverView: View {
                 Text("No snapshot yet.")
                     .foregroundStyle(.secondary)
             }
+            if let notice = model.pricingNotice {
+                Label("Pricing changed. Rebuild to update existing costs.", systemImage: "exclamationmark.triangle")
+                    .help(notice)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
+            if model.pricingNotice != nil || pricingRebuild.running {
+                Button {
+                    confirmingRebuild = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if pricingRebuild.running {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(pricingRebuild.running ? "Rebuilding…" : "Rebuild last 180 days…")
+                    }
+                }
+                .disabled(pricingRebuild.running || model.refreshing)
+            }
+            if let notice = pricingRebuild.notice {
+                Text(notice)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
             if let refreshError = model.refreshError {
                 Text(refreshError)
                     .font(.callout)
@@ -49,7 +79,7 @@ struct PopoverView: View {
                         Text(model.refreshing ? "Refreshing…" : "Refresh now")
                     }
                 }
-                .disabled(model.refreshing)
+                .disabled(model.refreshing || pricingRebuild.running)
                 Button("Settings") {
                     // The menu bar panel does not close on its own and floats above
                     // normal windows, so it would cover Settings. It also does not
@@ -68,8 +98,18 @@ struct PopoverView: View {
         }
         .padding(16)
         .frame(width: 440)
+        .alert("Rebuild the last 180 days?", isPresented: $confirmingRebuild) {
+            Button("Cancel", role: .cancel) {}
+            Button("Rebuild", role: .destructive) {
+                guard !model.refreshing else { return }
+                Task { await pricingRebuild.rebuild() }
+            }
+        } message: {
+            Text("This replaces the last 180 days of local usage from the logs still on this Mac. Deleted logs cannot be recovered: their previously recorded usage will be removed. If paired, those changes also replace totals on other devices. This can take several minutes. Closing the menu does not stop it.")
+        }
         .onAppear {
             model.reloadSnapshot()
+            model.loadDeviceName()
         }
     }
 
@@ -89,46 +129,16 @@ struct PopoverView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        if let heatmap = summary.heatmap {
+            UsageHeatmapView(heatmap: heatmap)
+        } else {
+            Text("Daily activity is unavailable.")
+                .foregroundStyle(.secondary)
+        }
+        Divider()
         section("Agents", rows: Array(summary.topAgents.prefix(UsageSummaryBuilder.popoverLimit)))
         section("Models", rows: Array(summary.topModels.prefix(UsageSummaryBuilder.popoverLimit)))
         section("Devices", rows: Array(summary.devices.prefix(UsageSummaryBuilder.popoverLimit)), markThisDevice: true)
-        if summary.daily.isEmpty {
-            Text("No daily totals yet.")
-                .foregroundStyle(.secondary)
-        } else {
-            let bars = summary.daily.compactMap { bar in bar.day.map { (day: $0, tokens: bar.tokens) } }
-            // Bars and ticks bin by the calendar given to them, not the
-            // environment time zone, so the snapshot's own days show (R8).
-            let calendar = UsageFormat.dayCalendar(summary.timeZone)
-            Chart(bars, id: \.day) { bar in
-                BarMark(
-                    x: .value("Day", bar.day, unit: .day, calendar: calendar),
-                    y: .value("Tokens", bar.tokens)
-                )
-            }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: 7, calendar: calendar)) { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let date = value.as(Date.self) {
-                            Text(UsageFormat.dayLabel(date, timeZone: summary.timeZone))
-                        }
-                    }
-                }
-            }
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let tokens = value.as(Int.self) {
-                            Text(UsageFormat.shortTokens(tokens))
-                        }
-                    }
-                }
-            }
-            .frame(height: 140)
-            .accessibilityLabel("Tokens for the last 30 days")
-        }
         Text(summary.statusLine)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -138,17 +148,23 @@ struct PopoverView: View {
     @ViewBuilder
     private func section(_ title: String, rows: [RankedUsage], markThisDevice: Bool = false) -> some View {
         if !rows.isEmpty {
-            Text(title)
-                .font(.headline)
-            ForEach(rows) { row in
-                HStack {
-                    Text(markThisDevice ? row.listLabel : row.name)
-                    Spacer()
-                    Text(row.tokensText)
-                    Text(row.costLabel)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                ForEach(rows) { row in
+                    HStack {
+                        Text(markThisDevice ? row.listLabel : row.name)
+                        Spacer()
+                        Text(row.tokensText)
+                            .monospacedDigit()
+                            .frame(width: 64, alignment: .trailing)
+                        Text(row.costLabel)
+                            .monospacedDigit()
+                            .frame(width: 88, alignment: .trailing)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
                 }
-                .font(.callout)
             }
         }
     }

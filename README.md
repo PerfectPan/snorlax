@@ -4,9 +4,10 @@ Snorlax eats 400 kg a day. snorlax counts what your coding agents eat: the token
 Code, Codex, Gemini CLI, Grok, opencode and Pi, added up across every machine you use, on the macOS menu bar and in
 desktop widgets.
 
-Status: planning. Nothing is released yet. The behavior is specified in
-[docs/specs/0001-snorlax.md](docs/specs/0001-snorlax.md) and the design and execution plan are in
-[docs/plans/0001-snorlax.md](docs/plans/0001-snorlax.md).
+Status: the initial implementation is accepted; first npm publication remains tracked in
+[#35](https://github.com/PerfectPan/snorlax/issues/35). The behavior is specified in
+[Spec 0001](docs/specs/0001-snorlax.md), with current [architecture](docs/architecture/snorlax.md) and
+[validation scope](docs/development/validation.md).
 
 ## How it works
 
@@ -27,7 +28,7 @@ each machine
   on a single machine. Any service that implements the same HTTP interface can replace it.
 - **Linux too.** On Linux machines the collector runs headless and only uploads. Install and the systemd timer are described in [docs/development/linux.md](docs/development/linux.md). Pairing a machine is described in [docs/development/pairing.md](docs/development/pairing.md).
 
-## Planned layout
+## Repository layout
 
 ```text
 packages/protocol/   zod definitions shared by the collector, the Worker and the generated Swift types
