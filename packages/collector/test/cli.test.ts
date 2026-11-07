@@ -291,7 +291,8 @@ describe("refresh and rebuild", () => {
       }
       expect(status().pricingChanged).toBe(true);
       expect(run(["status"], pricingHome).stdout).toContain(
-        "pricing: the pricing table changed; run snorlax rebuild --days 180 to reprice the last 180 days\n"
+        "pricing: the pricing table changed; run snorlax rebuild --days 180 to reprice the last 180 days\n" +
+          "warning: deleted source logs cannot be recovered; rebuilding zeroes their recorded usage and replaces those totals on synced devices\n"
       );
 
       expect(run(["rebuild", "--days", "180", "--json"], pricingHome).status).toBe(0);

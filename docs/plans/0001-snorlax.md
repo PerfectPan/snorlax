@@ -132,7 +132,7 @@ this Mac
 | `snorlax status` | app settings, terminal | version, data directory, device, last scan and sync, decode failures per agent, detected agents | `Status` |
 | `snorlax pair --url <url> --name <name>` | app settings, terminal | reads the admin token from stdin, registers the device, stores the device token in the keychain | `PairResult` |
 | `snorlax unpair` | app settings, terminal | deletes the device token, drops the backend URL, and rewrites the snapshot from the ledger so it is unpaired; local buckets stay | `Ok` |
-| `snorlax rebuild --days <n>` | owner, after a pricing change or for repair | 1 ≤ n ≤ 30: zeroes the last n days of local buckets, rescans them and marks them for upload | `RefreshResult` |
+| `snorlax rebuild --days <n>` | owner, after a pricing change or for repair | 1 ≤ n ≤ 180: zeroes the last n days of local buckets, rescans them and marks them for upload | `RefreshResult` |
 | `snorlax doctor` | app diagnostics, terminal | checks Node version, data directory permissions, keychain access, backend reachability, scheduling (the loaded refresh job and the Node its plist names) | `Doctor` |
 | `snorlax install` / `uninstall` | Linux; macOS without the app | writes or removes the systemd user timer or `~/Library/LaunchAgents` plist; `uninstall --data` also deletes the keychain item and the entries snorlax wrote in the data directory; when that directory is non-empty and holds no snorlax ledger the CLI can read, the whole command refuses (exit 1, `data-dir`), deleting nothing and leaving the LaunchAgent in place, while a data directory that does not exist or is empty completes as usual | install: `Ok`; uninstall: `UninstallResult`, whose `keptEntries` is present only with `--data` |
 | `snorlax snapshot` | terminal | prints the current snapshot | `SnapshotOutput`: `{ schemaVersion, ok, snapshot }` |
@@ -194,7 +194,7 @@ $ snorlax refresh --json
 ```
 
 `tokens` is `inputTokens + outputTokens` in the kit convention (input includes cache reads and writes). `daily`
-covers the last 30 local days including today; `hourlyToday` covers local hours of today. A bucket belongs to the
+covers the last 180 local days including today; `hourlyToday` covers local hours of today. A bucket belongs to the
 local day and hour that contain its UTC start hour (for zones with non-whole-hour offsets this is an
 approximation, stated in the app's help). Day boundaries use `date-fns` with `@date-fns/tz`.
 
@@ -277,7 +277,7 @@ A count the log does not record adds 0 to a bucket.
 
 `meta.pricing_version` is the version of the pricing table that priced the stored buckets (`litellmPricesVersion`
 from `@rivus/agent-kit/cost/prices`, 3.7): a ledger's first scan writes it, a refresh keeps it, and only a
-`rebuild --days 30` writes the current one again. A ledger scanned before Batch 5 keeps NULL until that rebuild.
+`rebuild --days 180` writes the current one again. A ledger scanned before Batch 5 keeps NULL until that rebuild.
 
 Schema version is `PRAGMA user_version`. Migrations are forward-only; before migrating, the collector copies
 `ledger.db` to `ledger.db.bak-v<old>` and keeps the latest two backups. The ledger stays in SQLite's rollback
@@ -360,7 +360,7 @@ The same batch ends with `UPDATE devices SET last_push_at = ? WHERE id = ?`. Pul
    `unpricedRequests`; set `dirty = 1`. A new (agent, sessionId) adds 1 to `sessionsStarted` of the hour it was
    first seen.
 5. In one SQLite transaction: write the buckets, `sessions_seen`, `pricing_version` when the run records it (the
-   ledger's first scan or `rebuild --days 30`, 3.7), the new `scan_state` (`scan.state` after the loop ran to its
+   ledger's first scan or `rebuild --days 180`, 3.7), the new `scan_state` (`scan.state` after the loop ran to its
    end) and `last_scan_completed_at = now`. A run killed before this commit leaves the ledger as it was.
 6. If paired and sync is enabled: push dirty buckets in batches of 200; clear `dirty` for a batch after a 200
    response. Then pull from `pull_cursor` until `next` is null. A page that returns rows sets `next` to the last
@@ -424,7 +424,9 @@ failure to start the program stays a keychain failure.
 `snorlax rebuild --days n`: under the lock and in one transaction, set every local bucket with `hour ≥ start` to
 zero and dirty, delete `sessions_seen` rows with `first_hour ≥ start`, and clear `scan_state`; then run steps 3–8
 with `since = start` and no state. Zeroed buckets that receive no usage are uploaded as zero, which replaces the
-backend rows. `n` is capped at 30 because Claude Code deletes older logs by default.
+backend rows. `n` is capped at 180. Deleted source logs cannot be recovered; rebuilding zeroes their
+previously recorded usage and replaces those totals on synced devices. Claude Code may already have pruned
+older logs. The app requires explicit destructive confirmation, and CLI status advice includes this warning.
 
 ### 3.5 Concurrency, idempotency, and retries
 
@@ -461,11 +463,11 @@ backend rows. `n` is capped at 30 because Claude Code deletes older logs by defa
   ledger, D1 and protocol; old collectors keep writing rows without it.
 - Repricing: new pricing applies to new usage. `pricing_version` in `meta` records the version of the table that
   priced the stored buckets: a ledger's first scan (no `last_scan_completed_at` yet) writes the bundled version, a
-  refresh prices new usage with the bundled table but keeps the recorded version, and a `rebuild --days 30`
+  refresh prices new usage with the bundled table but keeps the recorded version, and a `rebuild --days 180`
   reprices the whole snapshot window and records the bundled version (a shorter rebuild leaves older days at their
   old prices and keeps it). A ledger scanned before Batch 5 has no version and keeps none until that rebuild,
   because its older buckets were priced by no table. `status` reports `pricingChanged: true` when a scanned
-  ledger's version is not the bundled one, a missing version included, and suggests `snorlax rebuild --days 30`.
+  ledger's version is not the bundled one, a missing version included, and suggests `snorlax rebuild --days 180`.
   The version digests the table's content, so any kit upgrade whose snapshot changed moves it — a scanned ledger
   then reads `pricingChanged` until the rebuild, and the rebuild's rescan no longer yields records for the
   `<synthetic>` entries an older kit counted (3.4.1 step 3).
@@ -554,7 +556,7 @@ spellings.
   so the directory is watched), debounced 200 ms, plus a 60 s timer as a fallback. On a new snapshot the app writes a
   copy to the App Group container and calls `WidgetCenter.shared.reloadAllTimelines()`.
 - Menu bar: title is today's tokens in short form (`812M`). The popover shows today / 7 days / 30 days (tokens and
-  cost), top agents, top models, devices, a 30-day bar chart (Swift Charts), status line, and buttons Refresh now,
+  cost), a 180-day token heatmap, top agents, top models, devices, status line, and buttons Refresh now,
   Settings, Quit.
 - Settings: device name; backend URL and admin token with Pair and Unpair; launch at login; Diagnostics (runs
   `doctor`).
@@ -755,7 +757,7 @@ in the Cloudflare dashboard during the first week of P2 against 8.2.
 
 Collector and app: install the previous build; ledger backups allow returning to an older schema. Worker: redeploy
 the previous version; D1 migrations are additive, so older Workers keep working. The backend can be emptied and
-refilled by `snorlax rebuild --days 30` plus a re-pair on each device.
+refilled by `snorlax rebuild --days 180` plus a re-pair on each device.
 
 ## 5. Verification
 
