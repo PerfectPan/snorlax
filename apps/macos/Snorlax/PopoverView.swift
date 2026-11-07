@@ -38,7 +38,8 @@ struct PopoverView: View {
                     .foregroundStyle(.secondary)
             }
             if let notice = model.pricingNotice {
-                Label(notice, systemImage: "exclamationmark.triangle")
+                Label("Pricing changed. Rebuild to update existing costs.", systemImage: "exclamationmark.triangle")
+                    .help(notice)
                     .font(.callout)
                     .textSelection(.enabled)
             }
@@ -128,15 +129,16 @@ struct PopoverView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        section("Agents", rows: Array(summary.topAgents.prefix(UsageSummaryBuilder.popoverLimit)))
-        section("Models", rows: Array(summary.topModels.prefix(UsageSummaryBuilder.popoverLimit)))
-        section("Devices", rows: Array(summary.devices.prefix(UsageSummaryBuilder.popoverLimit)), markThisDevice: true)
         if let heatmap = summary.heatmap {
             UsageHeatmapView(heatmap: heatmap)
         } else {
             Text("Daily activity is unavailable.")
                 .foregroundStyle(.secondary)
         }
+        Divider()
+        section("Agents", rows: Array(summary.topAgents.prefix(UsageSummaryBuilder.popoverLimit)))
+        section("Models", rows: Array(summary.topModels.prefix(UsageSummaryBuilder.popoverLimit)))
+        section("Devices", rows: Array(summary.devices.prefix(UsageSummaryBuilder.popoverLimit)), markThisDevice: true)
         Text(summary.statusLine)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -146,17 +148,23 @@ struct PopoverView: View {
     @ViewBuilder
     private func section(_ title: String, rows: [RankedUsage], markThisDevice: Bool = false) -> some View {
         if !rows.isEmpty {
-            Text(title)
-                .font(.headline)
-            ForEach(rows) { row in
-                HStack {
-                    Text(markThisDevice ? row.listLabel : row.name)
-                    Spacer()
-                    Text(row.tokensText)
-                    Text(row.costLabel)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                ForEach(rows) { row in
+                    HStack {
+                        Text(markThisDevice ? row.listLabel : row.name)
+                        Spacer()
+                        Text(row.tokensText)
+                            .monospacedDigit()
+                            .frame(width: 64, alignment: .trailing)
+                        Text(row.costLabel)
+                            .monospacedDigit()
+                            .frame(width: 88, alignment: .trailing)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
                 }
-                .font(.callout)
             }
         }
     }
