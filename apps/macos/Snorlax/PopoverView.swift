@@ -5,8 +5,15 @@ import SwiftUI
 
 struct PopoverView: View {
     @ObservedObject var model: MenuModel
+    @ObservedObject private var pricingRebuild: PricingRebuildModel
+    @State private var confirmingRebuild = false
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
+
+    init(model: MenuModel) {
+        self.model = model
+        pricingRebuild = model.pricingRebuild
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +43,24 @@ struct PopoverView: View {
                     .font(.callout)
                     .textSelection(.enabled)
             }
+            if model.pricingNotice != nil || pricingRebuild.running {
+                Button {
+                    confirmingRebuild = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if pricingRebuild.running {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(pricingRebuild.running ? "Rebuilding…" : "Rebuild last 30 days…")
+                    }
+                }
+                .disabled(pricingRebuild.running || model.refreshing)
+            }
+            if let notice = pricingRebuild.notice {
+                Text(notice)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
             if let refreshError = model.refreshError {
                 Text(refreshError)
                     .font(.callout)
@@ -54,7 +79,7 @@ struct PopoverView: View {
                         Text(model.refreshing ? "Refreshing…" : "Refresh now")
                     }
                 }
-                .disabled(model.refreshing)
+                .disabled(model.refreshing || pricingRebuild.running)
                 Button("Settings") {
                     // The menu bar panel does not close on its own and floats above
                     // normal windows, so it would cover Settings. It also does not
@@ -73,6 +98,15 @@ struct PopoverView: View {
         }
         .padding(16)
         .frame(width: 440)
+        .alert("Rebuild the last 30 days?", isPresented: $confirmingRebuild) {
+            Button("Cancel", role: .cancel) {}
+            Button("Rebuild") {
+                guard !model.refreshing else { return }
+                Task { await pricingRebuild.rebuild() }
+            }
+        } message: {
+            Text("This rescans local agent logs and recalculates the last 30 days using the current prices. It can take several minutes. If paired, rebuilt usage totals are synced. Closing this menu does not stop the rebuild.")
+        }
         .onAppear {
             model.reloadSnapshot()
             model.loadDeviceName()

@@ -34,12 +34,14 @@ final class MenuModel: ObservableObject {
     private let reloader: WidgetCenterReloader
     private var publisher: AppGroupSnapshotPublisher?
     let pairing: PairingModel
+    let pricingRebuild: PricingRebuildModel
 
     init() {
         let directory = DataDirectory.resolve()
         dataDirectory = directory
         let client = CollectorClient(executable: CollectorBundle.launcherURL())
         self.client = client
+        pricingRebuild = PricingRebuildModel(client: client)
         reloader = WidgetCenterReloader()
         let watcher = SnapshotWatcher(scheduler: DispatchWatchScheduler())
         self.watcher = watcher
@@ -55,6 +57,10 @@ final class MenuModel: ObservableObject {
             self.reloadSnapshot()
             await self.reloadDeviceName()
             return self.snapshotStatus
+        }
+        pricingRebuild.refreshSnapshot = { [weak self] in
+            self?.reloadSnapshot()
+            await self?.reloadDeviceName()
         }
         Task { bootstrap() }
     }
@@ -99,7 +105,7 @@ final class MenuModel: ObservableObject {
     }
 
     func refreshNow() {
-        guard !refreshing else { return }
+        guard !refreshing, !pricingRebuild.running else { return }
         refreshing = true
         refreshError = nil
         Task {
