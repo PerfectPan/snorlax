@@ -52,9 +52,9 @@ public struct AppGroupSnapshotCopy {
     /// is protected by macOS, so the CLI cannot do this; the app does when it
     /// sees the loss. Returns whether there was a copy to remove.
     @discardableResult
-    public func removePublishedSnapshot() -> Bool {
+    public func removePublishedSnapshot() throws -> Bool {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return false }
-        try? FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.removeItem(at: fileURL)
         reloader.reloadAllTimelines()
         return true
     }
@@ -70,6 +70,14 @@ public struct AppGroupSnapshotPublisher {
 
     public init(container: URL, reloader: any TimelineReloading) {
         self.copy = AppGroupSnapshotCopy(container: container, reloader: reloader)
+    }
+
+    /// Forget the source snapshot even if the copy is already missing or deletion fails.
+    /// Restoring the same source must publish it again after an uninstall.
+    @discardableResult
+    public mutating func removePublishedSnapshot() throws -> Bool {
+        lastGeneratedAt = nil
+        return try copy.removePublishedSnapshot()
     }
 
     public var container: URL { copy.container }
