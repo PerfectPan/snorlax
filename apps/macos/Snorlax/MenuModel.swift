@@ -18,6 +18,7 @@ final class MenuModel: ObservableObject {
     @Published private(set) var deviceName = "…"
     @Published private(set) var deviceNameError: String?
     @Published private(set) var collectorVersion: String?
+    @Published private(set) var pricingNotice: String?
     @Published private(set) var diagnostics: Doctor?
     @Published private(set) var diagnosticsError: String?
     /// `snapshot.status`. Settings uses it for paired, sync state, and last sync.
@@ -106,6 +107,7 @@ final class MenuModel: ObservableObject {
             do {
                 _ = try await client.run(["refresh"], as: RefreshResult.self)
                 reloadSnapshot()
+                await reloadDeviceName()
             } catch {
                 refreshError = Presenter.message(for: error)
             }
@@ -122,6 +124,7 @@ final class MenuModel: ObservableObject {
             let name = status.device.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             deviceName = name.isEmpty ? "Unnamed" : name
             collectorVersion = status.version
+            pricingNotice = status.pricingNotice
             deviceNameError = nil
         } catch {
             deviceName = "Unavailable"
