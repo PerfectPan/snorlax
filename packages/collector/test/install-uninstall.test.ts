@@ -1632,6 +1632,12 @@ describe("LaunchAgent plist", () => {
     const xml = renderLaunchAgentPlist({ dataDir: "/tmp/data & <dir>" });
     expect(launchAgentLauncherPath(xml)).toBe("/tmp/data & <dir>/refresh.sh");
     expect(launchAgentLauncherPath(plist.build({ Program: "/usr/bin/node" }))).toBeUndefined();
+    // Pre-launcher installs name Node and the CLI, not a shell and launcher.
+    expect(
+      launchAgentLauncherPath(
+        plist.build({ ProgramArguments: ["/removed/node", "/opt/snorlax.mjs", "refresh"] })
+      )
+    ).toBeUndefined();
   });
 });
 
