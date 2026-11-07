@@ -6,8 +6,8 @@ import { join } from "node:path";
 
 import { Effect } from "effect";
 
-import { ensureDataDir, resolveDataDir } from "../src/modules/data-dir/data-dir.ts";
-import { nodeFileOps } from "../src/modules/platform/platform.ts";
+import { ensureDataDir, resolveDataDir } from "./data-dir.ts";
+import { nodeFileOps } from "../platform/platform.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 let tempRoot: string;
