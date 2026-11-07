@@ -275,6 +275,19 @@ final class PairingModelTests: XCTestCase {
         XCTAssertNil(model.notice)
     }
 
+    func testASuccessfulPairNamesTheDeviceInTheNotice() async {
+        let runner = ScriptedRunner()
+        runner.enqueue(output(pairResult(name: "MacBook Pro"), status: 0))
+        let model = prepared(runner, token: "snorlax-test-admin-token")
+        let loads = LoadSequence([snapshot(paired: true, state: .ok, at: nil)])
+        model.refreshSnapshot = { loads.next() }
+
+        await model.pair()
+
+        XCTAssertTrue(model.paired)
+        XCTAssertEqual(model.notice, "Paired with MacBook Pro.")
+    }
+
     func testTimeoutAndUnreadableResultsHaveTheirOwnSentences() async {
         let timedOut = ScriptedRunner()
         timedOut.enqueue(throwing: CollectorClientError.timedOut(.seconds(300)))
