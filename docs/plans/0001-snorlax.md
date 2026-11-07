@@ -756,8 +756,10 @@ in the Cloudflare dashboard during the first week of P2 against 8.2.
 ### 4.3 Rollback
 
 Collector and app: install the previous build; ledger backups allow returning to an older schema. Worker: redeploy
-the previous version; D1 migrations are additive, so older Workers keep working. The backend can be emptied and
-refilled by `snorlax rebuild --days 180` plus a re-pair on each device.
+the previous version; D1 migrations are additive, so older Workers keep working. To refill an emptied backend,
+re-pair each device: pairing marks every stored local bucket for upload, including older history. Do not rebuild
+for backend recovery: rebuilding can zero usage whose source logs were deleted, whereas re-pairing preserves
+the local ledger.
 
 ## 5. Verification
 
