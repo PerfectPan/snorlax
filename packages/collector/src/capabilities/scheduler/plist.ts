@@ -32,7 +32,8 @@ const pad = (level: number): string => "  ".repeat(level);
 
 const key = (name: string, level: number): string => `${pad(level)}<key>${xmlText(name)}</key>`;
 
-const stringValue = (value: string, level: number): string => `${pad(level)}<string>${xmlText(value)}</string>`;
+const stringValue = (value: string, level: number): string =>
+  `${pad(level)}<string>${xmlText(value)}</string>`;
 
 const stringEntry = (name: string, value: string, level: number): string =>
   `${key(name, level)}\n${stringValue(value, level)}`;
@@ -42,7 +43,7 @@ const stringArray = (name: string, values: readonly string[], level: number): st
     key(name, level),
     `${pad(level)}<array>`,
     ...values.map((value) => stringValue(value, level + 1)),
-    `${pad(level)}</array>`
+    `${pad(level)}</array>`,
   ].join("\n");
 
 /** `~/Library/LaunchAgents/io.github.perfectpan.snorlax.refresh.plist` for this `home`. */
@@ -66,21 +67,22 @@ export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
     key("RunAtLoad", 1),
     `${pad(1)}<true/>`,
     stringEntry("StandardOutPath", LAUNCHD_NULL_OUTPUT, 1),
-    stringEntry("StandardErrorPath", LAUNCHD_NULL_OUTPUT, 1)
+    stringEntry("StandardErrorPath", LAUNCHD_NULL_OUTPUT, 1),
   ];
   if (spec.snorlaxHome !== undefined) {
     lines.push(
       key("EnvironmentVariables", 1),
       `${pad(1)}<dict>`,
       stringEntry("SNORLAX_HOME", spec.snorlaxHome, 2),
-      `${pad(1)}</dict>`
+      `${pad(1)}</dict>`,
     );
   }
   lines.push(`</dict>`, `</plist>`, ``);
   return lines.join("\n");
 }
 
-const PROGRAM_LAUNCHER = /<key>ProgramArguments<\/key>\s*<array>\s*<string>\/bin\/sh<\/string>\s*<string>([^<]*)<\/string>/;
+const PROGRAM_LAUNCHER =
+  /<key>ProgramArguments<\/key>\s*<array>\s*<string>\/bin\/sh<\/string>\s*<string>([^<]*)<\/string>/;
 
 /**
  * The launcher script — the second `ProgramArguments` entry, after `/bin/sh` — of a plist in the layout
