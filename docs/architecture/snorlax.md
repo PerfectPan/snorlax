@@ -147,7 +147,12 @@ See the [macOS guide](../../apps/macos/README.md) for the signed owner-run proce
 - Uninstall removes only snorlax-owned data. It preserves unrelated files and refuses unsafe directory ownership;
   a credential-removal failure retains the data needed to recover.
 - Restore an older app/collector only with a compatible ledger or its migration backup. Do not assume an expired
-  transcript can reconstruct historic usage. A re-pair can repopulate the backend from retained local buckets.
+  transcript can reconstruct historic usage. Re-pairing uploads only that device's own retained local buckets,
+  not its cached copies of other devices' buckets. It clears `remote_buckets`, `remote_devices` and the pull
+  cursor before syncing. Before backend recovery or re-pairing, preserve a consistent, verified backup of each
+  device's ledger. Full recovery needs every device's own data or a verified backup of that data. If a device is
+  unavailable, preserve any surviving cached remote history before re-pairing; do not clear it and assume another
+  device can automatically upload it. See [the recovery warning](../development/pairing.md#backend-recovery-warning).
 - Monitor the actual Cloudflare quotas rather than treating a capacity estimate as a guarantee. At three devices,
   300-second refreshes and ten changed buckets per refresh, the original estimate was about 17,000 D1 row writes,
   35,000 reads and 3,500 Worker requests per day; workload and provider limits can change.
