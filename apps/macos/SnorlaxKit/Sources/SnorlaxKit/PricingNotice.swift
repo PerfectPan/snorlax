@@ -5,7 +5,7 @@ extension Status {
     /// explicit owner action: the app must not rescan logs automatically.
     public var pricingNotice: String? {
         pricingChanged
-            ? "The pricing table has changed. Costs may be out of date. Run `snorlax rebuild --days 30` to update them."
+            ? "The pricing table has changed. Costs may be out of date. Run `snorlax rebuild --days 180` to update them."
             : nil
     }
 }

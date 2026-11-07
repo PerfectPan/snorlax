@@ -262,9 +262,10 @@ describe("refresh and rebuild", () => {
     expect(output.snapshot.totals.last30d.requests).toBe(0);
   });
 
-  it("rebuild accepts 1-30 days and rejects anything else with exit 2", () => {
+  it("rebuild accepts 1-180 days and rejects anything else with exit 2", () => {
     expect(runRefreshHome(["rebuild", "--days", "7", "--json"]).status).toBe(0);
-    for (const days of ["0", "31", "many"]) {
+    expect(runRefreshHome(["rebuild", "--days", "180", "--json"]).status).toBe(0);
+    for (const days of ["0", "181", "many"]) {
       const result = runRefreshHome(["rebuild", "--days", days, "--json"]);
       expect(z.parse(failureSchema, parseOneJsonObject(result.stdout)).error.code).toBe("invalid-arguments");
       expect(result.status).toBe(2);
@@ -274,7 +275,7 @@ describe("refresh and rebuild", () => {
     expect(missing.status).toBe(2);
   });
 
-  it("status reports a changed pricing table and suggests rebuild --days 30, which clears it (plan 3.7)", async () => {
+  it("status reports a changed pricing table and suggests rebuild --days 180, which clears it (plan 3.7)", async () => {
     const pricingHome = await mkdtemp(join(tmpdir(), "snorlax-cli-pricing-"));
     const status = () => z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], pricingHome).stdout));
     try {
@@ -290,10 +291,10 @@ describe("refresh and rebuild", () => {
       }
       expect(status().pricingChanged).toBe(true);
       expect(run(["status"], pricingHome).stdout).toContain(
-        "pricing: the pricing table changed; run snorlax rebuild --days 30 to reprice the last 30 days\n"
+        "pricing: the pricing table changed; run snorlax rebuild --days 180 to reprice the last 180 days\n"
       );
 
-      expect(run(["rebuild", "--days", "30", "--json"], pricingHome).status).toBe(0);
+      expect(run(["rebuild", "--days", "180", "--json"], pricingHome).status).toBe(0);
       expect(status().pricingChanged).toBe(false);
     } finally {
       await rm(pricingHome, { recursive: true, force: true });

@@ -7,7 +7,7 @@ final class PricingNoticeTests: XCTestCase {
         let status = try await loadStatus(pricingChanged: true)
         XCTAssertEqual(
             status.pricingNotice,
-            "The pricing table has changed. Costs may be out of date. Run `snorlax rebuild --days 30` to update them."
+            "The pricing table has changed. Costs may be out of date. Run `snorlax rebuild --days 180` to update them."
         )
     }
 

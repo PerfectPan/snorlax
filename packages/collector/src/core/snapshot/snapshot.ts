@@ -61,6 +61,7 @@ interface Windows {
   readonly dayEnd: number;
   readonly last7dStart: number;
   readonly last30dStart: number;
+  readonly historyStart: number;
 }
 
 const windowsOf = (now: number, timeZone: string): Windows => {
@@ -70,7 +71,8 @@ const windowsOf = (now: number, timeZone: string): Windows => {
     dayStart: +today,
     dayEnd: +addDays(today, 1),
     last7dStart: +subDays(today, 6),
-    last30dStart: +subDays(today, 29)
+    last30dStart: +subDays(today, 29),
+    historyStart: +subDays(today, 179)
   };
 };
 
@@ -122,7 +124,7 @@ const seriesOf = (
   for (const bucket of buckets) {
     const at = bucket.hour * 1000;
     const day = +startOfDay(at, { in: inZone });
-    if (day >= windows.last30dStart && day < windows.dayEnd) {
+    if (day >= windows.historyStart && day < windows.dayEnd) {
       const daily = byDay.get(day) ?? { tokens: 0, costUsd: 0 };
       daily.tokens += tokensOf(bucket);
       daily.costUsd += bucket.costUsd;
@@ -133,7 +135,7 @@ const seriesOf = (
     }
   }
   const daily: DailyEntry[] = [];
-  for (let back = 29; back >= 0; back -= 1) {
+  for (let back = 179; back >= 0; back -= 1) {
     const day = +subDays(today, back);
     const entry = byDay.get(day) ?? { tokens: 0, costUsd: 0 };
     daily.push({ date: format(new TZDate(day, timeZone), "yyyy-MM-dd"), tokens: entry.tokens, costUsd: entry.costUsd });
@@ -178,7 +180,7 @@ const groupEntries = <K extends string>(
 
 /**
  * Builds the snapshot from the ledger's rows (plan 3.2.2, 3.4.1 step 7). A bucket belongs to the local day
- * and hour that contain its UTC start hour; `daily` covers the last 30 local days including today and
+ * and hour that contain its UTC start hour; `daily` covers the last 180 local days including today and
  * `hourlyToday` the local hours of today, both in `timeZone`. Entries appear only for agents, models and
  * devices with usage inside the 30-day window.
  */
@@ -248,7 +250,10 @@ export function buildSnapshot(input: BuildSnapshotInput): Snapshot {
         };
       })
   ];
-  const { daily, hourlyToday } = seriesOf(inWindow, windows, input.timeZone);
+  const history = all.filter(
+    (bucket) => bucket.hour * 1000 >= windows.historyStart && bucket.hour * 1000 < windows.dayEnd
+  );
+  const { daily, hourlyToday } = seriesOf(history, windows, input.timeZone);
   return {
     schemaVersion: 1,
     generatedAt: new Date(input.now).toISOString(),

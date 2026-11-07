@@ -118,5 +118,4 @@ Any other code is a failure the sentences above do not name. The collector's `me
 
 ## The first upload
 
-The first pairing uploads every local bucket, including buckets older than 30 days. The app's windows do not show
-those older buckets. They are uploaded so the backend is a full copy of the ledger.
+The first pairing uploads every local bucket, including buckets older than 30 days. The app's summary windows stop at 30 days; the daily heatmap shows 180 days. Older buckets remain stored. They are uploaded so the backend is a full copy of the ledger.

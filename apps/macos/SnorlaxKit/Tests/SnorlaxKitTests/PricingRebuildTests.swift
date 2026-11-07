@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class PricingRebuildTests: XCTestCase {
-    func testExplicitRebuildUsesThirtyDaysAndReloadsOnSuccess() async throws {
+    func testExplicitRebuildUses180DaysAndReloadsOnSuccess() async throws {
         let runner = RebuildRunner(output: .success(try output()))
         let model = model(runner)
         var reloads = 0
@@ -17,7 +17,7 @@ final class PricingRebuildTests: XCTestCase {
         await model.rebuild()
 
         XCTAssertFalse(model.running)
-        XCTAssertEqual(model.notice, "Rebuilt the last 30 days.")
+        XCTAssertEqual(model.notice, "Rebuilt the last 180 days.")
         XCTAssertEqual(reloads, 1)
         let calls = await runner.count
         XCTAssertEqual(calls, 1)
@@ -72,7 +72,7 @@ final class PricingRebuildTests: XCTestCase {
         XCTAssertFalse(model.running)
         await runner.setOutput(.success(try output()))
         await model.rebuild()
-        XCTAssertEqual(model.notice, "Rebuilt the last 30 days.")
+        XCTAssertEqual(model.notice, "Rebuilt the last 180 days.")
         let calls = await runner.count
         XCTAssertEqual(calls, 2)
     }
@@ -99,7 +99,7 @@ private actor RebuildRunner: ProcessRunning {
     }
 
     func run(executable: URL, arguments: [String], stdin: Data?, timeout: Duration) async throws -> ProcessOutput {
-        XCTAssertEqual(arguments, ["rebuild", "--days", "30", "--json"])
+        XCTAssertEqual(arguments, ["rebuild", "--days", "180", "--json"])
         XCTAssertEqual(timeout, .seconds(600))
         XCTAssertNil(stdin)
         count += 1

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 /**
  * Spec S10 and the snapshot's windows and series (plan 3.2.2): days follow the viewer's time zone, a
- * bucket belongs to the local day and hour that contain its UTC start hour, `daily` covers the last 30
+ * bucket belongs to the local day and hour that contain its UTC start hour, `daily` covers the last 180
  * local days including today and `hourlyToday` today's local hours. Built directly from ledger rows with a
  * fixed clock, so every boundary is exact.
  */
@@ -162,13 +162,36 @@ describe("windows", () => {
 describe("daily and hourlyToday", () => {
   const now = Date.UTC(2026, 9, 22, 12, 0, 0);
 
-  it("lists the last 30 local days including today, oldest first, zeros included", () => {
+  it("lists the last 180 local days including today, oldest first, zeros included", () => {
     const snapshot = build({ now, timeZone: "Asia/Shanghai", buckets: [bucket("2026-10-22T02:00:00Z")] });
-    expect(snapshot.daily).toHaveLength(30);
-    expect(snapshot.daily[0]?.date).toBe("2026-09-23");
+    expect(snapshot.daily).toHaveLength(180);
+    expect(snapshot.daily[0]?.date).toBe("2026-04-26");
     expect(snapshot.daily.at(-1)).toMatchObject({ date: "2026-10-22", tokens: 1100, costUsd: 0.25 });
     const zeros = snapshot.daily.filter((day) => day.tokens === 0);
-    expect(zeros).toHaveLength(29);
+    expect(zeros).toHaveLength(179);
+  });
+
+  it("keeps historical local and remote usage in daily without widening totals or rankings", () => {
+    const old = bucket("2026-04-26T00:00:00Z");
+    const snapshot = build({
+      now,
+      timeZone: "UTC",
+      buckets: [old, bucket("2026-04-25T23:00:00Z"), bucket("2026-10-23T00:00:00Z")],
+      remoteBuckets: [{ ...old, deviceId: "22222222-2222-4333-8444-555555555555", seq: 1 }]
+    });
+    expect(snapshot.daily[0]).toMatchObject({ date: "2026-04-26", tokens: 2200, costUsd: 0.5 });
+    expect(snapshot.daily.reduce((sum, day) => sum + day.tokens, 0)).toBe(2200);
+    expect(snapshot.totals.last30d.tokens).toBe(0);
+    expect(snapshot.byAgent).toEqual([]);
+    expect(snapshot.byModel).toEqual([]);
+  });
+
+  it("keeps 180 distinct local dates across DST and year boundaries", () => {
+    const snapshot = build({ now: Date.UTC(2026, 2, 10, 12), timeZone: "America/New_York", buckets: [] });
+    expect(snapshot.daily).toHaveLength(180);
+    expect(new Set(snapshot.daily.map((day) => day.date)).size).toBe(180);
+    expect(snapshot.daily[0]?.date).toBe("2025-09-12");
+    expect(snapshot.daily.at(-1)?.date).toBe("2026-03-10");
   });
 
   it("labels today's local hours with their numeric offset, earliest first", () => {

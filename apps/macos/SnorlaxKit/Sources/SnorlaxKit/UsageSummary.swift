@@ -37,7 +37,7 @@ public struct RankedUsage: Equatable, Identifiable, Sendable {
     }
 }
 
-/// One bar of the 30-day chart. `day` is the bar's date as the start of that
+/// One day of the snapshot history. `day` is the bar's date as the start of that
 /// local day in the snapshot's time zone (R8); nil when the date is unparseable.
 public struct DailyBar: Equatable, Identifiable, Sendable {
     public var id: String
@@ -54,6 +54,7 @@ public struct UsageSummary: Equatable, Sendable {
     public var topModels: [RankedUsage]
     public var devices: [RankedUsage]
     public var daily: [DailyBar]
+    public var heatmap: UsageHeatmap?
     /// Zone the snapshot cut its days in; the chart axis labels use it too.
     public var timeZone: TimeZone
     public var statusLine: String
@@ -85,6 +86,7 @@ public enum UsageSummaryBuilder {
             daily: snapshot.daily.map { entry in
                 DailyBar(id: entry.date, date: entry.date, day: UsageFormat.dayDate(entry.date, timeZone: zone), tokens: entry.tokens)
             },
+            heatmap: UsageHeatmapBuilder.make(daily: snapshot.daily, generatedAt: snapshot.generatedAt, timeZone: zone),
             timeZone: zone,
             statusLine: statusLine(snapshot.status, now: now, timeZone: timeZone)
         )

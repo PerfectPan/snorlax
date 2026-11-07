@@ -19,7 +19,7 @@ const humanStatus = (payload: Status): string =>
     }`,
     `agents: ${payload.agents.map((agent) => `${agent.agent}=${agent.status}`).join(" ")}`,
     ...(payload.pricingChanged
-      ? ["pricing: the pricing table changed; run snorlax rebuild --days 30 to reprice the last 30 days"]
+      ? ["pricing: the pricing table changed; run snorlax rebuild --days 180 to reprice the last 180 days"]
       : [])
   ].join("\n");
 

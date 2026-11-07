@@ -23,10 +23,10 @@ public final class PricingRebuildModel: ObservableObject {
         defer { running = false }
         do {
             let result = try await client.run(
-                ["rebuild", "--days", "30"], timeout: Self.timeout, as: RefreshResult.self
+                ["rebuild", "--days", "180"], timeout: Self.timeout, as: RefreshResult.self
             )
             var message = result.failures == 0
-                ? "Rebuilt the last 30 days."
+                ? "Rebuilt the last 180 days."
                 : "Rebuild finished with \(result.failures) parsing failures; some costs may still be incomplete."
             if !result.sync.ok {
                 message += " Sync did not complete. " + (result.sync.message ?? "Check Diagnostics for details.")

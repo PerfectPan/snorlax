@@ -11,10 +11,10 @@ class RebuildDaysOutOfRange extends Data.TaggedError("RebuildDaysOutOfRange")<{ 
 const humanSummary = (days: number, result: RefreshResult): string =>
   `rebuilt the last ${days} days: ${result.records} records, ${result.failures} failures\n${syncLine(result.sync)}\n`;
 
-/** `snorlax rebuild --days <n>` (plan 3.1, 3.4.3): zero and rescan the last n days; 1 ≤ n ≤ 30. */
+/** `snorlax rebuild --days <n>` (plan 3.1, 3.4.3): zero and rescan the last n days; 1 ≤ n ≤ 180. */
 export const rebuildCommand = {
   name: "rebuild",
-  description: "zero and rescan the last 1-30 days of local buckets",
+  description: "zero and rescan the last 1-180 days of local buckets",
   flags: {
     days: Flag.Int("days").pipe(
       Flag.withDescription(`whole number of days to rebuild (${REBUILD_MIN_DAYS}-${REBUILD_MAX_DAYS})`)

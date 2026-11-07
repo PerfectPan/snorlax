@@ -61,7 +61,7 @@ describe("rebuildStartHour", () => {
   it("hour-aligns the window start n whole days back and accepts the documented range", () => {
     expect(rebuildStartHour(NOW, 3)).toBe(Math.floor((NOW - 3 * DAY * 1000) / (HOUR * 1000)) * HOUR);
     expect(rebuildStartHour(NOW + 17 * 60_000, 1) % HOUR).toBe(0);
-    expect(REBUILD_MAX_DAYS).toBe(30);
+    expect(REBUILD_MAX_DAYS).toBe(180);
   });
 });
 
@@ -336,5 +336,51 @@ describe("pricing_version (plan 3.7)", () => {
     expect(await recordedVersion()).toBe(litellmPricesVersion);
     expect(await pricingChanged()).toBe(false);
     expect((await opusRow())?.costUsd).toBeGreaterThan(0);
+  });
+});
+
+describe("180-day rebuild boundary", () => {
+  it("replays retained history exactly once, preserves older rows, and zeroes deleted sources", async () => {
+    const history = await createRefreshSetup({ now: NOW });
+    const deps = { platform: history.platform, dataDir: history.dataDir, log: SILENT_LOG, timeZone: TIME_ZONE };
+    try {
+      for (const days of [179, 181]) {
+        await writeClaudeSession(history.home, {
+          sessionId: `history-${days}`,
+          mtimeMs: MTIME,
+          requests: [
+            {
+              requestId: `request-${days}`,
+              model: "claude-haiku-4-5",
+              timestampMs: hourOf(days, 0) * 1000,
+              usage: { inputTokens: 100, outputTokens: 10 }
+            }
+          ]
+        });
+      }
+      await runRefresh(deps);
+      const read = () => readLedger(history.platform, history.dataDir, (ledger) => ledger.readBuckets());
+      const before = await read();
+      expect(before.reduce((sum, row) => sum + row.requests, 0)).toBe(2);
+      await runRebuild(deps, 180);
+      await runRebuild(deps, 180);
+      const rebuilt = await read();
+      expect(rebuilt.reduce((sum, row) => sum + row.requests, 0)).toBe(2);
+      const outside = before.find((row) => row.hour < rebuildStartHour(NOW, 180));
+      expect(outside).toBeDefined();
+      expect(rebuilt.find((row) => row.hour === outside?.hour)).toEqual(outside);
+      await rm(join(history.home, ".claude", "projects", "-Users-tester-fixture", "history-179.jsonl"));
+      await runRebuild(deps, 180);
+      const afterDelete = await read();
+      expect(afterDelete.find((row) => row.hour === hourOf(179, 0))).toMatchObject({
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        dirty: true
+      });
+      expect(afterDelete.find((row) => row.hour === outside?.hour)).toEqual(outside);
+    } finally {
+      await history.remove();
+    }
   });
 });
