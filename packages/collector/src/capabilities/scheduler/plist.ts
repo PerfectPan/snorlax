@@ -1,12 +1,16 @@
 import { join } from "node:path";
 
+import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
+
 /**
  * LaunchAgent that runs `snorlax refresh` every 300 seconds (plan 3.11 fallback).
- * Program paths are absolute because launchd does not search `PATH`. `SNORLAX_HOME` is copied
- * into `EnvironmentVariables` only when install itself was given that override; otherwise the
- * agent uses the default data directory, and launchd's gui domain already sets `HOME`.
- * StandardOutPath/StandardErrorPath are /dev/null: refresh's summary already goes to the rotating
- * `logs/snorlax.log` (plan 3.9), and an unrotated launchd redirect file would only grow.
+ * Program paths are absolute because launchd does not search `PATH`: the agent starts the data
+ * directory's launcher script through `/bin/sh`, and the script resolves Node at run time — the
+ * Node `snorlax install` ran with is not named here, so removing it does not stop the schedule.
+ * `SNORLAX_HOME` is copied into `EnvironmentVariables` only when install itself was given that
+ * override; otherwise the agent uses the default data directory, and launchd's gui domain already
+ * sets `HOME`. StandardOutPath/StandardErrorPath are /dev/null: refresh's summary already goes to
+ * the rotating `logs/snorlax.log` (plan 3.9), and an unrotated launchd redirect file would only grow.
  */
 export const LAUNCH_AGENT_LABEL = "io.github.perfectpan.snorlax.refresh";
 export const LAUNCH_AGENT_PLIST_NAME = `${LAUNCH_AGENT_LABEL}.plist`;
@@ -16,8 +20,6 @@ export const REFRESH_INTERVAL_SECONDS = 300;
 export const LAUNCHD_NULL_OUTPUT = "/dev/null";
 
 export interface LaunchAgentSpec {
-  readonly nodePath: string;
-  readonly cliPath: string;
   readonly dataDir: string;
   /** Present when install was started with a non-empty `SNORLAX_HOME`. */
   readonly snorlaxHome?: string;
@@ -49,7 +51,7 @@ export const launchAgentPlistPath = (home: string): string =>
 
 /**
  * XML property list in one fixed layout. Tests read the whole file back with the `plist` package; at run time only
- * `launchAgentNodePath` reads it back, and it matches this layout's text to keep an XML parser out of the bundle.
+ * `launchAgentLauncherPath` reads it back, and it matches this layout's text to keep an XML parser out of the bundle.
  */
 export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   const lines = [
@@ -58,7 +60,7 @@ export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
     `<plist version="1.0">`,
     `<dict>`,
     stringEntry("Label", LAUNCH_AGENT_LABEL, 1),
-    stringArray("ProgramArguments", [spec.nodePath, spec.cliPath, "refresh"], 1),
+    stringArray("ProgramArguments", [LAUNCHER_SHELL, launcherPath(spec.dataDir)], 1),
     key("StartInterval", 1),
     `${pad(1)}<integer>${REFRESH_INTERVAL_SECONDS}</integer>`,
     key("RunAtLoad", 1),
@@ -78,15 +80,17 @@ export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   return lines.join("\n");
 }
 
-const PROGRAM_NODE_PATH = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/;
+const PROGRAM_LAUNCHER =
+  /<key>ProgramArguments<\/key>\s*<array>\s*<string>\/bin\/sh<\/string>\s*<string>([^<]*)<\/string>/;
 
 /**
- * The Node binary — the first `ProgramArguments` entry — of a plist in the layout `renderLaunchAgentPlist` writes,
- * or undefined for any other layout. This reads snorlax's own output back instead of parsing XML: the `plist`
- * package would read every layout, but its XML parser adds about 260 KB to the single-file bundle for one string.
+ * The launcher script — the second `ProgramArguments` entry, after `/bin/sh` — of a plist in the layout
+ * `renderLaunchAgentPlist` writes, or undefined for any other layout. This reads snorlax's own output
+ * back instead of parsing XML: the `plist` package would read every layout, but its XML parser adds
+ * about 260 KB to the single-file bundle for one string.
  */
-export const launchAgentNodePath = (xml: string): string | undefined => {
-  const value = PROGRAM_NODE_PATH.exec(xml)?.[1];
+export const launchAgentLauncherPath = (xml: string): string | undefined => {
+  const value = PROGRAM_LAUNCHER.exec(xml)?.[1];
   // `xmlText` undone; `&amp;` goes last, so `&amp;lt;` reads as `&lt;`, not `<`.
   return value?.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 };

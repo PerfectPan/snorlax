@@ -6,6 +6,7 @@ import { Duration, Effect, Fiber, Layer } from "effect";
 import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
+import { launcherPath } from "./launcher.ts";
 import { renderLaunchAgentPlist } from "./plist.ts";
 import { renderRefreshService } from "./units.ts";
 import { Scheduler, type JobInspection } from "./scheduler.ts";
@@ -218,16 +219,16 @@ describe("launchd inspect", () => {
     return { inspection, runs };
   };
 
-  const plistFor = (nodePath: string) => ({
-    [PLIST]: renderLaunchAgentPlist({ nodePath, cliPath: "/opt/snorlax/snorlax.mjs", dataDir: DATA_DIR })
+  const plistFor = () => ({
+    [PLIST]: renderLaunchAgentPlist({ dataDir: DATA_DIR })
   });
 
-  it("reads the CLI's plist and its Node path, and runs only launchctl print", async () => {
-    const { inspection, runs } = await inspectOn(plistFor("/opt/node & co/bin/node"), printing(PLIST));
+  it("reads the CLI's plist and its launcher script, and runs only launchctl print", async () => {
+    const { inspection, runs } = await inspectOn(plistFor(), printing(PLIST));
     expect(inspection).toEqual({
       kind: "inspected",
       scheduler: "launchd",
-      cliJob: { file: PLIST, nodePath: "/opt/node & co/bin/node" },
+      cliJob: { file: PLIST, launcher: launcherPath(DATA_DIR) },
       loaded: { from: "cli", file: PLIST }
     });
     expect(runs).toEqual([["print", target]]);
@@ -270,12 +271,12 @@ describe("launchd inspect", () => {
     });
   });
 
-  it("reads no Node path from a plist in another layout", async () => {
+  it("reads no launcher path from a plist in another layout", async () => {
     const { inspection } = await inspectOn({ [PLIST]: "<plist><dict/></plist>" }, { code: 113 });
     expect(inspection).toEqual({
       kind: "inspected",
       scheduler: "launchd",
-      cliJob: { file: PLIST, nodePath: undefined },
+      cliJob: { file: PLIST, launcher: undefined },
       loaded: { from: "nothing" }
     });
   });
@@ -475,8 +476,7 @@ describe("systemd inspect", () => {
     "--property=FragmentPath",
     "--no-pager"
   ];
-  const serviceFor = (nodePath: string): string =>
-    renderRefreshService({ nodePath, cliPath: "/opt/snorlax/snorlax.mjs", snorlaxHome: DATA_DIR });
+  const serviceFor = (): string => renderRefreshService({ snorlaxHome: DATA_DIR });
   const active = (fragment: string): string =>
     `LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nFragmentPath=${fragment}\n`;
 
@@ -516,12 +516,12 @@ describe("systemd inspect", () => {
     return { inspection, runs };
   };
 
-  it("reads the service Node path and reports the timer as the CLI's when it is enabled and active", async () => {
-    const { inspection, runs } = await inspectOn({ [SERVICE]: serviceFor("/opt/node home/bin/node") }, active(TIMER));
+  it("reads the service's launcher script and reports the timer as the CLI's when it is enabled and active", async () => {
+    const { inspection, runs } = await inspectOn({ [SERVICE]: serviceFor() }, active(TIMER));
     expect(inspection).toEqual({
       kind: "inspected",
       scheduler: "systemd",
-      cliJob: { file: SERVICE, nodePath: "/opt/node home/bin/node" },
+      cliJob: { file: SERVICE, launcher: launcherPath(DATA_DIR) },
       loaded: { from: "cli", file: TIMER }
     });
     expect(runs).toEqual([SHOW_UNIT_PATH, SHOW]);
@@ -546,19 +546,19 @@ describe("systemd inspect", () => {
 
   it("reports nothing when our timer is not both enabled and active", async () => {
     const { inspection } = await inspectOn(
-      { [SERVICE]: serviceFor("/usr/bin/node") },
+      { [SERVICE]: serviceFor() },
       `LoadState=loaded\nUnitFileState=disabled\nActiveState=inactive\nFragmentPath=${TIMER}\n`
     );
     expect(inspection).toEqual({
       kind: "inspected",
       scheduler: "systemd",
-      cliJob: { file: SERVICE, nodePath: "/usr/bin/node" },
+      cliJob: { file: SERVICE, launcher: launcherPath(DATA_DIR) },
       loaded: { from: "nothing" }
     });
   });
 
   it("returns no cli job when the UnitPath query exits non-zero or does not parse", async () => {
-    const planted = { [SERVICE]: serviceFor("/usr/bin/node") };
+    const planted = { [SERVICE]: serviceFor() };
     const failed = await inspectOn(planted, undefined, { code: 1, stdout: "" });
     expect(failed.inspection).toEqual({
       kind: "inspected",
