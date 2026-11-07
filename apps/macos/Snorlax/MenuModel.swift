@@ -181,11 +181,15 @@ final class MenuModel: ObservableObject {
             appGroupDetail = "App Group container is unavailable for this signature."
             return
         }
-        if AppGroupSnapshotCopy(container: container, reloader: reloader).removePublishedSnapshot() {
-            // A snapshot identical to the removed one must be copied again, not skipped.
-            publisher = nil
+        if publisher?.container != container {
+            publisher = AppGroupSnapshotPublisher(container: container, reloader: reloader)
         }
-        appGroupDetail = container.path
+        do {
+            _ = try publisher?.removePublishedSnapshot()
+            appGroupDetail = container.path
+        } catch {
+            appGroupDetail = Presenter.message(for: error)
+        }
     }
 }
 
