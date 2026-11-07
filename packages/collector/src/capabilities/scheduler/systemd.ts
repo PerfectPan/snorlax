@@ -7,6 +7,14 @@ import { Data, Duration, Effect, type Context } from "effect";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
+import {
+  LAUNCHER_MODE,
+  LauncherWriteFailed,
+  launcherPath,
+  NODE_PATH_FILE,
+  renderNodePathSeed,
+  renderRefreshLauncher
+} from "./launcher.ts";
 import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 import {
   parseSystemctlShow,
@@ -14,11 +22,10 @@ import {
   renderRefreshService,
   renderRefreshTimer,
   SERVICE_NAME,
-  serviceNodePath,
+  serviceLauncherPath,
   TIMER_NAME,
   userConfigUnitDir,
-  type SystemctlShow,
-  type SystemdUnitSpec
+  type SystemctlShow
 } from "./units.ts";
 
 /**
@@ -96,23 +103,17 @@ const systemctlBinary = (platform: Pick<Platform, "env">): string => {
   return override;
 };
 
-/** The running Node binary and the `snorlax.mjs` entry this process was started with. */
-const runningCollectorPaths: Effect.Effect<
-  Pick<SystemdUnitSpec, "nodePath" | "cliPath">,
-  UnitPathsUnresolved
-> = Effect.suspend(() => {
+/** The `snorlax.mjs` entry this process was started with; the launcher script bakes it in. */
+const runningCliPath: Effect.Effect<string, UnitPathsUnresolved> = Effect.suspend(() => {
   const entry = process.argv[1];
   if (entry === undefined || entry === "") {
     return Effect.fail(new UnitPathsUnresolved({ message: "cannot resolve the running snorlax CLI path" }));
   }
-  const nodePath = process.execPath;
   const cliPath = resolve(entry);
-  if (!isAbsolute(nodePath) || !isAbsolute(cliPath)) {
-    return Effect.fail(
-      new UnitPathsUnresolved({ message: "the Node and CLI paths in the systemd unit must be absolute" })
-    );
+  if (!isAbsolute(cliPath)) {
+    return Effect.fail(new UnitPathsUnresolved({ message: "the CLI path in the systemd unit must be absolute" }));
   }
-  return Effect.succeed({ nodePath, cliPath });
+  return Effect.succeed(cliPath);
 });
 
 /**
@@ -292,13 +293,13 @@ const removeUnitFiles = (
     catch: (error) => new UnitRemoveFailed({ message: `cannot remove the systemd units: ${errorMessage(error)}` })
   });
 
-/** The CLI's service unit and the Node binary it names; undefined when there is no service file. */
+/** The CLI's service unit and the launcher script it runs; undefined when there is no service file. */
 const readCliJob = (platform: SchedulerPlatform, servicePath: string): Effect.Effect<CliJob | undefined> =>
   Effect.promise(() =>
     readTextFile(platform, servicePath).then(
-      (text) => (text === undefined ? undefined : { file: servicePath, nodePath: serviceNodePath(text) }),
-      // A service file that exists but cannot be read names no Node binary snorlax can check.
-      () => ({ file: servicePath, nodePath: undefined })
+      (text) => (text === undefined ? undefined : { file: servicePath, launcher: serviceLauncherPath(text) }),
+      // A service file that exists but cannot be read names no launcher script snorlax can check.
+      () => ({ file: servicePath, launcher: undefined })
     )
   );
 
@@ -339,12 +340,24 @@ export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.S
       yield* refuseForeignTimer(shown, paths.timerPath);
       yield* prepare;
       // `job.dataDir` is the directory this install resolved. The timer must use that path, not look it up
-      // again: the user manager does not inherit `XDG_DATA_HOME` from a shell rc.
-      const service = renderRefreshService({
-        ...(yield* runningCollectorPaths),
-        snorlaxHome: job.dataDir
-      });
+      // again: the user manager does not inherit `XDG_DATA_HOME` from a shell rc. The launcher files go into
+      // the data directory first, so an enable that starts the job always finds them: the service only names
+      // the script, and the script resolves Node at run time — seeded with the Node running this install.
+      const launcher = renderRefreshLauncher({ dataDir: job.dataDir, cliPath: yield* runningCliPath });
+      const service = renderRefreshService({ snorlaxHome: job.dataDir });
       const timer = renderRefreshTimer();
+      yield* Effect.tryPromise({
+        try: async () => {
+          await platform.fs.writeAtomic(join(job.dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath), {
+            mode: LAUNCHER_MODE
+          });
+          await platform.fs.writeAtomic(launcherPath(job.dataDir), launcher, { mode: LAUNCHER_MODE });
+        },
+        catch: (error) =>
+          new LauncherWriteFailed({
+            message: `cannot write ${launcherPath(job.dataDir)}: ${errorMessage(error)}`
+          })
+      });
       yield* Effect.tryPromise({
         try: async () => {
           await platform.fs.mkdir(paths.unitDir);

@@ -51,6 +51,38 @@ final class CollectorClientTests: XCTestCase {
         XCTAssertTrue(result.ok)
     }
 
+    /// `doctor` exits 1 unhealthy with the same payload; a caller that accepts
+    /// that exit decodes the success shape from it.
+    func testAnAcceptedExitStillDecodesTheRequestedType() async throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        try Fixtures.data("doctor").write(to: temp.url.appendingPathComponent("body.json"))
+        try Data("1\n".utf8).write(to: temp.url.appendingPathComponent("exit-code"))
+        let client = CollectorClient(executable: try temp.writeExecutable(named: "stub", contents: stubScript))
+
+        let doctor = try await client.run(["doctor"], as: Doctor.self, acceptingExitStatus: [0, 1])
+        XCTAssertTrue(doctor.healthy)
+        XCTAssertEqual(doctor.checks.first?.id, "node-version")
+    }
+
+    func testAnAcceptedExitWithAnUnreadableBodyIsStillUnreadable() async throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        try Fixtures.data("failure").write(to: temp.url.appendingPathComponent("body.json"))
+        try Data("1\n".utf8).write(to: temp.url.appendingPathComponent("exit-code"))
+        let client = CollectorClient(executable: try temp.writeExecutable(named: "stub", contents: stubScript))
+
+        do {
+            _ = try await client.run(["doctor"], as: Doctor.self, acceptingExitStatus: [0, 1])
+            XCTFail("a failure body should not decode as the requested type")
+        } catch let error as CollectorClientError {
+            guard case .unreadable = error else {
+                XCTFail("expected an unreadable result, got \(error)")
+                return
+            }
+        }
+    }
+
     func testNewerSchemaVersionUsesThePlanMessage() async throws {
         let temp = try TempDirectory()
         defer { temp.remove() }

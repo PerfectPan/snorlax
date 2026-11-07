@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -24,13 +24,15 @@ import * as z from "zod/mini";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { launchAgentNodePath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
 import {
-  renderRefreshService,
-  renderRefreshTimer,
-  serviceEnvironment,
-  serviceNodePath
-} from "../src/capabilities/scheduler/units.ts";
+  LAUNCHER_SHELL,
+  launcherPath,
+  NODE_PATH_FILE,
+  renderNodePathSeed,
+  renderRefreshLauncher
+} from "../src/capabilities/scheduler/launcher.ts";
+import { launchAgentLauncherPath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
+import { renderRefreshTimer, serviceEnvironment, serviceLauncherPath } from "../src/capabilities/scheduler/units.ts";
 import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
 import { resolveDataDir } from "../src/modules/data-dir/data-dir.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
@@ -56,7 +58,8 @@ const LABEL = "io.github.perfectpan.snorlax.refresh";
 
 const plistFields = {
   Label: z.literal(LABEL),
-  ProgramArguments: z.tuple([z.string(), z.string(), z.literal("refresh")]),
+  // The job starts the data directory's launcher through /bin/sh; the script resolves Node at run time.
+  ProgramArguments: z.tuple([z.literal(LAUNCHER_SHELL), z.string()]),
   StartInterval: z.literal(300),
   RunAtLoad: z.literal(true),
   // launchd's redirect files are never written: the collector logs to the rotating snorlax.log.
@@ -365,12 +368,15 @@ describe("install and uninstall", () => {
       expect(z.parse(okSchema, json(installed.stdout)).ok).toBe(true);
 
       const plist = await decodePlist(plistPath);
-      expect(plist.ProgramArguments).toEqual([process.execPath, resolve(bundle), "refresh"]);
-      expect(isAbsolute(plist.ProgramArguments[0])).toBe(true);
-      expect(isAbsolute(plist.ProgramArguments[1])).toBe(true);
+      expect(plist.ProgramArguments).toEqual([LAUNCHER_SHELL, launcherPath(dataDir)]);
       expect(plist.StandardOutPath).toBe("/dev/null");
       expect(plist.StandardErrorPath).toBe("/dev/null");
       expect(plist.EnvironmentVariables.SNORLAX_HOME).toBe(dataDir);
+      // The launcher script resolves Node at run time, seeded with the Node the install ran on.
+      const script = await readFile(launcherPath(dataDir), "utf8");
+      expect(script).toContain(resolve(bundle));
+      expect(script).toContain('exec "$node" "$cli" refresh');
+      expect(await readFile(join(dataDir, NODE_PATH_FILE), "utf8")).toBe(renderNodePathSeed(process.execPath));
 
       const again = run(env, ["install"]);
       expect(again.status).toBe(0);
@@ -503,7 +509,11 @@ describe("install and uninstall", () => {
 
       const runInterrupted = (signal: NodeJS.Signals): Promise<{ readonly name: string; readonly stdout: string }> =>
         new Promise((resolve) => {
-          const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: stub, os: "darwin" });
+          const child = spawnBundle(["install", "--json"], {
+            home: env.home,
+            launchctl: stub,
+            os: "darwin"
+          });
           let stdout = "";
           child.stdout.on("data", (chunk: Buffer) => {
             stdout += String(chunk);
@@ -536,7 +546,11 @@ describe("install and uninstall", () => {
         execFileSync("/usr/bin/mkfifo", [fifo]);
       }
       const entered = readFile(env.bootstrapEntered, "utf8");
-      const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: env.launchctl, os: "darwin" });
+      const child = spawnBundle(["install", "--json"], {
+        home: env.home,
+        launchctl: env.launchctl,
+        os: "darwin"
+      });
       let stdout = "";
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += String(chunk);
@@ -726,7 +740,9 @@ describe("install and uninstall", () => {
       expect(run(env, ["refresh", "--json"], { snorlaxHome: join(env.home, "Library") }).status).toBe(0);
 
       // `logs` matches the user's `Logs` on a case-insensitive volume; only known log files may go.
-      const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: join(env.home, "Library") });
+      const removed = run(env, ["uninstall", "--data", "--json"], {
+        snorlaxHome: join(env.home, "Library")
+      });
       expect(removed.status).toBe(0);
       expect(existsSync(join(reports, "x.ips"))).toBe(true);
       expect(existsSync(join(env.home, "Library"))).toBe(true);
@@ -840,21 +856,17 @@ describe("install and uninstall", () => {
     });
   });
 
-  it("doctor reports a LaunchAgent whose Node is gone as an error and changes nothing", async () => {
+  it("doctor reports a LaunchAgent whose launcher script is gone as an error and changes nothing", async () => {
     await withInstallHome("darwin", async (env) => {
       // A healthy data directory, so the schedule check is the only one that can fail.
       const dataDir = dataDirOf(env.home);
       await mkdir(dataDir);
       await chmod(dataDir, 0o700);
       const plistPath = plistPathOf(env.home);
-      const writePlist = (nodePath: string) =>
-        writeFile(
-          plistPath,
-          renderLaunchAgentPlist({ nodePath, cliPath: resolve(bundle), dataDir, snorlaxHome: dataDir })
-        );
       await mkdir(dirname(plistPath), { recursive: true });
-      // The versioned Node `install` ran on, removed since by a Node upgrade; launchd still has the job loaded.
-      await writePlist(join(env.home, ".nvm", "versions", "node", "v22.13.0", "bin", "node"));
+      // The data directory lost its launcher (a hand deletion, or SNORLAX_HOME moved); launchd still has
+      // the job loaded, and the plist it runs names the script that is no longer there.
+      await writeFile(plistPath, renderLaunchAgentPlist({ dataDir, snorlaxHome: dataDir }));
       await writeFile(env.loaded, plistPath, "utf8");
       const before = await hashTree(env.home);
 
@@ -864,13 +876,15 @@ describe("install and uninstall", () => {
       expect(payload.healthy).toBe(false);
       expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
       const schedule = payload.checks.find((check) => check.id === "schedule");
-      expect(schedule?.detail).toContain("~/.nvm/versions/node/v22.13.0/bin/node, which does not exist");
+      // cli/ redacts every output, so the data directory is spelled relative to the home.
+      expect(schedule?.detail).toContain("runs the launcher script ~/data/refresh.sh, which does not exist");
       expect(schedule?.detail).toContain("`snorlax install`");
       expect(await hashTree(env.home)).toBe(before);
       expect(await readInvocations(env.record)).toEqual([["print", `gui/${uid()}/${LABEL}`]]);
 
-      // The same job on a Node that exists reads as healthy.
-      await writePlist(process.execPath);
+      // The launcher back, seeded with this Node, reads as healthy even where no fallback Node exists.
+      await writeFile(join(dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath));
+      await writeFile(launcherPath(dataDir), renderRefreshLauncher({ dataDir, cliPath: resolve(bundle) }));
       const healthy = z.parse(doctorSchema, json(run(env, ["doctor", "--json"]).stdout));
       expect(healthy.checks.find((check) => check.id === "schedule")?.status).toBe("ok");
       expect(healthy.healthy).toBe(true);
@@ -1296,10 +1310,14 @@ describe("systemd user timer", () => {
       expect(installed.stdout).toBe("systemd user timer installed at ~/.config/systemd/user/snorlax-refresh.timer\n");
 
       const service = await readFile(servicePath, "utf8");
-      const nodePath = serviceNodePath(service);
-      expect(nodePath).toBe(process.execPath);
-      expect(isAbsolute(nodePath ?? "")).toBe(true);
-      expect(service).toContain(`"${resolve(bundle)}" refresh`);
+      expect(serviceLauncherPath(service)).toBe(launcherPath(dataDirOf(env.home)));
+      // The launcher script resolves Node at run time, seeded with the Node the install ran on.
+      const script = await readFile(launcherPath(dataDirOf(env.home)), "utf8");
+      expect(script).toContain(resolve(bundle));
+      expect(script).toContain('exec "$node" "$cli" refresh');
+      expect(await readFile(join(dataDirOf(env.home), NODE_PATH_FILE), "utf8")).toBe(
+        renderNodePathSeed(process.execPath)
+      );
       expect(serviceEnvironment(service)).toBe(`SNORLAX_HOME=${dataDirOf(env.home)}`);
       const timer = await readFile(timerPath, "utf8");
       expect(timer).toBe(renderRefreshTimer());
@@ -1374,7 +1392,8 @@ describe("systemd user timer", () => {
       expect(runSystemd(env, ["install", "--json"], { snorlaxHome }).status).toBe(0);
       const service = await readFile(join(unitDirOf(env.home), "snorlax-refresh.service"), "utf8");
       expect(serviceEnvironment(service)).toBe(`SNORLAX_HOME=${snorlaxHome}`);
-      expect(serviceNodePath(service)).toBe(process.execPath);
+      expect(serviceLauncherPath(service)).toBe(launcherPath(snorlaxHome));
+      expect(existsSync(launcherPath(snorlaxHome))).toBe(true);
     });
   });
 
@@ -1411,7 +1430,9 @@ describe("systemd user timer", () => {
         } else {
           await writeFile(env.unitPath, "not a property\n", "utf8");
         }
-        const removed = runSystemd(env, ["uninstall", "--data", "--json"], { snorlaxHome: dataDir });
+        const removed = runSystemd(env, ["uninstall", "--data", "--json"], {
+          snorlaxHome: dataDir
+        });
         expect(removed.status).toBe(1);
         const failure = z.parse(failureSchema, json(removed.stdout));
         expect(failure.error.code).toBe("internal");
@@ -1553,7 +1574,7 @@ describe("systemd user timer", () => {
     });
   });
 
-  it("doctor reports a running timer, and a unit whose Node is gone, as an error that changes nothing else", async () => {
+  it("doctor reports a running timer, and a service whose launcher is gone, as an error that changes nothing else", async () => {
     await withSystemdHome(async (env) => {
       expect(runSystemd(env, ["install", "--json"]).status).toBe(0);
       const before = await readInvocations(env.record);
@@ -1561,14 +1582,12 @@ describe("systemd user timer", () => {
       const schedule = healthy.checks.find((check) => check.id === "schedule");
       expect(schedule?.status).toBe("ok");
       expect(schedule?.detail).toContain("systemd user timer is running");
+      // cli/ redacts every output, so the data directory is spelled relative to the home.
+      expect(schedule?.detail).toContain("~/data/refresh.sh");
       expect(healthy.healthy).toBe(true);
 
-      const servicePath = join(unitDirOf(env.home), "snorlax-refresh.service");
-      const missing = join(env.home, ".nvm", "versions", "node", "v22.13.0", "bin", "node");
-      await writeFile(
-        servicePath,
-        renderRefreshService({ nodePath: missing, cliPath: resolve(bundle), snorlaxHome: dataDirOf(env.home) })
-      );
+      // The data directory lost its launcher; the service still names it.
+      await rm(launcherPath(dataDirOf(env.home)));
       const doctor = runSystemd(env, ["doctor", "--json"]);
       expect(doctor.status).toBe(1);
       const payload = z.parse(doctorSchema, json(doctor.stdout));
@@ -1603,38 +1622,32 @@ describe("systemd user timer", () => {
 
 describe("LaunchAgent plist", () => {
   it("escapes XML metacharacters in paths", () => {
-    const xml = renderLaunchAgentPlist({
-      nodePath: "/usr/bin/node",
-      cliPath: "/opt/snorlax & co/snorlax.mjs",
-      dataDir: "/tmp/data<dir>",
-      snorlaxHome: "/tmp/a&b<c>"
-    });
+    const xml = renderLaunchAgentPlist({ dataDir: "/tmp/data<dir>", snorlaxHome: "/tmp/a&b<c>" });
     const parsed = z.safeParse(installedPlistSchema, parsePlistDocument(xml));
     expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
     if (!parsed.success) {
       return;
     }
-    expect(parsed.data.ProgramArguments[1]).toBe("/opt/snorlax & co/snorlax.mjs");
+    expect(parsed.data.ProgramArguments).toEqual([LAUNCHER_SHELL, "/tmp/data<dir>/refresh.sh"]);
     expect(parsed.data.StandardOutPath).toBe("/dev/null");
     expect(parsed.data.StandardErrorPath).toBe("/dev/null");
     expect(parsed.data.EnvironmentVariables.SNORLAX_HOME).toBe("/tmp/a&b<c>");
   });
 
   it("omits EnvironmentVariables when SNORLAX_HOME is unset", () => {
-    const xml = renderLaunchAgentPlist({
-      nodePath: "/usr/bin/node",
-      cliPath: "/opt/snorlax/snorlax.mjs",
-      dataDir: "/tmp/data"
-    });
+    const xml = renderLaunchAgentPlist({ dataDir: "/tmp/data" });
     const parsed = z.safeParse(plistWithoutHomeSchema, parsePlistDocument(xml));
     expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
   });
 
-  it("reads the Node path back from the plist it renders, and from no other layout", () => {
-    const nodePath = "/opt/node &amp; <co>/bin/node";
-    const xml = renderLaunchAgentPlist({ nodePath, cliPath: "/opt/snorlax/snorlax.mjs", dataDir: "/tmp/data" });
-    expect(launchAgentNodePath(xml)).toBe(nodePath);
-    expect(launchAgentNodePath(plist.build({ Program: "/usr/bin/node" }))).toBeUndefined();
+  it("reads the launcher path back from the plist it renders, and from no other layout", () => {
+    const xml = renderLaunchAgentPlist({ dataDir: "/tmp/data & <dir>" });
+    expect(launchAgentLauncherPath(xml)).toBe("/tmp/data & <dir>/refresh.sh");
+    expect(launchAgentLauncherPath(plist.build({ Program: "/usr/bin/node" }))).toBeUndefined();
+    // Pre-launcher installs name Node and the CLI, not a shell and launcher.
+    expect(
+      launchAgentLauncherPath(plist.build({ ProgramArguments: ["/removed/node", "/opt/snorlax.mjs", "refresh"] }))
+    ).toBeUndefined();
   });
 });
 

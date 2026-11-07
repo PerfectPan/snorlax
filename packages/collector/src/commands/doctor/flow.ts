@@ -1,14 +1,17 @@
+import { join } from "node:path";
+
 import type { Platform } from "@rivus/agent-kit/platform";
 import type { Doctor } from "@rivus/snorlax-protocol";
 import { Effect } from "effect";
 
 import { Backend } from "../../capabilities/backend/backend.ts";
-import { Scheduler } from "../../capabilities/scheduler/scheduler.ts";
+import { Scheduler, NODE_FALLBACKS, NODE_PATH_FILE } from "../../capabilities/scheduler/scheduler.ts";
 import { Secrets, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import { readConfig, type ConfigValue } from "../../modules/config/config.ts";
 import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readLedgerStatus } from "../../modules/ledger/ledger.ts";
+import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
 import { NodeFiles, SnorlaxPlatform, type NodeFileOps } from "../../modules/platform/platform.ts";
 import { RuntimeInfo } from "../../modules/version/version.ts";
 import {
@@ -20,6 +23,7 @@ import {
   scheduleCheck,
   type ConfigObservation,
   type DataDirObservation,
+  type LauncherState,
   type NodeBinary,
   type PairedBackendObservation
 } from "./checks.ts";
@@ -42,6 +46,54 @@ const nodeBinaryAt = (
     const mode = yield* Effect.promise(() => nodeFiles.mode(path));
     return found.kind === "file" && mode !== undefined && (mode & 0o111) !== 0 ? "runnable" : "not-executable";
   }).pipe(Effect.catchDefect((defect) => Effect.succeed({ unchecked: errorMessage(defect) })));
+
+/**
+ * The launcher script the job file names, as the flow found it: present as a regular file, or missing —
+ * nothing at the path, or something else in its place, both leave the job nothing to run. A stat that
+ * fails for another reason is `unchecked` rather than a defect that ends `doctor`.
+ */
+const launcherScriptAt = (platform: Pick<Platform, "fs">, path: string): Effect.Effect<LauncherState> =>
+  Effect.gen(function* () {
+    const found = yield* Effect.promise(() => platform.fs.stat(path, { followSymlinks: true }));
+    return found?.kind === "file" ? ("present" as const) : ("missing" as const);
+  }).pipe(Effect.catchDefect((defect) => Effect.succeed({ unchecked: errorMessage(defect) })));
+
+/**
+ * The launcher's Node resolution, observed: Node from `<data>/node-path` — the file Snorlax.app's
+ * discovery keeps current — else the first executable fallback (plan 0001 section 7). A candidate the
+ * flow cannot look at behaves like the launcher's `[ -x ]`: skipped, unless every candidate is like
+ * that, which leaves the run uncheckable rather than reported missing.
+ */
+const scheduledNodeAt = (
+  platform: Pick<Platform, "fs">,
+  nodeFiles: NodeFileOps,
+  dataDir: string
+): Effect.Effect<NodeBinary> =>
+  Effect.gen(function* () {
+    const text = yield* Effect.promise(async () => {
+      try {
+        return await readTextFile(platform, join(dataDir, NODE_PATH_FILE));
+      } catch {
+        return undefined;
+      }
+    });
+    const saved = (text?.split("\n")[0] ?? "").trim();
+    const outcomes: NodeBinary[] = [];
+    if (saved !== "") {
+      outcomes.push(yield* nodeBinaryAt(platform, nodeFiles, saved));
+    }
+    for (const candidate of NODE_FALLBACKS) {
+      outcomes.push(yield* nodeBinaryAt(platform, nodeFiles, candidate));
+    }
+    if (outcomes.includes("runnable")) {
+      return "runnable" as const;
+    }
+    // A candidate that is definitively missing or not executable decides the launcher's `[ -x ]` scan.
+    if (outcomes.some((outcome) => typeof outcome === "string")) {
+      return "missing" as const;
+    }
+    return outcomes.find((outcome) => typeof outcome !== "string") ?? ("missing" as const);
+  });
 
 type ConfigRead = { readonly ok: true; readonly value: ConfigValue } | { readonly ok: false; readonly message: string };
 
@@ -135,8 +187,9 @@ export const doctorFlow = Effect.gen(function* () {
   );
   const config: ConfigObservation = configRead.ok ? { ok: true } : { ok: false, message: configRead.message };
   const job = yield* (yield* Scheduler).inspect;
-  const nodePath = job.kind === "inspected" ? job.cliJob?.nodePath : undefined;
-  const node = nodePath === undefined ? undefined : yield* nodeBinaryAt(platform, nodeFiles, nodePath);
+  const launcherName = job.kind === "inspected" ? job.cliJob?.launcher : undefined;
+  const launcher = launcherName === undefined ? undefined : yield* launcherScriptAt(platform, launcherName);
+  const node = launcher === undefined ? undefined : yield* scheduledNodeAt(platform, nodeFiles, path);
   const sync = !configRead.ok
     ? []
     : configRead.value.backendUrl === undefined
@@ -149,7 +202,7 @@ export const doctorFlow = Effect.gen(function* () {
     nodeVersionCheck(info.nodeVersion),
     dataDirCheck(observed),
     configCheck(config),
-    scheduleCheck({ job, node }),
+    scheduleCheck({ job, dataDir: path, launcher, node }),
     ...sync
   ]);
   return { schemaVersion: 1, ok: true, healthy: payload.healthy, checks: payload.checks } satisfies Doctor;

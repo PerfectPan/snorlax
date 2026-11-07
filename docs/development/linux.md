@@ -42,7 +42,17 @@ snorlax install
 1. Refuses to continue when the data directory is not an absolute path, or when `snorlax-refresh.timer` is already
    loaded from a unit file this command did not write.
 2. Creates the data directory if it is missing.
-3. Writes two user units, mode `0644`, in the systemd user manager's configuration directory:
+3. Writes two files into the data directory, mode `0644`:
+   - `<data-directory>/node-path` — the absolute path of the Node that ran this install. It is a working
+     Node by definition, so the scheduled job has a candidate even where no system Node exists (a version
+     manager's directory). Snorlax.app's discovery rewrites the same file on macOS; the launcher only reads it.
+   - `<data-directory>/refresh.sh` — the POSIX shell launcher the service runs. It resolves Node at run
+     time: the first line of `node-path` when that file names an executable, else the first executable of
+     `/opt/homebrew/bin/node`, `/usr/local/bin/node`, `/usr/bin/node` — never a `PATH` search, which the
+     user manager's minimal environment cannot answer. Removing the Node a version manager or a Homebrew
+     upgrade installed therefore does not stop the timer, as long as any of those candidates survives.
+     When none does, the script exits 127 naming every location it checked.
+4. Writes two user units, mode `0644`, in the systemd user manager's configuration directory:
    - `<manager-config>/systemd/user/snorlax-refresh.service`
    - `<manager-config>/systemd/user/snorlax-refresh.timer`
 
@@ -51,24 +61,24 @@ snorlax install
    (`…/share/systemd/user`), `user.control`, generator and transient directories, and any path outside the home are
    not used. There is no fallback to `~/.config` or to the shell's `XDG_CONFIG_HOME`. If that entry is missing, or
    the query fails or does not parse, install writes nothing.
-4. The service is `Type=oneshot`, because `refresh` exits. `ExecStart` is three arguments: the absolute path of the
-   Node that ran `snorlax install`, the absolute path the CLI was started from (`snorlax.mjs`, or the link to it),
-   and `refresh`. systemd does not expand `$` in the program (the Node path) and does not collapse `$$` there, so
-   that word leaves `$` as written. The second argument doubles `$`, because later arguments expand `$VAR` and
-   `${VAR}`. The service always sets `Environment=SNORLAX_HOME` to the absolute data directory this install resolved,
-   so the timer and that CLI use the same directory whether it came from `SNORLAX_HOME`, `XDG_DATA_HOME`, or the
-   default. Standard output and standard error are discarded. The refresh summary is appended to
-   `<data-directory>/logs/snorlax.log`.
-5. The timer waits `OnBootSec=1min` after the machine boots. `OnStartupSec` would measure from the user manager's
+5. The service is `Type=oneshot`, because `refresh` exits. `ExecStart` is two arguments: `/bin/sh` and the
+   absolute launcher path. systemd does not expand `$` in the program (`/bin/sh`) and does not collapse `$$`
+   there, so that word leaves `$` as written. The second argument doubles `$`, because later arguments
+   expand `$VAR` and `${VAR}`. The service always sets `Environment=SNORLAX_HOME` to the absolute data
+   directory this install resolved, so the timer and that CLI use the same directory whether it came from
+   `SNORLAX_HOME`, `XDG_DATA_HOME`, or the default. Standard output and standard error are discarded. The
+   refresh summary is appended to `<data-directory>/logs/snorlax.log`.
+6. The timer waits `OnBootSec=1min` after the machine boots. `OnStartupSec` would measure from the user manager's
    start; this timer uses `OnBootSec`. It then runs every `OnUnitActiveSec=5min`. The `[Install]` section is
    `WantedBy=timers.target`, which is what `systemctl enable` installs.
-6. Runs `systemctl --user daemon-reload`, then `systemctl --user enable --now snorlax-refresh.timer`.
+7. Runs `systemctl --user daemon-reload`, then `systemctl --user enable --now snorlax-refresh.timer`.
 
 `AccuracySec` and `Persistent` are left at systemd's defaults. The default accuracy is one minute, so a run can
 start up to a minute after it was due. `Persistent` defaults to false, so a timer that elapses while the user
 manager is stopped does not run a catch-up when the manager starts again.
 
-Repeating `snorlax install` rewrites both units, reloads, and enables the timer again. If enable fails, snorlax
+Repeating `snorlax install` rewrites `node-path` and the launcher, then both units, reloads, and enables the
+timer again. If enable fails, snorlax
 disables the timer when this install is the unit systemd loaded. When that check cannot run, it still runs
 `disable --now`: ownership was confirmed before the units were written, and a stuck manager will likely time the
 check out too. It then deletes the units just written and reloads. `enable --now` enables and then starts, so a
@@ -91,10 +101,11 @@ The data directory is `SNORLAX_HOME` when that variable is set and non-empty, an
 `snorlax status` prints the local snapshot. `snorlax doctor` checks the Node version, the data directory,
 `config.json`, and the timer. It changes nothing.
 
-A timer that is enabled and active, whose unit names a Node that exists and is executable, is reported as the
-systemd user timer running. A missing, non-executable, or uncheckable Node is an error, and only an error makes
-`doctor` unhealthy. The command exits 0 healthy and 1 unhealthy, with the same payload either way. No timer at
-all is a warning: until `snorlax install`, the snapshot changes only when something runs `refresh`.
+A timer that is enabled and active, whose launcher script exists and whose Node resolution — `node-path`, then
+the fixed fallbacks — finds an executable Node, is reported as the systemd user timer running. A missing
+launcher script, or no Node anywhere the launcher looks, is an error, and only an error makes `doctor`
+unhealthy. The command exits 0 healthy and 1 unhealthy, with the same payload either way. No timer at all is
+a warning: until `snorlax install`, the snapshot changes only when something runs `refresh`.
 
 ## Uninstall
 

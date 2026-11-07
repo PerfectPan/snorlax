@@ -11,8 +11,14 @@ struct PopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let nodeHint = model.nodeHint {
-                Text(nodeHint)
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(nodeHint)
+                        .font(.headline)
+                    Button(model.discoveringNode ? "Checking…" : "Try again") {
+                        model.retryNodeDiscovery()
+                    }
+                    .disabled(model.discoveringNode)
+                }
             }
             if let loadError = model.loadError {
                 Text(loadError)
@@ -32,8 +38,16 @@ struct PopoverView: View {
             }
             Divider()
             HStack {
-                Button(model.refreshing ? "Refreshing…" : "Refresh now") {
+                Button {
                     model.refreshNow()
+                } label: {
+                    HStack(spacing: 6) {
+                        if model.refreshing {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(model.refreshing ? "Refreshing…" : "Refresh now")
+                    }
                 }
                 .disabled(model.refreshing)
                 Button("Settings") {
