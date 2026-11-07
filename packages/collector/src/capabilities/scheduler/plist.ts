@@ -80,7 +80,7 @@ export function renderLaunchAgentPlist(spec: LaunchAgentSpec): string {
   return lines.join("\n");
 }
 
-const PROGRAM_LAUNCHER = /<key>ProgramArguments<\/key>\s*<array>\s*<string>[^<]*<\/string>\s*<string>([^<]*)<\/string>/;
+const PROGRAM_LAUNCHER = /<key>ProgramArguments<\/key>\s*<array>\s*<string>\/bin\/sh<\/string>\s*<string>([^<]*)<\/string>/;
 
 /**
  * The launcher script — the second `ProgramArguments` entry, after `/bin/sh` — of a plist in the layout
