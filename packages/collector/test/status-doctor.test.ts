@@ -191,13 +191,23 @@ describe("doctor", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("still exits 0 when a check fails; healthy reports false", async () => {
+  it("exits 1 when a check fails; healthy reports false", async () => {
     const { exitCode, stdout } = await runCommand(["doctor", "--json"], withConfig(), { nodeVersion: "v22.12.9" });
     const doctor = z.parse(doctorSchema, JSON.parse(stdout));
     expect(doctor.healthy).toBe(false);
     expect(doctor.checks.find((check) => check.id === "node-version")?.status).toBe("error");
     expect(doctor.checks.find((check) => check.id === "data-dir")?.status).toBe("ok");
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
+  });
+
+  it("ends the human output with a verdict line on healthy's own terms", async () => {
+    // The unscheduled refresh is a warning, and a warning is not a problem.
+    const healthy = await runCommand(["doctor"], withConfig());
+    expect(healthy.stdout).toContain("schedule: warn —");
+    expect(healthy.stdout).toMatch(/doctor: healthy\n$/);
+
+    const oneError = await runCommand(["doctor"], withConfig(), { nodeVersion: "v22.12.9" });
+    expect(oneError.stdout).toMatch(/doctor: 1 problem found \(1 error, 1 warning\)\n$/);
   });
 
   it("reports a missing data directory as a failed check and creates nothing", async () => {
@@ -240,7 +250,9 @@ describe("doctor", () => {
     };
 
     // The launcher script is gone: the job has nothing to start.
-    const gone = scheduleOf((await runCommand(["doctor", "--json"], withConfig(), { inspection })).stdout);
+    const missingLauncher = await runCommand(["doctor", "--json"], withConfig(), { inspection });
+    expect(missingLauncher.exitCode).toBe(1);
+    const gone = scheduleOf(missingLauncher.stdout);
     expect(gone.check?.status).toBe("error");
     expect(gone.check?.detail).toContain("~/Library/LaunchAgents/job.sh, which does not exist");
     expect(gone.healthy).toBe(false);
@@ -253,11 +265,13 @@ describe("doctor", () => {
       [`${DATA_DIR}/node-path`]: "/opt/node-stub/bin/node",
       ["/opt/node-stub/bin/node"]: "#!/bin/sh"
     };
-    const runnable = scheduleOf((await runCommand(["doctor", "--json"], present, { inspection })).stdout);
+    const runnableLauncher = await runCommand(["doctor", "--json"], present, { inspection });
+    expect(runnableLauncher.exitCode).toBe(0);
+    const runnable = scheduleOf(runnableLauncher.stdout);
     expect(runnable).toEqual({ healthy: true, check: expect.objectContaining({ status: "ok" }) });
   });
 
-  it("fails only the schedule check, and still exits 0, when the launcher script cannot be checked", async () => {
+  it("exits 1 with the payload intact when the launcher script cannot be checked", async () => {
     // A real directory this user cannot search: there the kit's stat throws EACCES instead of reporting nothing.
     const home = await mkdtemp(join(tmpdir(), "snorlax-doctor-"));
     const locked = join(home, "locked");
@@ -279,7 +293,7 @@ describe("doctor", () => {
           }
         }
       );
-      expect(exitCode).toBe(0);
+      expect(exitCode).toBe(1);
       const doctor = z.parse(doctorSchema, JSON.parse(stdout));
       expect(doctor.checks.map((check) => [check.id, check.status])).toEqual([
         ["node-version", "ok"],

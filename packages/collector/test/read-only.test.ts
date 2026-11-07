@@ -102,7 +102,7 @@ describe("read-only commands create nothing (plan 3.13)", () => {
     const check = parsed.checks.find((entry) => entry.id === "data-dir");
     expect(check?.status).toBe("error");
     expect(parsed.healthy).toBe(false);
-    expect(outcome.exitCode).toBe(0);
+    expect(outcome.exitCode).toBe(1);
     expect(await fingerprint()).toBe(before);
   });
 
@@ -135,8 +135,9 @@ describe("read-only commands create nothing (plan 3.13)", () => {
     await mkdir(dataDir, { recursive: true });
     await chmod(dataDir, 0o755);
     const outcome = await runCommand(["doctor"]);
-    expect(outcome.exitCode).toBe(0);
+    expect(outcome.exitCode).toBe(1);
     expect(outcome.stdout).toContain("data-dir: error");
+    expect(outcome.stdout).toMatch(/doctor: 1 problem found \(1 error, 1 warning\)\n$/);
     expect(outcome.stdout).not.toContain(home);
     expect(outcome.stderr).not.toContain(home);
   });

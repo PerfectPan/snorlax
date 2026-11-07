@@ -871,7 +871,7 @@ describe("install and uninstall", () => {
       const before = await hashTree(env.home);
 
       const doctor = run(env, ["doctor", "--json"]);
-      expect(doctor.status).toBe(0);
+      expect(doctor.status).toBe(1);
       const payload = z.parse(doctorSchema, json(doctor.stdout));
       expect(payload.healthy).toBe(false);
       expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
@@ -1589,7 +1589,7 @@ describe("systemd user timer", () => {
       // The data directory lost its launcher; the service still names it.
       await rm(launcherPath(dataDirOf(env.home)));
       const doctor = runSystemd(env, ["doctor", "--json"]);
-      expect(doctor.status).toBe(0);
+      expect(doctor.status).toBe(1);
       const payload = z.parse(doctorSchema, json(doctor.stdout));
       expect(payload.healthy).toBe(false);
       expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);

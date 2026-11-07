@@ -39,6 +39,11 @@ export interface CommandRender {
   /** The parsed `--json` value: `cli/run` prints `payload` when true, `human` when false. */
   readonly json: boolean;
   /**
+   * The exit code the run reports, default 0. `doctor` exits 1 unhealthy (R13) while still printing
+   * its payload or verdict — a completed diagnostics run is not a failure shape.
+   */
+  readonly exitCode?: number;
+  /**
    * The command deleted what snorlax wrote in the data directory (`uninstall --data`), so the run writes nothing
    * back into it, not even the command log line.
    */

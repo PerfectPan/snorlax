@@ -104,8 +104,8 @@ The data directory is `SNORLAX_HOME` when that variable is set and non-empty, an
 A timer that is enabled and active, whose launcher script exists and whose Node resolution — `node-path`, then
 the fixed fallbacks — finds an executable Node, is reported as the systemd user timer running. A missing
 launcher script, or no Node anywhere the launcher looks, is an error, and only an error makes `doctor`
-unhealthy. No timer at all is a warning: until `snorlax install`, the snapshot changes only when something
-runs `refresh`.
+unhealthy. The command exits 0 healthy and 1 unhealthy, with the same payload either way. No timer at all is
+a warning: until `snorlax install`, the snapshot changes only when something runs `refresh`.
 
 ## Uninstall
 

@@ -97,7 +97,7 @@ const scheduledNodeAt = (
 
 type ConfigRead = { readonly ok: true; readonly value: ConfigValue } | { readonly ok: false; readonly message: string };
 
-/** A failed read becomes an observation. `doctor` reports it and still exits 0. */
+/** A failed read becomes an observation. `doctor` reports it and does not fail the run. */
 const caught = <A, E extends { readonly message: string }>(effect: Effect.Effect<A, E>) =>
   effect.pipe(
     Effect.map((value) => ({ ok: true as const, value })),
@@ -162,7 +162,7 @@ const pairedObservation = (
  * Diagnostics (plan 3.1, 3.13 rule 8). The flow only observes: it creates nothing and repairs nothing.
  * An invalid config stays a config error and does not add a "not paired" check, because the URL could not
  * be read. A readable config with no `backendUrl` adds one ok `sync` check. A paired config adds the
- * keychain, health, and devices checks. The command exits 0 whenever it completes; `healthy` is false when
+ * keychain, health, and devices checks. The command exits 0 healthy and 1 unhealthy; `healthy` is false when
  * any check is an error. A failing `stat` or mode read of the data directory is a defect.
  */
 export const doctorFlow = Effect.gen(function* () {
