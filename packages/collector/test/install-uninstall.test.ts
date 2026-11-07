@@ -15,7 +15,7 @@ import {
   okSchema,
   pairResultSchema,
   refreshResultSchema,
-  uninstallResultSchema
+  uninstallResultSchema,
 } from "@rivus/snorlax-protocol";
 import { createApp } from "@rivus/snorlax-worker";
 import { createSqliteD1 } from "@rivus/snorlax-worker/sqlite-d1";
@@ -29,11 +29,21 @@ import {
   launcherPath,
   NODE_PATH_FILE,
   renderNodePathSeed,
-  renderRefreshLauncher
+  renderRefreshLauncher,
 } from "../src/capabilities/scheduler/launcher.ts";
-import { launchAgentLauncherPath, renderLaunchAgentPlist } from "../src/capabilities/scheduler/plist.ts";
-import { renderRefreshTimer, serviceEnvironment, serviceLauncherPath } from "../src/capabilities/scheduler/units.ts";
-import { DataDirNotDeletable, resolvedDeletableDataDir } from "../src/commands/uninstall/delete-data.ts";
+import {
+  launchAgentLauncherPath,
+  renderLaunchAgentPlist,
+} from "../src/capabilities/scheduler/plist.ts";
+import {
+  renderRefreshTimer,
+  serviceEnvironment,
+  serviceLauncherPath,
+} from "../src/capabilities/scheduler/units.ts";
+import {
+  DataDirNotDeletable,
+  resolvedDeletableDataDir,
+} from "../src/commands/uninstall/delete-data.ts";
 import { resolveDataDir } from "../src/modules/data-dir/data-dir.ts";
 import { quietMtime, writeClaudeSession, writeCodexRollout } from "./fixtures/agents.ts";
 import { bundle, runBundle, runBundleAsync, spawnBundle } from "./fixtures/bundle.ts";
@@ -64,19 +74,20 @@ const plistFields = {
   RunAtLoad: z.literal(true),
   // launchd's redirect files are never written: the collector logs to the rotating snorlax.log.
   StandardOutPath: z.literal("/dev/null"),
-  StandardErrorPath: z.literal("/dev/null")
+  StandardErrorPath: z.literal("/dev/null"),
 };
 
 const installedPlistSchema = z.strictObject({
   ...plistFields,
-  EnvironmentVariables: z.strictObject({ SNORLAX_HOME: z.string() })
+  EnvironmentVariables: z.strictObject({ SNORLAX_HOME: z.string() }),
 });
 
 const plistWithoutHomeSchema = z.strictObject(plistFields);
 const invocationSchema = z.array(z.string());
 
 const dataDirOf = (home: string): string => join(home, "data");
-const plistPathOf = (home: string): string => join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
+const plistPathOf = (home: string): string =>
+  join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
 
 const uid = (): number => {
   const id = process.getuid?.();
@@ -121,7 +132,7 @@ const run = (
     readonly security?: string;
     readonly secretTool?: string;
     readonly extraEnv?: Readonly<Record<string, string>>;
-  }
+  },
 ) =>
   runBundle(args, {
     home: env.home,
@@ -131,11 +142,15 @@ const run = (
     input: overrides?.input,
     security: overrides?.security,
     secretTool: overrides?.secretTool,
-    extraEnv: overrides?.extraEnv
+    extraEnv: overrides?.extraEnv,
   });
 
 /** Same as `run`, without blocking the event loop, so an in-process backend can answer `pair` and `refresh`. */
-const runAsync = (env: InstallEnv, args: readonly string[], overrides?: Parameters<typeof run>[2]) =>
+const runAsync = (
+  env: InstallEnv,
+  args: readonly string[],
+  overrides?: Parameters<typeof run>[2],
+) =>
   runBundleAsync(args, {
     home: env.home,
     dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
@@ -144,7 +159,7 @@ const runAsync = (env: InstallEnv, args: readonly string[], overrides?: Paramete
     input: overrides?.input,
     security: overrides?.security,
     secretTool: overrides?.secretTool,
-    extraEnv: overrides?.extraEnv
+    extraEnv: overrides?.extraEnv,
   });
 
 const writeStub = async (dir: string): Promise<string> => {
@@ -199,14 +214,17 @@ const writeStub = async (dir: string): Promise<string> => {
     `  process.exit(0);`,
     `}`,
     `process.exit(2);`,
-    ``
+    ``,
   ].join("\n");
   await writeFile(script, source, "utf8");
   await chmod(script, 0o755);
   return script;
 };
 
-const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) => Promise<void>): Promise<void> => {
+const withInstallHome = async (
+  os: "darwin" | "linux",
+  body: (env: InstallEnv) => Promise<void>,
+): Promise<void> => {
   const home = await mkdtemp(join(tmpdir(), "snorlax-install-"));
   const stubDir = await mkdtemp(join(tmpdir(), "snorlax-launchctl-"));
   try {
@@ -223,7 +241,7 @@ const withInstallHome = async (os: "darwin" | "linux", body: (env: InstallEnv) =
       releaseBootstrap: join(stubDir, "release-bootstrap"),
       outlivesStop: join(stubDir, "outlives-stop"),
       bootstrapStopped: join(stubDir, "bootstrap-stopped"),
-      bootstrapPid: join(stubDir, "bootstrap-pid")
+      bootstrapPid: join(stubDir, "bootstrap-pid"),
     });
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -249,7 +267,10 @@ const readInvocations = async (record: string): Promise<string[][]> => {
 const parsePlistDocument = (xml: string): unknown => plist.parse(xml);
 
 const decodePlist = async (path: string): Promise<z.output<typeof installedPlistSchema>> => {
-  const parsed = z.safeParse(installedPlistSchema, parsePlistDocument(await readFile(path, "utf8")));
+  const parsed = z.safeParse(
+    installedPlistSchema,
+    parsePlistDocument(await readFile(path, "utf8")),
+  );
   expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
   if (!parsed.success) {
     throw new Error("plist did not match the LaunchAgent schema");
@@ -272,15 +293,17 @@ const writeUsageFixtures = async (home: string): Promise<void> => {
         requestId: "s14-req-1",
         model: "claude-haiku-4-5",
         timestampMs,
-        usage: { inputTokens: 100, outputTokens: 20 }
-      }
-    ]
+        usage: { inputTokens: 100, outputTokens: 20 },
+      },
+    ],
   });
   await writeCodexRollout(home, {
     sessionId: "s14-codex",
     model: "gpt-6.2",
     mtimeMs,
-    requests: [{ responseId: "s14-resp-1", timestampMs, usage: { inputTokens: 50, outputTokens: 10 } }]
+    requests: [
+      { responseId: "s14-resp-1", timestampMs, usage: { inputTokens: 50, outputTokens: 10 } },
+    ],
   });
 };
 
@@ -320,7 +343,14 @@ const hashTree = async (root: string): Promise<string> => {
 };
 
 /** Every agent home the collector knows (plan 3.5); the S14 hash covers them all. */
-const AGENT_DIRS = [".claude", ".codex", ".gemini", ".grok", ".local/share/opencode", ".pi"] as const;
+const AGENT_DIRS = [
+  ".claude",
+  ".codex",
+  ".gemini",
+  ".grok",
+  ".local/share/opencode",
+  ".pi",
+] as const;
 
 const ensureAgentDirs = async (home: string): Promise<void> => {
   for (const name of AGENT_DIRS) {
@@ -376,7 +406,9 @@ describe("install and uninstall", () => {
       const script = await readFile(launcherPath(dataDir), "utf8");
       expect(script).toContain(resolve(bundle));
       expect(script).toContain('exec "$node" "$cli" refresh');
-      expect(await readFile(join(dataDir, NODE_PATH_FILE), "utf8")).toBe(renderNodePathSeed(process.execPath));
+      expect(await readFile(join(dataDir, NODE_PATH_FILE), "utf8")).toBe(
+        renderNodePathSeed(process.execPath),
+      );
 
       const again = run(env, ["install"]);
       expect(again.status).toBe(0);
@@ -386,7 +418,7 @@ describe("install and uninstall", () => {
         `LaunchAgent installed at ${relative(env.home, plistPath)
           .split(sep)
           .join("/")
-          .replace(/^Library/, "~/Library")}\n`
+          .replace(/^Library/, "~/Library")}\n`,
       );
       await decodePlist(plistPath);
 
@@ -395,7 +427,7 @@ describe("install and uninstall", () => {
         ["bootstrap", domain, plistPath],
         ["print", `${domain}/${LABEL}`],
         ["bootout", `${domain}/${LABEL}`],
-        ["bootstrap", domain, plistPath]
+        ["bootstrap", domain, plistPath],
       ]);
     });
   });
@@ -425,7 +457,7 @@ describe("install and uninstall", () => {
       expect(existsSync(plistPath)).toBe(false);
       expect(await readInvocations(env.record)).toEqual([
         ["print", `${domain}/${LABEL}`],
-        ["bootstrap", domain, plistPath]
+        ["bootstrap", domain, plistPath],
       ]);
     });
   });
@@ -452,7 +484,7 @@ describe("install and uninstall", () => {
         ["bootstrap", domain, plistPath],
         ["print", `${domain}/${LABEL}`],
         ["bootout", `${domain}/${LABEL}`],
-        ["print", `${domain}/${LABEL}`]
+        ["print", `${domain}/${LABEL}`],
       ]);
     });
   });
@@ -501,15 +533,21 @@ describe("install and uninstall", () => {
           "} else {",
           "  process.exit(2);",
           "}",
-          ""
+          "",
         ].join("\n"),
-        "utf8"
+        "utf8",
       );
       await chmod(stub, 0o755);
 
-      const runInterrupted = (signal: NodeJS.Signals): Promise<{ readonly name: string; readonly stdout: string }> =>
+      const runInterrupted = (
+        signal: NodeJS.Signals,
+      ): Promise<{ readonly name: string; readonly stdout: string }> =>
         new Promise((resolve) => {
-          const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: stub, os: "darwin" });
+          const child = spawnBundle(["install", "--json"], {
+            home: env.home,
+            launchctl: stub,
+            os: "darwin",
+          });
           let stdout = "";
           child.stdout.on("data", (chunk: Buffer) => {
             stdout += String(chunk);
@@ -537,12 +575,19 @@ describe("install and uninstall", () => {
      * Runs `install` until the stub's held bootstrap announces itself, signals snorlax with SIGTERM, then lets
      * `afterSignal` finish the stub. Every step waits on a FIFO or a process event, never on time.
      */
-    const installSignaledInBootstrap = async (env: InstallEnv, afterSignal: () => Promise<void>) => {
+    const installSignaledInBootstrap = async (
+      env: InstallEnv,
+      afterSignal: () => Promise<void>,
+    ) => {
       for (const fifo of [env.bootstrapEntered, env.releaseBootstrap, env.bootstrapStopped]) {
         execFileSync("/usr/bin/mkfifo", [fifo]);
       }
       const entered = readFile(env.bootstrapEntered, "utf8");
-      const child = spawnBundle(["install", "--json"], { home: env.home, launchctl: env.launchctl, os: "darwin" });
+      const child = spawnBundle(["install", "--json"], {
+        home: env.home,
+        launchctl: env.launchctl,
+        os: "darwin",
+      });
       let stdout = "";
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += String(chunk);
@@ -582,7 +627,7 @@ describe("install and uninstall", () => {
           ["print", target],
           ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
           ["print", target],
-          ["bootout", target]
+          ["bootout", target],
         ]);
         expect(existsSync(env.loaded)).toBe(false);
         expect(existsSync(plistPathOf(env.home))).toBe(false);
@@ -599,7 +644,7 @@ describe("install and uninstall", () => {
         expect(await readInvocations(env.record)).toEqual([
           ["print", target],
           ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
-          ["print", target]
+          ["print", target],
         ]);
         expect(existsSync(env.loaded)).toBe(false);
         expect(existsSync(plistPathOf(env.home))).toBe(false);
@@ -629,7 +674,7 @@ describe("install and uninstall", () => {
       expect(existsSync(dataDirOf(env.home))).toBe(false);
       expect(await readInvocations(env.record)).toEqual([
         ["print", `gui/${uid()}/${LABEL}`],
-        ["print", `gui/${uid()}/${LABEL}`]
+        ["print", `gui/${uid()}/${LABEL}`],
       ]);
     });
   });
@@ -665,7 +710,7 @@ describe("install and uninstall", () => {
       expect(await readInvocations(env.record)).toEqual([
         ["print", target],
         ["bootout", target],
-        ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)]
+        ["bootstrap", `gui/${uid()}`, plistPathOf(env.home)],
       ]);
 
       // The reverse must not grant ownership: a nested CLI path under an app-owned service stays refused.
@@ -686,7 +731,7 @@ describe("install and uninstall", () => {
       expect(removed.stdout).toBe('{"schemaVersion":1,"ok":true}\n');
       expect(await readInvocations(env.record)).toEqual([
         ["print", target],
-        ["bootout", target]
+        ["bootout", target],
       ]);
     });
   });
@@ -719,7 +764,7 @@ describe("install and uninstall", () => {
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
           "the data directory ~/data is kept; entries snorlax did not write remain: logs/keep.txt\n" +
-          missingStoreNotice
+          missingStoreNotice,
       );
     });
   });
@@ -729,10 +774,14 @@ describe("install and uninstall", () => {
       const reports = join(env.home, "Library", "Logs", "DiagnosticReports");
       await mkdir(reports, { recursive: true });
       await writeFile(join(reports, "x.ips"), "crash report\n");
-      expect(run(env, ["refresh", "--json"], { snorlaxHome: join(env.home, "Library") }).status).toBe(0);
+      expect(
+        run(env, ["refresh", "--json"], { snorlaxHome: join(env.home, "Library") }).status,
+      ).toBe(0);
 
       // `logs` matches the user's `Logs` on a case-insensitive volume; only known log files may go.
-      const removed = run(env, ["uninstall", "--data", "--json"], { snorlaxHome: join(env.home, "Library") });
+      const removed = run(env, ["uninstall", "--data", "--json"], {
+        snorlaxHome: join(env.home, "Library"),
+      });
       expect(removed.status).toBe(0);
       expect(existsSync(join(reports, "x.ips"))).toBe(true);
       expect(existsSync(join(env.home, "Library"))).toBe(true);
@@ -752,7 +801,7 @@ describe("install and uninstall", () => {
       expect(existsSync(plistPath)).toBe(true);
       expect(await readInvocations(env.record)).toEqual([
         ["print", `${domain}/${LABEL}`],
-        ["bootstrap", domain, plistPath]
+        ["bootstrap", domain, plistPath],
       ]);
     });
   });
@@ -782,7 +831,7 @@ describe("install and uninstall", () => {
       };
       await expectRefused(
         `no snorlax ledger in ~/other: it has no ledger.db, ${untouched}; to remove only the scheduled refresh, ` +
-          "run `snorlax uninstall` without --data"
+          "run `snorlax uninstall` without --data",
       );
 
       // Another program's ledger.db in WAL mode: opening it, even read-only, would add -wal and -shm files.
@@ -790,7 +839,7 @@ describe("install and uninstall", () => {
       wal.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (amount INTEGER)");
       wal.close();
       await expectRefused(
-        `~/other/ledger.db is not a snorlax ledger: it is not a SQLite database in rollback-journal mode, ${untouched}`
+        `~/other/ledger.db is not a snorlax ledger: it is not a SQLite database in rollback-journal mode, ${untouched}`,
       );
 
       // No `snorlax refresh` advice here: a refresh would migrate this database into a ledger.
@@ -798,13 +847,15 @@ describe("install and uninstall", () => {
       const rollback = new DatabaseSync(join(other, "ledger.db"));
       rollback.exec("CREATE TABLE entries (amount INTEGER)");
       rollback.close();
-      await expectRefused(`~/other/ledger.db is not a snorlax ledger: it has no meta table, ${untouched}`);
+      await expectRefused(
+        `~/other/ledger.db is not a snorlax ledger: it has no meta table, ${untouched}`,
+      );
 
       // The refusals came before launchctl was asked anything: the installed service is untouched.
       expect(existsSync(plistPath)).toBe(true);
       expect(await readInvocations(env.record)).toEqual([
         ["print", `${domain}/${LABEL}`],
-        ["bootstrap", domain, plistPath]
+        ["bootstrap", domain, plistPath],
       ]);
     });
   });
@@ -821,7 +872,7 @@ describe("install and uninstall", () => {
         `const { DatabaseSync } = require("node:sqlite");
          const db = new DatabaseSync(${JSON.stringify(join(dataDir, "ledger.db"))});
          db.exec("PRAGMA synchronous = OFF; BEGIN IMMEDIATE; UPDATE meta SET device_name = 'crashed' WHERE id = 0");
-         process.kill(process.pid, "SIGKILL");`
+         process.kill(process.pid, "SIGKILL");`,
       ]);
       expect(crash.signal).toBe("SIGKILL");
       expect(existsSync(join(dataDir, "ledger.db-journal"))).toBe(true);
@@ -835,7 +886,7 @@ describe("install and uninstall", () => {
       expect(failure.message).toBe(
         "cannot tell whether ~/data/ledger.db is a snorlax ledger (cannot read the ledger ~/data/ledger.db: attempt " +
           "to write a readonly database), so nothing was deleted and the scheduled refresh job was left in place; run " +
-          "`snorlax refresh` once, then `snorlax uninstall --data` again"
+          "`snorlax refresh` once, then `snorlax uninstall --data` again",
       );
       expect(await readInvocations(env.record)).toEqual([]);
 
@@ -864,17 +915,24 @@ describe("install and uninstall", () => {
       expect(doctor.status).toBe(0);
       const payload = z.parse(doctorSchema, json(doctor.stdout));
       expect(payload.healthy).toBe(false);
-      expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
+      expect(
+        payload.checks.filter((check) => check.status === "error").map((check) => check.id),
+      ).toEqual(["schedule"]);
       const schedule = payload.checks.find((check) => check.id === "schedule");
       // cli/ redacts every output, so the data directory is spelled relative to the home.
-      expect(schedule?.detail).toContain("runs the launcher script ~/data/refresh.sh, which does not exist");
+      expect(schedule?.detail).toContain(
+        "runs the launcher script ~/data/refresh.sh, which does not exist",
+      );
       expect(schedule?.detail).toContain("`snorlax install`");
       expect(await hashTree(env.home)).toBe(before);
       expect(await readInvocations(env.record)).toEqual([["print", `gui/${uid()}/${LABEL}`]]);
 
       // The launcher back, seeded with this Node, reads as healthy even where no fallback Node exists.
       await writeFile(join(dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath));
-      await writeFile(launcherPath(dataDir), renderRefreshLauncher({ dataDir, cliPath: resolve(bundle) }));
+      await writeFile(
+        launcherPath(dataDir),
+        renderRefreshLauncher({ dataDir, cliPath: resolve(bundle) }),
+      );
       const healthy = z.parse(doctorSchema, json(run(env, ["doctor", "--json"]).stdout));
       expect(healthy.checks.find((check) => check.id === "schedule")?.status).toBe("ok");
       expect(healthy.healthy).toBe(true);
@@ -919,7 +977,7 @@ describe("install and uninstall", () => {
       const files = await listFiles(env.home);
       expect(files).toEqual([
         ".claude/projects/fixture-project/session.jsonl",
-        ".codex/sessions/fixture-session.jsonl"
+        ".codex/sessions/fixture-session.jsonl",
       ]);
       expect(files.some((file) => file.includes("snorlax"))).toBe(false);
 
@@ -949,7 +1007,7 @@ describe("install and uninstall", () => {
       expect(removed.stdout).toBe(
         "LaunchAgent removed\n" +
           "the data directory ~/data is kept; entries snorlax did not write remain: Documents, photo.jpg\n" +
-          missingStoreNotice
+          missingStoreNotice,
       );
       expect(existsSync(join(dataDir, "Documents", "thesis.txt"))).toBe(true);
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
@@ -972,7 +1030,7 @@ describe("install and uninstall", () => {
       expect(z.parse(uninstallResultSchema, json(removed.stdout))).toEqual({
         schemaVersion: 1,
         ok: true,
-        keptEntries: ["logs/keep.txt", "photo.jpg"]
+        keptEntries: ["logs/keep.txt", "photo.jpg"],
       });
       expect(await listFiles(dataDir)).toEqual(["logs/keep.txt", "photo.jpg"]);
     });
@@ -1028,17 +1086,20 @@ describe("install and uninstall", () => {
     const adminToken = "s14-admin-token-not-a-device-token";
     const migration = readFileSync(
       fileURLToPath(new URL("../../worker/migrations/0001_init.sql", import.meta.url)),
-      "utf8"
+      "utf8",
     );
     const database = new DatabaseSync(":memory:");
     database.exec(migration);
     const app = createApp({ db: createSqliteD1(database), adminToken, now: () => Date.now() });
-    const { server, port } = await new Promise<{ server: ServerType; port: number }>((resolve, reject) => {
-      const started = serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => app.fetch(request) }, (info) =>
-        resolve({ server: started, port: info.port })
-      );
-      started.on("error", reject);
-    });
+    const { server, port } = await new Promise<{ server: ServerType; port: number }>(
+      (resolve, reject) => {
+        const started = serve(
+          { hostname: "127.0.0.1", port: 0, fetch: (request) => app.fetch(request) },
+          (info) => resolve({ server: started, port: info.port }),
+        );
+        started.on("error", reject);
+      },
+    );
     const url = `http://127.0.0.1:${port}`;
     try {
       await withInstallHome("darwin", async (env) => {
@@ -1048,7 +1109,7 @@ describe("install and uninstall", () => {
         const secret = {
           security: stubs.security,
           secretTool: stubs.secretTool,
-          extraEnv: { STUB_LOG: stubs.logPath, STUB_STORE: stubs.storePath }
+          extraEnv: { STUB_LOG: stubs.logPath, STUB_STORE: stubs.storePath },
         };
         await ensureAgentDirs(env.home);
         await writeUsageFixtures(env.home);
@@ -1057,7 +1118,7 @@ describe("install and uninstall", () => {
         expect((await runAsync(env, ["install", "--json"], secret)).status).toBe(0);
         const paired = await runAsync(env, ["pair", "--url", url, "--name", "S14", "--json"], {
           ...secret,
-          input: `${adminToken}\n`
+          input: `${adminToken}\n`,
         });
         expect(paired.status, `${paired.stdout}\n${paired.stderr}`).toBe(0);
         expect(z.parse(pairResultSchema, json(paired.stdout)).name).toBe("S14");
@@ -1073,17 +1134,19 @@ describe("install and uninstall", () => {
         expect(existsSync(dataDirOf(env.home))).toBe(false);
         expect(await hashAgentDirs(env.home)).toBe(before);
 
-        const secretCalls = z.array(z.object({ argv: z.array(z.string()), stdin: z.string() })).parse(
-          (await readFile(stubs.logPath, "utf8"))
-            .split("\n")
-            .filter((line) => line !== "")
-            .map((line) => JSON.parse(line))
-        );
+        const secretCalls = z
+          .array(z.object({ argv: z.array(z.string()), stdin: z.string() }))
+          .parse(
+            (await readFile(stubs.logPath, "utf8"))
+              .split("\n")
+              .filter((line) => line !== "")
+              .map((line) => JSON.parse(line)),
+          );
         const stored = secretCalls.some(
-          (call) => call.stdin.includes("add-generic-password") || call.argv.includes("store")
+          (call) => call.stdin.includes("add-generic-password") || call.argv.includes("store"),
         );
         const deleted = secretCalls.some(
-          (call) => call.stdin.includes("delete-generic-password") || call.argv.includes("clear")
+          (call) => call.stdin.includes("delete-generic-password") || call.argv.includes("clear"),
         );
         expect(stored).toBe(true);
         expect(deleted).toBe(true);
@@ -1093,7 +1156,9 @@ describe("install and uninstall", () => {
           }
           expect(call.stdin).not.toContain(adminToken);
         }
-        const storeText = existsSync(stubs.storePath) ? await readFile(stubs.storePath, "utf8") : "{}";
+        const storeText = existsSync(stubs.storePath)
+          ? await readFile(stubs.storePath, "utf8")
+          : "{}";
         expect(z.parse(z.record(z.string(), z.string()), JSON.parse(storeText))).toEqual({});
       });
     } finally {
@@ -1112,11 +1177,15 @@ describe("install and uninstall", () => {
     try {
       const installed = runBundle(["install", "--json"], { home, os: "win32" });
       expect(installed.status).toBe(1);
-      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("no scheduler on win32");
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain(
+        "no scheduler on win32",
+      );
       expect(existsSync(join(home, "data"))).toBe(false);
       const removed = runBundle(["uninstall", "--data", "--json"], { home, os: "win32" });
       expect(removed.status).toBe(1);
-      expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain("no scheduler on win32");
+      expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain(
+        "no scheduler on win32",
+      );
       expect(existsSync(join(home, "data"))).toBe(false);
       expect(existsSync(join(home, ".config", "systemd"))).toBe(false);
     } finally {
@@ -1141,7 +1210,7 @@ describe("systemd user timer", () => {
     "--property=UnitFileState",
     "--property=ActiveState",
     "--property=FragmentPath",
-    "--no-pager"
+    "--no-pager",
   ];
   const RELOAD = ["--user", "daemon-reload"];
   const ENABLE = ["--user", "enable", "--now", "snorlax-refresh.timer"];
@@ -1243,7 +1312,7 @@ describe("systemd user timer", () => {
       `  process.exit(0);`,
       `}`,
       `process.exit(2);`,
-      ``
+      ``,
     ].join("\n");
     await writeFile(script, source, "utf8");
     await chmod(script, 0o755);
@@ -1264,7 +1333,7 @@ describe("systemd user timer", () => {
         failAfterEnable: join(stubDir, "fail-after-enable"),
         failShowAfterEnable: join(stubDir, "fail-show-after-enable"),
         unitPath: join(stubDir, "unit-path"),
-        failUnitPath: join(stubDir, "fail-unit-path")
+        failUnitPath: join(stubDir, "fail-unit-path"),
       });
     } finally {
       await rm(home, { recursive: true, force: true });
@@ -1275,14 +1344,14 @@ describe("systemd user timer", () => {
   const runSystemd = (
     env: SystemdEnv,
     args: readonly string[],
-    overrides?: { readonly snorlaxHome?: string; readonly xdgConfigHome?: string }
+    overrides?: { readonly snorlaxHome?: string; readonly xdgConfigHome?: string },
   ) =>
     runBundle(args, {
       home: env.home,
       dataDir: overrides?.snorlaxHome ?? dataDirOf(env.home),
       systemctl: env.systemctl,
       os: "linux",
-      ...(overrides?.xdgConfigHome === undefined ? {} : { xdgConfigHome: overrides.xdgConfigHome })
+      ...(overrides?.xdgConfigHome === undefined ? {} : { xdgConfigHome: overrides.xdgConfigHome }),
     });
 
   const unitDirOf = (home: string, xdgConfigHome?: string): string =>
@@ -1297,7 +1366,9 @@ describe("systemd user timer", () => {
       const installed = runSystemd(env, ["install"]);
       expect(installed.stderr).toBe("");
       expect(installed.status).toBe(0);
-      expect(installed.stdout).toBe("systemd user timer installed at ~/.config/systemd/user/snorlax-refresh.timer\n");
+      expect(installed.stdout).toBe(
+        "systemd user timer installed at ~/.config/systemd/user/snorlax-refresh.timer\n",
+      );
 
       const service = await readFile(servicePath, "utf8");
       expect(serviceLauncherPath(service)).toBe(launcherPath(dataDirOf(env.home)));
@@ -1306,7 +1377,7 @@ describe("systemd user timer", () => {
       expect(script).toContain(resolve(bundle));
       expect(script).toContain('exec "$node" "$cli" refresh');
       expect(await readFile(join(dataDirOf(env.home), NODE_PATH_FILE), "utf8")).toBe(
-        renderNodePathSeed(process.execPath)
+        renderNodePathSeed(process.execPath),
       );
       expect(serviceEnvironment(service)).toBe(`SNORLAX_HOME=${dataDirOf(env.home)}`);
       const timer = await readFile(timerPath, "utf8");
@@ -1325,7 +1396,7 @@ describe("systemd user timer", () => {
         SHOW_UNIT_PATH,
         SHOW,
         RELOAD,
-        ENABLE
+        ENABLE,
       ]);
     });
   });
@@ -1339,7 +1410,7 @@ describe("systemd user timer", () => {
         `${env.home}/.config/systemd/user.control`,
         `${managerConfig}/systemd/user`,
         "/etc/systemd/user",
-        `${cliXdg}/systemd/user`
+        `${cliXdg}/systemd/user`,
       ].join(" ");
       await writeFile(env.unitPath, `UnitPath=${listed}\n`);
       const timerPath = join(managerConfig, "systemd", "user", "snorlax-refresh.timer");
@@ -1348,8 +1419,12 @@ describe("systemd user timer", () => {
       expect(installed.stderr).toBe("");
       expect(existsSync(timerPath)).toBe(true);
       expect(existsSync(join(cliXdg, "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
-      expect(existsSync(join(env.home, ".config", "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
-      expect(existsSync(join(env.home, ".local", "share", "systemd", "user", "snorlax-refresh.timer"))).toBe(false);
+      expect(
+        existsSync(join(env.home, ".config", "systemd", "user", "snorlax-refresh.timer")),
+      ).toBe(false);
+      expect(
+        existsSync(join(env.home, ".local", "share", "systemd", "user", "snorlax-refresh.timer")),
+      ).toBe(false);
       expect(await readFile(env.enabled, "utf8")).toBe(timerPath);
     });
   });
@@ -1359,14 +1434,15 @@ describe("systemd user timer", () => {
       const xdgData = join(env.home, "xdg-data");
       // `SNORLAX_OS` selects the scheduler only. The data directory follows the process OS: Linux uses
       // `XDG_DATA_HOME`, macOS uses ~/Library/Application Support. The service must name whichever that is.
-      const os = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : "linux";
+      const os =
+        process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : "linux";
       const dataDir = resolveDataDir({ home: env.home, os, env: { XDG_DATA_HOME: xdgData } });
       const installed = runBundle(["install", "--json"], {
         home: env.home,
         omitSnorlaxHome: true,
         xdgDataHome: xdgData,
         systemctl: env.systemctl,
-        os: "linux"
+        os: "linux",
       });
       expect(installed.status).toBe(0);
       expect(installed.stderr).toBe("");
@@ -1389,7 +1465,7 @@ describe("systemd user timer", () => {
 
   it.each([
     ["exits non-zero", "show UnitPath failed"],
-    ["does not parse", "did not report a path list"]
+    ["does not parse", "did not report a path list"],
   ] as const)("writes nothing when the UnitPath query %s", async (mode, message) => {
     await withSystemdHome(async (env) => {
       if (mode === "exits non-zero") {
@@ -1408,7 +1484,7 @@ describe("systemd user timer", () => {
 
   it.each([
     ["exits non-zero", "show UnitPath failed"],
-    ["does not parse", "did not report a path list"]
+    ["does not parse", "did not report a path list"],
   ] as const)(
     "uninstall fails after the data-dir guard when UnitPath %s, and deletes nothing",
     async (mode, message) => {
@@ -1420,7 +1496,9 @@ describe("systemd user timer", () => {
         } else {
           await writeFile(env.unitPath, "not a property\n", "utf8");
         }
-        const removed = runSystemd(env, ["uninstall", "--data", "--json"], { snorlaxHome: dataDir });
+        const removed = runSystemd(env, ["uninstall", "--data", "--json"], {
+          snorlaxHome: dataDir,
+        });
         expect(removed.status).toBe(1);
         const failure = z.parse(failureSchema, json(removed.stdout));
         expect(failure.error.code).toBe("internal");
@@ -1428,7 +1506,7 @@ describe("systemd user timer", () => {
         expect(existsSync(dataDir)).toBe(true);
         expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH]);
       });
-    }
+    },
   );
 
   it("refuses a relative data directory before calling systemctl", async () => {
@@ -1453,7 +1531,14 @@ describe("systemd user timer", () => {
       expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
       expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
       expect(existsSync(env.enabled)).toBe(false);
-      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, RELOAD]);
+      expect(await readInvocations(env.record)).toEqual([
+        SHOW_UNIT_PATH,
+        SHOW,
+        RELOAD,
+        ENABLE,
+        SHOW,
+        RELOAD,
+      ]);
     });
   });
 
@@ -1464,11 +1549,21 @@ describe("systemd user timer", () => {
       const units = unitDirOf(env.home);
       const installed = runSystemd(env, ["install", "--json"]);
       expect(installed.status).toBe(1);
-      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("enable --now");
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain(
+        "enable --now",
+      );
       expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
       expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
       expect(existsSync(env.enabled)).toBe(false);
-      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
+      expect(await readInvocations(env.record)).toEqual([
+        SHOW_UNIT_PATH,
+        SHOW,
+        RELOAD,
+        ENABLE,
+        SHOW,
+        DISABLE,
+        RELOAD,
+      ]);
     });
   });
 
@@ -1478,11 +1573,21 @@ describe("systemd user timer", () => {
       const units = unitDirOf(env.home);
       const installed = runSystemd(env, ["install", "--json"]);
       expect(installed.status).toBe(1);
-      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain("enable --now");
+      expect(z.parse(failureSchema, json(installed.stdout)).error.message).toContain(
+        "enable --now",
+      );
       expect(existsSync(join(units, "snorlax-refresh.service"))).toBe(false);
       expect(existsSync(join(units, "snorlax-refresh.timer"))).toBe(false);
       expect(existsSync(env.enabled)).toBe(false);
-      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, RELOAD, ENABLE, SHOW, DISABLE, RELOAD]);
+      expect(await readInvocations(env.record)).toEqual([
+        SHOW_UNIT_PATH,
+        SHOW,
+        RELOAD,
+        ENABLE,
+        SHOW,
+        DISABLE,
+        RELOAD,
+      ]);
     });
   });
 
@@ -1507,7 +1612,12 @@ describe("systemd user timer", () => {
       expect(removed.status).toBe(1);
       expect(z.parse(failureSchema, json(removed.stdout)).error.message).toContain(foreign);
       expect(await readFile(timerPath, "utf8")).toBe("kept\n");
-      expect(await readInvocations(env.record)).toEqual([SHOW_UNIT_PATH, SHOW, SHOW_UNIT_PATH, SHOW]);
+      expect(await readInvocations(env.record)).toEqual([
+        SHOW_UNIT_PATH,
+        SHOW,
+        SHOW_UNIT_PATH,
+        SHOW,
+      ]);
     });
   });
 
@@ -1538,7 +1648,7 @@ describe("systemd user timer", () => {
         RELOAD,
         SHOW_UNIT_PATH,
         SHOW,
-        RELOAD
+        RELOAD,
       ]);
     });
   });
@@ -1555,7 +1665,7 @@ describe("systemd user timer", () => {
       expect(removed.stdout).toBe(
         "systemd user timer removed\n" +
           "the data directory ~/data is kept; entries snorlax did not write remain: photo.jpg\n" +
-          missingStoreNotice
+          missingStoreNotice,
       );
       expect(removed.stdout).not.toContain("LaunchAgent");
       expect(existsSync(join(dataDir, "photo.jpg"))).toBe(true);
@@ -1580,8 +1690,12 @@ describe("systemd user timer", () => {
       expect(doctor.status).toBe(0);
       const payload = z.parse(doctorSchema, json(doctor.stdout));
       expect(payload.healthy).toBe(false);
-      expect(payload.checks.filter((check) => check.status === "error").map((check) => check.id)).toEqual(["schedule"]);
-      expect(payload.checks.find((check) => check.id === "schedule")?.detail).toContain("does not exist");
+      expect(
+        payload.checks.filter((check) => check.status === "error").map((check) => check.id),
+      ).toEqual(["schedule"]);
+      expect(payload.checks.find((check) => check.id === "schedule")?.detail).toContain(
+        "does not exist",
+      );
       const calls = await readInvocations(env.record);
       expect(calls.slice(before.length)).toEqual([SHOW_UNIT_PATH, SHOW, SHOW_UNIT_PATH, SHOW]);
     });
@@ -1635,8 +1749,8 @@ describe("LaunchAgent plist", () => {
     // Pre-launcher installs name Node and the CLI, not a shell and launcher.
     expect(
       launchAgentLauncherPath(
-        plist.build({ ProgramArguments: ["/removed/node", "/opt/snorlax.mjs", "refresh"] })
-      )
+        plist.build({ ProgramArguments: ["/removed/node", "/opt/snorlax.mjs", "refresh"] }),
+      ),
     ).toBeUndefined();
   });
 });
@@ -1646,36 +1760,37 @@ describe("uninstall --data path guard", () => {
   const fakeFs = { realpath: async (path: string): Promise<string | undefined> => path };
   /** `/var` is a symlink to `/private/var` on macOS. */
   const symlinkFs = {
-    realpath: async (path: string): Promise<string | undefined> => path.replace(/^\/var/, "/private/var")
+    realpath: async (path: string): Promise<string | undefined> =>
+      path.replace(/^\/var/, "/private/var"),
   };
 
   it("refuses to delete /, the home directory, its ancestors, or a relative path", async () => {
-    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home"))).rejects.toThrow(
-      /refusing to delete/
-    );
-    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp/home", "/tmp/home"))).rejects.toThrow(
-      /refusing to delete/
-    );
-    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home"))).rejects.toThrow(
-      /refusing to delete/
-    );
-    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home"))).rejects.toThrow(
-      /must be absolute/
-    );
-    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home"))).resolves.toBe(
-      "/tmp/home/snorlax"
-    );
-    await expect(Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home"))).rejects.toThrow(
-      DataDirNotDeletable
-    );
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")),
+    ).rejects.toThrow(/refusing to delete/);
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp/home", "/tmp/home")),
+    ).rejects.toThrow(/refusing to delete/);
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp", "/tmp/home")),
+    ).rejects.toThrow(/refusing to delete/);
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(fakeFs, "relative/data", "/tmp/home")),
+    ).rejects.toThrow(/must be absolute/);
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/tmp/home/snorlax", "/tmp/home")),
+    ).resolves.toBe("/tmp/home/snorlax");
+    await expect(
+      Effect.runPromise(resolvedDeletableDataDir(fakeFs, "/", "/tmp/home")),
+    ).rejects.toThrow(DataDirNotDeletable);
   });
 
   it("compares through realpath, so a symlinked spelling of the home directory is refused too", async () => {
     await expect(
-      Effect.runPromise(resolvedDeletableDataDir(symlinkFs, "/var/home", "/private/var/home"))
+      Effect.runPromise(resolvedDeletableDataDir(symlinkFs, "/var/home", "/private/var/home")),
     ).rejects.toThrow(/refusing to delete/);
     await expect(
-      Effect.runPromise(resolvedDeletableDataDir(symlinkFs, "/var/home/data", "/private/var/home"))
+      Effect.runPromise(resolvedDeletableDataDir(symlinkFs, "/var/home/data", "/private/var/home")),
     ).resolves.toBe("/var/home/data");
   });
 });
