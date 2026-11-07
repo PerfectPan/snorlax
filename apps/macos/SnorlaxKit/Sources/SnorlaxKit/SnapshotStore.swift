@@ -45,6 +45,19 @@ public struct AppGroupSnapshotCopy {
         try data.write(to: fileURL, options: .atomic)
         reloader.reloadAllTimelines()
     }
+
+    /// Removes the copy and reloads timelines, so the widget stops showing the
+    /// deleted numbers (Spec R14): the data directory's snapshot is gone — a
+    /// fresh install, or `snorlax uninstall --data` deleted it. The container
+    /// is protected by macOS, so the CLI cannot do this; the app does when it
+    /// sees the loss. Returns whether there was a copy to remove.
+    @discardableResult
+    public func removePublishedSnapshot() throws -> Bool {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return false }
+        try FileManager.default.removeItem(at: fileURL)
+        reloader.reloadAllTimelines()
+        return true
+    }
 }
 
 /// Publishes an accepted snapshot to the App Group container once per distinct
@@ -57,6 +70,14 @@ public struct AppGroupSnapshotPublisher {
 
     public init(container: URL, reloader: any TimelineReloading) {
         self.copy = AppGroupSnapshotCopy(container: container, reloader: reloader)
+    }
+
+    /// Forget the source snapshot even if the copy is already missing or deletion fails.
+    /// Restoring the same source must publish it again after an uninstall.
+    @discardableResult
+    public mutating func removePublishedSnapshot() throws -> Bool {
+        lastGeneratedAt = nil
+        return try copy.removePublishedSnapshot()
     }
 
     public var container: URL { copy.container }
