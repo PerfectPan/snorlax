@@ -72,6 +72,21 @@ collector revokes the existing registration for this device id when there is one
 Buckets already uploaded stay. The previous device token stops working. Do this the same way after the Worker's
 origin changes. A hand revoke is not required for either case.
 
+## Backend recovery warning
+
+Re-pairing is not a complete backup restore. The collector marks only this device's local `buckets` dirty for
+upload, then deletes its cached `remote_buckets` and `remote_devices` and resets the pull cursor. The next pull
+can recover those remote rows only if the backend still has them or their originating devices upload them again.
+A device cannot automatically upload another device's cached usage as its own.
+
+Before recovering an empty/lost backend or re-pairing, preserve a consistent, verified backup of each device's
+ledger. Full history recovery requires every device's own retained local buckets, or a verified backup containing
+that device's data. If an originating device is unavailable, keep any surviving cached remote history intact;
+do not re-pair or otherwise clear that cache until the missing partition's recovery source is secured. A
+`rebuild --days n` cannot reconstruct expired logs or another device's history.
+
+This warning describes recovery prerequisites; it does not run a backup, reset, re-pair or restore operation.
+
 ## Revoke a device
 
 Revoke by hand when `pair` reports `conflict` or `keychain`. `conflict` is the rare case where the collector

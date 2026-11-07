@@ -4,7 +4,8 @@
 
 Accepted (owner, 2026-10-22)
 
-Paired Plan: [docs/plans/0001-snorlax.md](../plans/0001-snorlax.md)
+Implementation: [current architecture](../architecture/snorlax.md). Plan 0001 is retired following
+[owner acceptance](../development/validation.md); Git history retains its execution record.
 
 ## Problem And Scope
 
