@@ -102,6 +102,6 @@ launchctl print "gui/$(id -u)/io.github.perfectpan.snorlax.refresh"
 
 The print should say the service could not be found. Do not copy the plist into `~/Library/LaunchAgents`.
 
-12. Write the three answers on the `S1 results` row in `docs/plans/0001-snorlax.md` section 7: App Group container, `SMAppService` registration, widget gallery.
+12. Record the three answers in the validation issue or PR: App Group container, `SMAppService` registration, widget gallery. Second-Apple-ID verification is tracked in [#50](https://github.com/PerfectPan/snorlax/issues/50); the current acceptance scope is in [validation.md](../../docs/development/validation.md).
 
 If a spike widget is still on the desktop, remove it. Its kind was `io.github.perfectpan.snorlax.spike`.
