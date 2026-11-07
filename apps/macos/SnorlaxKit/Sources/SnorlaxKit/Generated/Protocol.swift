@@ -404,18 +404,24 @@ public struct ByModel: Codable, Equatable, Sendable {
 public struct Daily: Codable, Equatable, Sendable {
     public let costUsd: Double
     public let date: String
+    public let requests: Int?
     public let tokens: Int
+    public let unpricedRequests: Int?
 
     public enum CodingKeys: String, CodingKey {
         case costUsd = "costUsd"
         case date = "date"
+        case requests = "requests"
         case tokens = "tokens"
+        case unpricedRequests = "unpricedRequests"
     }
 
-    public init(costUsd: Double, date: String, tokens: Int) {
+    public init(costUsd: Double, date: String, requests: Int?, tokens: Int, unpricedRequests: Int?) {
         self.costUsd = costUsd
         self.date = date
+        self.requests = requests
         self.tokens = tokens
+        self.unpricedRequests = unpricedRequests
     }
 }
 

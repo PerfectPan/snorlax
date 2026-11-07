@@ -119,15 +119,17 @@ const seriesOf = (
 ): { daily: DailyEntry[]; hourlyToday: HourlyEntry[] } => {
   const inZone = tz(timeZone);
   const today = startOfDay(windows.dayStart, { in: inZone });
-  const byDay = new Map<number, { tokens: number; costUsd: number }>();
+  const byDay = new Map<number, { tokens: number; costUsd: number; requests: number; unpricedRequests: number }>();
   const byHour = new Map<number, number>();
   for (const bucket of buckets) {
     const at = bucket.hour * 1000;
     const day = +startOfDay(at, { in: inZone });
     if (day >= windows.historyStart && day < windows.dayEnd) {
-      const daily = byDay.get(day) ?? { tokens: 0, costUsd: 0 };
+      const daily = byDay.get(day) ?? { tokens: 0, costUsd: 0, requests: 0, unpricedRequests: 0 };
       daily.tokens += tokensOf(bucket);
       daily.costUsd += bucket.costUsd;
+      daily.requests += bucket.requests;
+      daily.unpricedRequests += bucket.unpricedRequests;
       byDay.set(day, daily);
     }
     if (day === windows.dayStart) {
@@ -137,8 +139,8 @@ const seriesOf = (
   const daily: DailyEntry[] = [];
   for (let back = 179; back >= 0; back -= 1) {
     const day = +subDays(today, back);
-    const entry = byDay.get(day) ?? { tokens: 0, costUsd: 0 };
-    daily.push({ date: format(new TZDate(day, timeZone), "yyyy-MM-dd"), tokens: entry.tokens, costUsd: entry.costUsd });
+    const entry = byDay.get(day) ?? { tokens: 0, costUsd: 0, requests: 0, unpricedRequests: 0 };
+    daily.push({ date: format(new TZDate(day, timeZone), "yyyy-MM-dd"), ...entry });
   }
   const hourlyToday = [...byHour.entries()]
     .map((hour): HourlyEntry => ({

@@ -162,6 +162,19 @@ describe("windows", () => {
 describe("daily and hourlyToday", () => {
   const now = Date.UTC(2026, 9, 22, 12, 0, 0);
 
+  it("retains all-unpriced and mixed local/remote daily request counts", () => {
+    const unknown = bucket("2026-10-21T02:00:00Z", { model: "unknown", requests: 2, unpricedRequests: 2, costUsd: 0 });
+    const snapshot = build({
+      now,
+      timeZone: "UTC",
+      buckets: [unknown, { ...unknown, hour: utc("2026-10-22T02:00:00Z") }],
+      remoteBuckets: [{ ...bucket("2026-10-22T02:00:00Z"), deviceId: "remote", seq: 1 }]
+    });
+    expect(snapshot.daily.at(-2)).toMatchObject({ requests: 2, unpricedRequests: 2, costUsd: 0 });
+    expect(snapshot.daily.at(-1)).toMatchObject({ requests: 3, unpricedRequests: 2, costUsd: 0.25 });
+    expect(snapshot.daily[0]).toMatchObject({ requests: 0, unpricedRequests: 0, costUsd: 0 });
+  });
+
   it("lists the last 180 local days including today, oldest first, zeros included", () => {
     const snapshot = build({ now, timeZone: "Asia/Shanghai", buckets: [bucket("2026-10-22T02:00:00Z")] });
     expect(snapshot.daily).toHaveLength(180);
