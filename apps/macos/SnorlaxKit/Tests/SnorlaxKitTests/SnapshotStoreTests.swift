@@ -74,7 +74,7 @@ final class SnapshotStoreTests: XCTestCase {
         let copy = AppGroupSnapshotCopy(container: temp.url, reloader: reloader)
         try copy.publish(try Fixtures.data("snapshot"))
 
-        XCTAssertTrue(copy.removePublishedSnapshot())
+        XCTAssertTrue(try copy.removePublishedSnapshot())
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy.fileURL.path))
         XCTAssertEqual(reloader.reloads, 2)
@@ -86,11 +86,45 @@ final class SnapshotStoreTests: XCTestCase {
         let reloader = RecordingReloader()
         let copy = AppGroupSnapshotCopy(container: temp.url, reloader: reloader)
 
-        XCTAssertFalse(copy.removePublishedSnapshot())
+        XCTAssertFalse(try copy.removePublishedSnapshot())
 
         XCTAssertEqual(reloader.reloads, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy.fileURL.path))
     }
+
+    func testRemovalFailureIsReportedWithoutReloadingTimelines() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let reloader = RecordingReloader()
+        let copy = AppGroupSnapshotCopy(container: temp.url, reloader: reloader)
+        let data = try Fixtures.data("snapshot")
+        try copy.publish(data)
+        // A locked file is a real macOS deletion failure, not a missing snapshot.
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: copy.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: copy.fileURL.path) }
+
+        XCTAssertThrowsError(try copy.removePublishedSnapshot())
+
+        XCTAssertEqual(try Data(contentsOf: copy.fileURL), data)
+        XCTAssertEqual(reloader.reloads, 1)
+    }
+
+    func testRemovingAnAlreadyMissingCopyResetsThePublisher() throws {
+        let temp = try TempDirectory()
+        defer { temp.remove() }
+        let reloader = RecordingReloader()
+        var publisher = AppGroupSnapshotPublisher(container: temp.url, reloader: reloader)
+        let data = try Fixtures.data("snapshot")
+        XCTAssertTrue(try publisher.publish(data))
+        try FileManager.default.removeItem(at: publisher.fileURL)
+
+        XCTAssertFalse(try publisher.removePublishedSnapshot())
+        XCTAssertTrue(try publisher.publish(data))
+
+        XCTAssertEqual(try Data(contentsOf: publisher.fileURL), data)
+        XCTAssertEqual(reloader.reloads, 2)
+    }
+
 }
 
 private final class RecordingReloader: TimelineReloading {
