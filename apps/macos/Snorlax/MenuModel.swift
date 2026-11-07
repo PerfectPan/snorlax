@@ -66,7 +66,7 @@ final class MenuModel: ObservableObject {
             menuTitle = "Snorlax"
             loadError = nil
             snapshotStatus = nil
-            noteContainer()
+            removeAppGroupCopy()
             return
         }
         do {
@@ -217,6 +217,26 @@ final class MenuModel: ObservableObject {
             return
         }
         appGroupDetail = container.path
+    }
+
+    /// The data directory has no snapshot: a fresh install, or the data directory went away while the app
+    /// runs (`snorlax uninstall --data`, or it was deleted by hand). The widget must not keep showing the
+    /// deleted numbers, so the App Group copy goes too (Spec R14). macOS protects the container, so the CLI
+    /// cannot delete it; the app does when it sees the loss.
+    private func removeAppGroupCopy() {
+        guard let container = AppGroup.containerURL() else {
+            appGroupDetail = "App Group container is unavailable for this signature."
+            return
+        }
+        if publisher?.container != container {
+            publisher = AppGroupSnapshotPublisher(container: container, reloader: reloader)
+        }
+        do {
+            _ = try publisher?.removePublishedSnapshot()
+            appGroupDetail = container.path
+        } catch {
+            appGroupDetail = Presenter.message(for: error)
+        }
     }
 }
 
