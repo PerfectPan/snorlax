@@ -56,7 +56,8 @@ extension CollectorClientError: LocalizedError {
 }
 
 /// Runs the bundled launcher with `--json`, optional stdin, and a 120 s timeout (plan 3.11).
-/// Exit 0 decodes `Success`. Any other exit decodes the failure shape.
+/// Exit 0 — or an exit code in `acceptingExitStatus` — decodes `Success`. Any other exit decodes
+/// the failure shape.
 public struct CollectorClient: Sendable {
     public var executable: URL
     public var runner: any ProcessRunning
@@ -76,7 +77,8 @@ public struct CollectorClient: Sendable {
         _ arguments: [String],
         stdin: Data? = nil,
         timeout: Duration? = nil,
-        as type: Success.Type
+        as type: Success.Type,
+        acceptingExitStatus: Set<Int32> = [0]
     ) async throws -> Success {
         var args = arguments
         if !args.contains("--json") {
@@ -102,7 +104,7 @@ public struct CollectorClient: Sendable {
         } catch SchemaError.newerCollector {
             throw CollectorClientError.newerCollector
         }
-        if output.status != 0 {
+        if output.status != 0 && !acceptingExitStatus.contains(output.status) {
             do {
                 throw CollectorClientError.failed(try JSONDecoder().decode(Failure.self, from: output.stdout))
             } catch let error as CollectorClientError {

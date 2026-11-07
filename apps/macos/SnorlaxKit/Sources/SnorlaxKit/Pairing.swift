@@ -129,7 +129,9 @@ public final class PairingModel: ObservableObject {
         }
         await reloadSnapshot()
         if paired {
-            notice = nil
+            // The section itself flips to "Paired"; the sentence makes the
+            // success explicit instead of leaving the user to infer it.
+            notice = "Paired with \(outcome.name)."
         } else {
             notice = "Paired as \(outcome.name). The snapshot does not show this Mac as paired yet."
         }

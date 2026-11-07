@@ -18,9 +18,16 @@ final class WidgetStateTests: XCTestCase {
         defer { temp.remove() }
         XCTAssertEqual(
             WidgetSnapshot.state(containerURL: temp.url, now: now, timeZone: zone, load: { _ in
-                throw CocoaError(.fileReadNoSuchFile)
+                throw WidgetSnapshotLoadError.missing
             }),
             .noSnapshot
+        )
+
+        XCTAssertEqual(
+            WidgetSnapshot.state(containerURL: temp.url, now: now, timeZone: zone, load: { _ in
+                throw CocoaError(.fileReadNoSuchFile)
+            }),
+            .unreadableSnapshot
         )
 
         XCTAssertEqual(
@@ -29,6 +36,29 @@ final class WidgetStateTests: XCTestCase {
             }),
             .newerSnapshot
         )
+    }
+
+    func testACorruptSnapshotIsUnreadableNotMissing() throws {
+        XCTAssertEqual(
+            WidgetSnapshot.state(containerURL: URL(fileURLWithPath: "/unused"), now: now, timeZone: zone) { _ in
+                try SnapshotLoader.load(Data("not json".utf8))
+            },
+            .unreadableSnapshot
+        )
+    }
+
+    func testAnUnparsableGeneratedAtOmitsTheCaption() throws {
+        var text = String(decoding: try Fixtures.data("snapshot"), as: UTF8.self)
+        text = text.replacingOccurrences(of: "\"generatedAt\": \"2026-10-23T02:35:12.482Z\"", with: "\"generatedAt\": \"not a time\"")
+        let state = WidgetSnapshot.state(containerURL: URL(fileURLWithPath: "/unused"), now: now, timeZone: zone) { _ in
+            try SnapshotLoader.load(Data(text.utf8))
+        }
+
+        guard case let .usable(usage) = state else {
+            XCTFail("expected a usable snapshot, got \(state)")
+            return
+        }
+        XCTAssertNil(usage.asOfCaption, "an unparseable generatedAt must omit the caption, not render a blank line")
     }
 
     func testACurrentSnapshotIsUsableWithATimeOnlyCaption() throws {
