@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import { Effect } from "effect";
 
-import { createLogger, LOG_FILES_KEPT } from "../src/modules/log/log.ts";
-import { nodeFileOps } from "../src/modules/platform/platform.ts";
+import { createLogger, LOG_FILES_KEPT } from "./log.ts";
+import { nodeFileOps } from "../platform/platform.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 /**

@@ -69,7 +69,16 @@ targets:
           pnpm --filter @rivus/snorlax run build
           dest="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/collector"
           mkdir -p "$dest"
-          cp "packages/collector/dist/snorlax.mjs" "$dest/snorlax.mjs"
+          # Both files must be there after the build: the CLI itself and the license notices of every package
+          # the bundle inlines (the build's `license` option). The phase fails when either is missing, so the
+          # app never ships bundled third-party code without its notices.
+          for name in snorlax.mjs THIRD_PARTY_LICENSES.md; do
+            if [ ! -f "packages/collector/dist/$name" ]; then
+              echo "error: the collector build wrote no packages/collector/dist/$name" >&2
+              exit 1
+            fi
+            cp "packages/collector/dist/$name" "$dest/$name"
+          done
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.perfectpan.snorlax
