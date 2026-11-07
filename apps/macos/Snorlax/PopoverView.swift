@@ -31,6 +31,11 @@ struct PopoverView: View {
                 Text("No snapshot yet.")
                     .foregroundStyle(.secondary)
             }
+            if let notice = model.pricingNotice {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
             if let refreshError = model.refreshError {
                 Text(refreshError)
                     .font(.callout)
@@ -70,6 +75,7 @@ struct PopoverView: View {
         .frame(width: 440)
         .onAppear {
             model.reloadSnapshot()
+            model.loadDeviceName()
         }
     }
 
