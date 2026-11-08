@@ -62,7 +62,10 @@ export type ByDeviceEntry = z.output<typeof byDeviceEntrySchema>;
 export const dailyEntrySchema = z.object({
   date: localDateSchema,
   tokens: nonNegativeIntSchema,
-  costUsd: nonNegativeNumberSchema
+  costUsd: nonNegativeNumberSchema,
+  // Optional for older snapshots; absence means pricing completeness is unknown.
+  requests: z.optional(nonNegativeIntSchema),
+  unpricedRequests: z.optional(nonNegativeIntSchema)
 });
 export type DailyEntry = z.output<typeof dailyEntrySchema>;
 

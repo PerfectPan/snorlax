@@ -7,12 +7,22 @@ public struct UsageHeatmapDay: Equatable, Identifiable, Sendable {
     public var date: String?
     public var tokens: Int?
     public var costUsd: Double?
+    public var requests: Int?
+    public var unpricedRequests: Int?
     public var level: Int
 
     public var detail: String {
         guard let date else { return "" }
         guard let tokens, let costUsd else { return "\(date): no data in this snapshot" }
-        return "\(date): \(tokens.formatted(.number.locale(Locale(identifier: "en_US")))) tokens · estimated cost \(UsageFormat.cost(costUsd))"
+        let pricing: String
+        if let requests, let unpricedRequests {
+            let label = UsageFormat.costLabel(costText: UsageFormat.cost(costUsd), requests: requests, unpricedRequests: unpricedRequests)
+            pricing = label == "unpriced" ? "unpriced" : "estimated cost \(label)"
+        } else {
+            // Older snapshots lack completeness counts; never imply their sum is a complete estimate.
+            pricing = "cost unavailable (pricing completeness unknown)"
+        }
+        return "\(date): \(tokens.formatted(.number.locale(Locale(identifier: "en_US")))) tokens · \(pricing)"
     }
 }
 
@@ -69,7 +79,7 @@ public enum UsageHeatmapBuilder {
                 let offset = index - leading
                 guard offset >= 0, offset < dayCount,
                       let day = calendar.date(byAdding: .day, value: offset, to: start) else {
-                    days.append(UsageHeatmapDay(id: index, date: nil, tokens: nil, costUsd: nil, level: 0))
+                    days.append(UsageHeatmapDay(id: index, date: nil, tokens: nil, costUsd: nil, requests: nil, unpricedRequests: nil, level: 0))
                     continue
                 }
                 let date = formatter.string(from: day)
@@ -86,7 +96,7 @@ public enum UsageHeatmapBuilder {
                 } else {
                     level = 0
                 }
-                days.append(UsageHeatmapDay(id: index, date: date, tokens: entry?.tokens, costUsd: entry?.costUsd, level: level))
+                days.append(UsageHeatmapDay(id: index, date: date, tokens: entry?.tokens, costUsd: entry?.costUsd, requests: entry?.requests, unpricedRequests: entry?.unpricedRequests, level: level))
             }
             weeks.append(UsageHeatmapWeek(id: week, monthLabel: monthLabel, days: days))
         }

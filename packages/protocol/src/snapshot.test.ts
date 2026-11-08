@@ -15,6 +15,17 @@ const readJson = (dir: string, name: string): unknown =>
 describe("snapshotSchema", () => {
   const valid = z.parse(snapshotSchema, readJson("fixtures", "snapshot"));
 
+  it("accepts old daily entries without inventing pricing completeness and validates new counts", () => {
+    const daily = { date: "2026-10-22", tokens: 100, costUsd: 0 };
+    const legacy = z.parse(snapshotSchema, { ...valid, daily: [daily] });
+    expect(legacy.daily[0]?.requests).toBeUndefined();
+    expect(legacy.daily[0]?.unpricedRequests).toBeUndefined();
+    expect(
+      z.safeParse(snapshotSchema, { ...valid, daily: [{ ...daily, requests: 2, unpricedRequests: 2 }] }).success
+    ).toBe(true);
+    expect(z.safeParse(snapshotSchema, { ...valid, daily: [{ ...daily, unpricedRequests: -1 }] }).success).toBe(false);
+  });
+
   it("rejects a newer schemaVersion and an empty time zone", () => {
     expect(z.safeParse(snapshotSchema, { ...valid, schemaVersion: 2 }).success).toBe(false);
     expect(z.safeParse(snapshotSchema, { ...valid, timeZone: "" }).success).toBe(false);

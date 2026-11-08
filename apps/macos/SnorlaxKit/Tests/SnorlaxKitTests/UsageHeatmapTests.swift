@@ -26,7 +26,7 @@ final class UsageHeatmapTests: XCTestCase {
 
     func testKnownZeroAndMissingAndFuturePaddingAreDistinct() throws {
         let heatmap = try XCTUnwrap(UsageHeatmapBuilder.make(
-            daily: [Daily(costUsd: 0, date: "2026-11-02", tokens: 0)],
+            daily: [Daily(costUsd: 0, date: "2026-11-02", requests: 1, tokens: 0, unpricedRequests: 0)],
             generatedAt: "2026-11-02T12:00:00Z", timeZone: utc
         ))
         let cells = heatmap.weeks.flatMap(\.days)
@@ -43,13 +43,13 @@ final class UsageHeatmapTests: XCTestCase {
 
     func testLevelsAndTooltipsUseOnlyInWindowEntries() throws {
         let daily = [
-            Daily(costUsd: 1.25, date: "2026-11-02", tokens: 1_000),
-            Daily(costUsd: 2.5, date: "2026-11-03", tokens: 2_000),
-            Daily(costUsd: 3.75, date: "2026-11-04", tokens: 3_000),
-            Daily(costUsd: 5, date: "2026-11-05", tokens: 4_000),
-            Daily(costUsd: 999, date: "2026-11-06", tokens: 9_999_999), // after snapshot
-            Daily(costUsd: 999, date: "2025-01-01", tokens: 9_999_999),
-            Daily(costUsd: 999, date: "invalid", tokens: 9_999_999)
+            Daily(costUsd: 1.25, date: "2026-11-02", requests: 1, tokens: 1_000, unpricedRequests: 0),
+            Daily(costUsd: 2.5, date: "2026-11-03", requests: 1, tokens: 2_000, unpricedRequests: 0),
+            Daily(costUsd: 3.75, date: "2026-11-04", requests: 1, tokens: 3_000, unpricedRequests: 0),
+            Daily(costUsd: 5, date: "2026-11-05", requests: 1, tokens: 4_000, unpricedRequests: 0),
+            Daily(costUsd: 999, date: "2026-11-06", requests: 1, tokens: 9_999_999, unpricedRequests: 0), // after snapshot
+            Daily(costUsd: 999, date: "2025-01-01", requests: 1, tokens: 9_999_999, unpricedRequests: 0),
+            Daily(costUsd: 999, date: "invalid", requests: 1, tokens: 9_999_999, unpricedRequests: 0)
         ]
         let heatmap = try XCTUnwrap(UsageHeatmapBuilder.make(daily: daily, generatedAt: "2026-11-05T12:00:00Z", timeZone: utc))
         let known = heatmap.weeks.flatMap(\.days).filter { $0.tokens != nil }
@@ -89,11 +89,30 @@ final class UsageHeatmapTests: XCTestCase {
     func testCompleteSeriesHasNoMissingDays() throws {
         let skeleton = try XCTUnwrap(UsageHeatmapBuilder.make(daily: [], generatedAt: "2026-11-07T12:00:00Z", timeZone: utc))
         let daily = skeleton.weeks.flatMap(\.days).compactMap { day in
-            day.date.map { Daily(costUsd: 0, date: $0, tokens: 0) }
+            day.date.map { Daily(costUsd: 0, date: $0, requests: 1, tokens: 0, unpricedRequests: 0) }
         }
         let heatmap = try XCTUnwrap(UsageHeatmapBuilder.make(daily: daily, generatedAt: "2026-11-07T12:00:00Z", timeZone: utc))
         XCTAssertFalse(heatmap.hasMissingDays)
         XCTAssertEqual(heatmap.weeks.flatMap(\.days).filter { $0.tokens == 0 }.count, 180)
+    }
+
+    func testPricingCompletenessInTooltipAndAccessibilityDetail() throws {
+        let decoder = JSONDecoder()
+        let cases: [(String, String)] = [
+            (#"{"requests":2,"unpricedRequests":2,"costUsd":0}"#, "unpriced"),
+            (#"{"requests":3,"unpricedRequests":1,"costUsd":1.25}"#, "estimated cost ≥ $1.25"),
+            (#"{"requests":0,"unpricedRequests":0,"costUsd":0}"#, "estimated cost $0.00"),
+            (#"{"costUsd":0}"#, "cost unavailable (pricing completeness unknown)"),
+            (#"{"costUsd":1.25}"#, "cost unavailable (pricing completeness unknown)"),
+            (#"{"requests":3,"costUsd":1.25}"#, "cost unavailable (pricing completeness unknown)")
+        ]
+        for (fields, expected) in cases {
+            let json = "{\"date\":\"2026-11-07\",\"tokens\":100," + fields.dropFirst()
+            let entry = try decoder.decode(Daily.self, from: Data(json.utf8))
+            let heatmap = try XCTUnwrap(UsageHeatmapBuilder.make(daily: [entry], generatedAt: "2026-11-07T12:00:00Z", timeZone: utc))
+            let day = try XCTUnwrap(heatmap.weeks.flatMap(\.days).last { $0.date != nil })
+            XCTAssertEqual(day.detail, "2026-11-07: 100 tokens · \(expected)")
+        }
     }
 
     func testInvalidTimestampIsUnavailable() {

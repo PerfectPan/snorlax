@@ -107,3 +107,5 @@ The print should say the service could not be found. Do not copy the plist into 
 12. Record the three answers in the validation issue or PR: App Group container, `SMAppService` registration, widget gallery. Second-Apple-ID verification is tracked in [#50](https://github.com/PerfectPan/snorlax/issues/50); the current acceptance scope is in [validation.md](../../docs/development/validation.md).
 
 If a spike widget is still on the desktop, remove it. Its kind was `io.github.perfectpan.snorlax.spike`.
+
+Heatmap cost details show `unpriced` when every request lacks pricing and `≥` for mixed priced/unpriced usage. Older snapshots without daily pricing counts show cost as unavailable; token intensities remain usable.
