@@ -1,44 +1,77 @@
-name: Publish npm
+# npm Trusted Publishing for @rivus/snorlax is registered against this file name; renaming it requires
+# changing the package's trusted publisher on npmjs.com first.
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  # Rebuilds the version pull request from the current main, or retries a failed publish.
+  workflow_dispatch: {}
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
-  group: publish-npm-${{ github.event.release.tag_name }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: publish release set
-    if: github.event.release.prerelease == false
+  release:
+    name: version or publish packages
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
-      # npm Trusted Publishing exchanges the workflow's OIDC token for a short-lived publish credential.
+      # Pushes the version branch, release tags and GitHub Releases.
+      contents: write
+      pull-requests: write
+      # npm Trusted Publishing exchanges the workflow's OIDC token for a publish credential.
       id-token: write
-    env:
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v7
         with:
+          # changelog-github looks up the commit that added each change record.
           fetch-depth: 0
-          ref: ${{ github.event.release.tag_name }}
+          # Keeps the write token out of .git/config while repository code runs; the action pushes through the
+          # GitHub API with its own token input.
+          persist-credentials: false
+      # The setup step runs in ci.yml too, so the release gates run on the same Node.js and pnpm.
+      # pnpm/setup installs the pnpm from `packageManager`, installs Node.js from `.node-version` and runs
+      # `pnpm install --frozen-lockfile`.
       - uses: pnpm/setup@v3
         with:
           node-version-file: .node-version
+          cache: true
           require-lockfile: true
-      - name: Verify tag, versions and main ancestry
-        run: pnpm run release:check -- "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --verify-git
+
+      # Lists the public package versions that npm does not have yet. It is empty while every committed version is
+      # on npm, so the release gates run for a merged version pull request, a retried publish, or pushes that follow a
+      # version that is still unpublished.
+      - name: Find packages to publish
+        id: plan
+        run: |
+          pnpm exec changeset publish-plan --output "$RUNNER_TEMP/publish-plan.json"
+          echo "count=$(jq '[.plan[][]] | length' "$RUNNER_TEMP/publish-plan.json")" >> "$GITHUB_OUTPUT"
+
       - name: Run release gates
+        if: steps.plan.outputs.count != '0'
         run: pnpm run check
-      - name: Publish packages
-        # pnpm publishes natively: it sends the OIDC token from `id-token: write` and attaches provenance itself
-        # when the repository and the package are public. Skips packages whose version already exists on npm.
-        # `--no-git-checks` only skips pnpm's own branch/clean checks; the release:check step verified the tag,
-        # the clean worktree and main ancestry with the stricter rules above.
-        run: pnpm publish -r --access public --no-git-checks
+      - name: Audit production dependencies
+        if: steps.plan.outputs.count != '0'
+        run: pnpm audit --prod --audit-level=high
+
+      # With pending change records, runs version-packages and opens or updates the draft pull request
+      # changeset-release/main -> main; its body lists each package's new changelog section. Select Ready for review
+      # to run CI before merging. Without pending records, `changeset publish` runs `pnpm publish` for each
+      # unpublished public version through Trusted Publishing, and the action creates one tag and one GitHub Release
+      # per published package; with nothing unpublished it publishes nothing. The version commit goes through the
+      # GitHub API, so GitHub signs it. The publish script stays set even when the gates were skipped: without one,
+      # the action's version pull request body tells maintainers to publish by hand.
+      - name: Create the version pull request or publish
+        uses: changesets/action@v2.1.2
+        with:
+          # The action runs these commands without a shell.
+          version-script: pnpm run version-packages
+          publish-script: pnpm exec changeset publish
+          commit-message: "chore(release): version packages"
+          pr-title: "chore(release): version packages"
+          pr-draft: always

@@ -14,7 +14,6 @@
 - [ ] Repository checks: `gh repo-checks repository`
 - [ ] MR title and description: `gh repo-checks pr-title "<title>"`, `gh repo-checks pr-body <body-file>`
 - [ ] Changeset for published-package changes, when this MR should produce a release: `.changeset/<name>.md`
-- [ ] Package or release dry-run, when publishing changes: `pnpm run publish:dry-run`
 
 ## Risks
 
