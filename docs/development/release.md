@@ -75,7 +75,7 @@ here.
 Publishing a package name that has never existed on npm fails at the trusted-publishing exchange: OIDC cannot
 create package names. `changeset version` still consumes the pending records and bumps the manifest version, so
 the first version PR merges normally and the publish fails at the exchange. Finish the first publish (One-Time
-Setup below, tracked in #54) and re-run the failed run; it publishes the already-bumped version. The placeholder
+Setup below, tracked in #35) and re-run the failed run; it publishes the already-bumped version. The placeholder
 `0.0.0` never collides with real releases, which are higher.
 
 ## One-Time Setup
