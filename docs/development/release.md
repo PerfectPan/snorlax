@@ -22,13 +22,17 @@ workflow is not a published package.
 
 `publish-npm.yml` runs on every push to `main` (a PR merge is a push) and on manual dispatch. One job:
 
-1. `changeset publish-plan` lists the public package versions npm does not have yet. While that list is empty —
-   for example a docs push after a release — the workflow stops after it.
-2. With something to publish, the repository's complete gate (`pnpm run check`, which includes
-   `scripts/check-release-plan.mjs`) and a production-dependency audit run before anything is published.
-3. `changesets/action` then decides: with pending change records it runs `version-packages` and opens or updates
-   the draft version PR; with none it publishes the unpublished versions and tags each published package. The
-   version commit goes through the GitHub API, so GitHub signs it.
+1. `changesets/action/select-mode@v2.1.2` chooses `version` when non-empty changesets are pending,
+   `publish` when there are no changesets and unpublished versions exist, or `none` when no work is needed.
+2. Before either versioning or publishing, `check-first-publish.ts` checks npm with `npm view`. Version mode
+   checks the packages in the release plan; publish mode checks all publishable packages. A package name with no
+   existing version blocks the workflow before a version PR is created. Complete [One-Time Setup](#one-time-setup)
+   first; a registry outage also stops the workflow.
+3. Only `publish` mode runs the repository's complete gate (`pnpm run check`, which includes
+   `scripts/check-release-plan.mjs`) and a production-dependency audit before publishing.
+4. For `version` or `publish`, `changesets/action` runs its native version/publish path: it opens or updates
+   the draft version PR from pending change records, or publishes unpublished versions when no records remain.
+   The version commit goes through the GitHub API, so GitHub signs it. Mode `none` skips the action.
 
 Runs share one concurrency group with `cancel-in-progress: false`: a push waits for the running run, and GitHub
 keeps only the newest waiting run, cancelling older waiting ones.
@@ -55,11 +59,11 @@ Correct the refresh command.
 
 The summary becomes the changelog entry, so write it for users of the package. Rules for the bump:
 
-- While the package is 0.x, a breaking change is `minor`. `major` would release 1.0.0; `check-release-plan.mjs`
-  rejects major bumps until a reviewed PR lifts the cap.
+- Use `patch` for fixes, `minor` for additions and `major` for a deliberate breaking release. There is no
+  repository-specific major-bump cap.
 - A change inside a private package that the app or the collector bundles needs no release note: private packages
-  are never versioned. A record naming only private packages is never consumed by `changeset version`, so
-  `check-release-plan.mjs` rejects it; name `@rivus/snorlax` or delete the record.
+  are never versioned. A record naming a private or ignored package is never consumed by `changeset version`, including `none` entries,
+  so `check-release-plan.mjs` rejects it; name `@rivus/snorlax` or delete the record.
 - `pnpm changeset status --verbose` prints the pending changesets and the version they would release.
 
 ## Versioning Configuration
@@ -72,11 +76,11 @@ here.
 
 ## First Releases
 
-Publishing a package name that has never existed on npm fails at the trusted-publishing exchange: OIDC cannot
-create package names. `changeset version` still consumes the pending records and bumps the manifest version, so
-the first version PR merges normally and the publish fails at the exchange. Finish the first publish (One-Time
-Setup below, tracked in #35) and re-run the failed run; it publishes the already-bumped version. The placeholder
-`0.0.0` never collides with real releases, which are higher.
+OIDC cannot create a package name that has never existed on npm. `check-first-publish.ts` blocks the Release
+workflow before creating the version PR until every package it would version has an npm release. Finish the
+placeholder publish and Trusted Publisher setup below first (tracked in #35), then re-run the Release workflow.
+The placeholder `0.0.0` never collides with real releases, which are higher. The same check runs before publication
+so a newly added name cannot reach the OIDC exchange without setup.
 
 ## One-Time Setup
 
@@ -142,12 +146,12 @@ after the placeholder publish.
    changesets regenerates the PR from the new `main`. **Actions → Release → Run workflow** on `main` rebuilds it
    on demand, for example after the PR was closed by hand. The bump comes only from the changesets: to release a
    different bump, merge a changeset with that bump.
-3. Every version update leaves the version PR in Draft (`pr-draft: always`). Review the version and changelog
-   diff, then select **Ready for review** to start CI (`ready_for_review` triggers `ci.yml`). Confirm that `check`
-   actually ran and passed for the current head and merge result before squash-merging; a skipped check is not
-   validation evidence.
-4. The merge push runs the Release workflow on the merge commit, where no record is pending: `publish-plan` lists
-   the new version, the gates run, and `changeset publish` publishes it through Trusted Publishing. The action
+3. Every version update leaves the version PR in Draft (`pr-draft: always`). CI runs on Draft PR events too.
+   Review the version and changelog diff and select **Ready for review** before merging. Confirm that `check` and
+   `macos` actually ran and passed for the current head and merge result before squash-merging. PR events created
+   with `github.token` may require maintainer approval; follow any GitHub approval prompt.
+4. The merge push runs the Release workflow on the merge commit, where no record is pending: `select-mode` chooses
+   `publish`, the gates run, and `changeset publish` publishes it through Trusted Publishing. The action
    pushes the tag `@rivus/snorlax@X.Y.Z` and creates the GitHub Release with the changelog section. Merging the
    version PR is the release decision.
 5. Verify the version, for example `npm view @rivus/snorlax@X.Y.Z`, `git ls-remote --tags origin`, the GitHub
@@ -195,8 +199,7 @@ it can.
   tags the rest on the run's commit. **Run workflow** on `main` does the same only while no record is pending, and
   it tags the current `main` commit instead of the release commit. Never bump the version to retry, and never
   unpublish.
-- **Published but the tag or Release is missing**: `publish-plan` no longer lists the version, so re-runs do not
-  add them. Create them by hand on the release commit:
+- **Published but the tag or Release is missing**: `select-mode` finds nothing to publish, so re-runs do not add them. Create them by hand on the release commit:
   `gh release create '@rivus/snorlax@X.Y.Z' --target <release commit>` with the package's changelog section as
   notes.
 - **Version PR closed by hand or out of date**: **Run workflow** on `main` rebuilds it from the pending records.
