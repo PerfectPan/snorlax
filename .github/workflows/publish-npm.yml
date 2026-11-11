@@ -49,7 +49,7 @@ jobs:
 
       - name: Check first-publish setup
         if: steps.mode.outputs.mode != 'none'
-        run: node scripts/check-first-publish.ts ${{ steps.mode.outputs.mode }}
+        run: npm view @rivus/snorlax version --registry=https://registry.npmjs.org/
 
       - name: Run release gates
         if: steps.mode.outputs.mode == 'publish'

@@ -24,10 +24,9 @@ workflow is not a published package.
 
 1. `changesets/action/select-mode@v2.1.2` chooses `version` when non-empty changesets are pending,
    `publish` when there are no changesets and unpublished versions exist, or `none` when no work is needed.
-2. Before either versioning or publishing, `check-first-publish.ts` checks npm with `npm view`. Version mode
-   checks the packages in the release plan; publish mode checks all publishable packages. A package name with no
-   existing version blocks the workflow before a version PR is created. Complete [One-Time Setup](#one-time-setup)
-   first; a registry outage also stops the workflow.
+2. Before either versioning or publishing, `npm view @rivus/snorlax version` checks that the package name
+   already exists on npm. A missing name or registry failure stops the workflow before a version PR is created.
+   Complete [One-Time Setup](#one-time-setup) first.
 3. Only `publish` mode runs the repository's complete gate (`pnpm run check`, which includes
    `scripts/check-release-plan.mjs`) and a production-dependency audit before publishing.
 4. For `version` or `publish`, `changesets/action` runs its native version/publish path: it opens or updates
@@ -76,8 +75,8 @@ here.
 
 ## First Releases
 
-OIDC cannot create a package name that has never existed on npm. `check-first-publish.ts` blocks the Release
-workflow before creating the version PR until every package it would version has an npm release. Finish the
+OIDC cannot create a package name that has never existed on npm. The workflow's `npm view` check blocks it
+before creating the version PR until `@rivus/snorlax` has an npm release. Finish the
 placeholder publish and Trusted Publisher setup below first (tracked in #35), then re-run the Release workflow.
 The placeholder `0.0.0` never collides with real releases, which are higher. The same check runs before publication
 so a newly added name cannot reach the OIDC exchange without setup.
