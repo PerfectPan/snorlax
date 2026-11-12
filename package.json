@@ -11,11 +11,9 @@
     "test": "pnpm -r run test",
     "format": "pnpm -r run format",
     "format:check": "pnpm -r run format:check",
-    "change": "pnpm change",
-    "check": "pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
-    "version-packages": "pnpm version -r",
-    "release:check": "node scripts/check-release.ts",
-    "publish:dry-run": "pnpm publish -r --access public --no-git-checks --dry-run --json"
+    "changeset": "changeset",
+    "version-packages": "changeset version && pnpm run format",
+    "check": "pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test && node scripts/check-release-plan.ts"
   },
   "engines": {
     "node": "^26.13.1"
@@ -28,5 +26,9 @@
         "onFail": "error"
       }
     ]
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3"
   }
 }

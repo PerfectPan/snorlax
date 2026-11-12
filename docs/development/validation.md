@@ -41,7 +41,7 @@ Automated tests and benchmarks use generated logs under a temporary HOME and rem
 
 ## Regression checks
 
-- `pnpm run check`: formatting, builds, lint, types and tests.
+- `pnpm run check`: formatting, builds, lint, types, tests and the pending change-record check.
 - Protocol regeneration must leave the committed JSON schemas and Swift models unchanged.
 - The [macOS guide](../../apps/macos/README.md) documents Xcode and signing checks. Unsigned/ad-hoc tests do not
   validate App Group entitlements or widget gallery availability under another Apple ID.

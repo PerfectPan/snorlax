@@ -62,15 +62,3 @@ allowBuilds:
   esbuild: true
   # Its postinstall installs the Workers runtime that `cf dev` runs; the Worker tests run on node:sqlite.
   workerd: true
-
-versioning:
-  # `pnpm version -r` must delete consumed changesets and write each package's CHANGELOG.md immediately.
-  # The default ("registry") keeps changesets until the registry confirms publication, which would keep the
-  # Version Packages pull request open forever because the changesets action decides from the remaining files.
-  changelog:
-    storage: repository
-  # All published packages release in lockstep at one shared version: `pnpm version -r` bumps the whole group
-  # together and one release tag covers it, which is what scripts/check-release.ts and the publish workflow
-  # verify. Add every new published package to the group.
-  fixed:
-    - ['@rivus/snorlax']
