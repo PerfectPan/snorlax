@@ -75,16 +75,16 @@ The summary becomes the changelog entry, so write it for users of the package. R
 `.changeset/config.json` sets `privatePackages: { version: false, tag: false }`, so the private workspace packages
 are never versioned or tagged, and `["@changesets/changelog-github", { "repo": "PerfectPan/snorlax" }]` writes PR
 links, commit links and author thanks into `packages/collector/CHANGELOG.md`. The changelog generator reads PR
-data through the GitHub API, so the version step needs `GITHUB_TOKEN`; the action provides it in CI. The
-collector's `vp fmt` configuration ignores the generated `CHANGELOG.md`: the generator indents the blank lines of a
+data through the GitHub API, so the version step needs `GITHUB_TOKEN`; the action provides it in CI. The shared
+`fmt` of `@perfectpan/lint-config` ignores the generated `CHANGELOG.*`: the generator indents the blank lines of a
 multi-paragraph summary, which `format:check` would otherwise reject in the version PR. Preview the version PR
 locally in a throwaway worktree with `GITHUB_TOKEN=$(gh auth token) pnpm run version-packages`, then discard the
 result.
 
 `fixed: []`: with one published package there is nothing to group. When a second published package appears,
 decide between a `fixed` group (lockstep releases at one shared version) and independent versions, and document
-the choice here. Give the new package's `vite.config.ts` the same `fmt` ignore for `CHANGELOG.*`, or its first
-version PR fails `format:check`.
+the choice here. If the new package's `vite.config.ts` sets its own `fmt.ignorePatterns`, start the list with
+`...fmt.ignorePatterns`, or its first version PR fails `format:check` on the generated changelog.
 
 ## First Releases
 
