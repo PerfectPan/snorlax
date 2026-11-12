@@ -76,14 +76,15 @@ The summary becomes the changelog entry, so write it for users of the package. R
 are never versioned or tagged, and `["@changesets/changelog-github", { "repo": "PerfectPan/snorlax" }]` writes PR
 links, commit links and author thanks into `packages/collector/CHANGELOG.md`. The changelog generator reads PR
 data through the GitHub API, so the version step needs `GITHUB_TOKEN`; the action provides it in CI. The
-generator indents the blank lines of a multi-paragraph summary, and Changesets' own formatter detection does not
-see `vp fmt`, so `pnpm run version-packages` runs `pnpm run format` after `changeset version`; without it the
-version PR fails `format:check`. Preview the version PR locally in a throwaway worktree with
-`GITHUB_TOKEN=$(gh auth token) pnpm run version-packages`, then discard the result.
+collector's `vp fmt` configuration ignores the generated `CHANGELOG.md`: the generator indents the blank lines of a
+multi-paragraph summary, which `format:check` would otherwise reject in the version PR. Preview the version PR
+locally in a throwaway worktree with `GITHUB_TOKEN=$(gh auth token) pnpm run version-packages`, then discard the
+result.
 
 `fixed: []`: with one published package there is nothing to group. When a second published package appears,
 decide between a `fixed` group (lockstep releases at one shared version) and independent versions, and document
-the choice here.
+the choice here. Give the new package's `vite.config.ts` the same `fmt` ignore for `CHANGELOG.*`, or its first
+version PR fails `format:check`.
 
 ## First Releases
 
@@ -159,8 +160,7 @@ publisher does not authorize another.
 1. Merge feature PRs with changesets (see [Changesets](#changesets)).
 2. Each such merge runs the Release workflow. With pending records, `changesets/action` runs `pnpm run
    version-packages`: `changeset version` consumes the changesets, bumps the package, writes its changelog
-   (with PR links and author thanks) and deletes the consumed records, then `pnpm run format` formats the generated
-   changelog. The action then commits the result through
+   (with PR links and author thanks) and deletes the consumed records. The action then commits the result through
    the GitHub API (signed) and opens or updates the draft PR `chore(release): version packages` from
    `changeset-release/main`; the PR body lists the package's new `CHANGELOG.md` section. Every later push with
    changesets regenerates the PR from the new `main`. **Actions → Release → Run workflow** on `main` rebuilds it
@@ -210,8 +210,7 @@ it can.
 
 - **First-publish check failed**: the package name has no version on npm. Publish the placeholder (One-Time Setup),
   then re-run the failed run. Nothing was versioned or published.
-- **Version step failed** (`changeset version`, changelog lookup, `pnpm run format`): nothing changed on `main` or
-  the release branch.
+- **Version step failed** (`changeset version`, changelog lookup): nothing changed on `main` or the release branch.
   Re-run the latest run for a transient failure; otherwise fix the cause in a reviewed PR, whose merge regenerates
   the version PR. A missing `GITHUB_TOKEN` fails this step.
 - **Gates failed before publication**: nothing is tagged or published. Re-run for a transient failure. Otherwise fix
