@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3
         with:
-          node-version-file: .node-version
+          runtime: node
           require-lockfile: true
           # The store cache is keyed on the lockfile content hash; the action restores before installing.
           cache: true
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3
         with:
-          node-version-file: .node-version
+          runtime: node
           require-lockfile: true
           cache: true
       - run: pnpm install --frozen-lockfile

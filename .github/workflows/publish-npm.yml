@@ -30,7 +30,7 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
       - uses: pnpm/setup@v3
         with:
-          node-version-file: .node-version
+          runtime: node
           require-lockfile: true
       - name: Verify tag, versions and main ancestry
         run: pnpm run release:check -- "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --verify-git

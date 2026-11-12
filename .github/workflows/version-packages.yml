@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
       - uses: pnpm/setup@v3
         with:
-          node-version-file: .node-version
+          runtime: node
           require-lockfile: true
       - name: Require the first publish for every published package
         # pnpm version -r consumes the changesets even when a package has never been published, and publishing a

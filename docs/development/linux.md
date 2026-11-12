@@ -16,7 +16,7 @@ Node that satisfies that range and check it with `node -v` before installing the
 npm i -g @rivus/snorlax
 ```
 
-Until `@rivus/snorlax` is published to npm, build it from a clone instead. Building needs Node.js `^24.22.0` and
+Until `@rivus/snorlax` is published to npm, build it from a clone instead. Building needs Node.js `^26.13.1` (26.13.1 or a newer 26.x release) and
 pnpm 12 (the root `package.json`'s `devEngines` and `packageManager`); the built CLI runs on Node `>= 22.13`.
 
 ```bash
