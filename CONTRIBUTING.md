@@ -2,13 +2,13 @@
 
 ## Development Setup
 
-Requirements: the Node.js major in `.node-version` (Node 24, the current LTS) and Git. The root `package.json`
-declares the range in `engines.node` and enforces it through `devEngines.runtime` (`onFail: "error"`): with a Node
-outside `^24.11.0`, `pnpm install` fails with `ERR_PNPM_BAD_RUNTIME_VERSION`. pnpm is pinned in the root
+Requirements: Node.js 26.13.1 from `.node-version` and Git. The root `package.json`
+declares the version in `engines.node` and enforces it through `devEngines.runtime` (`onFail: "error"`): with a Node
+other than `26.13.1`, `pnpm install` fails with `ERR_PNPM_BAD_RUNTIME_VERSION`. pnpm is pinned in the root
 `package.json` `packageManager` field; corepack resolves it automatically (`corepack enable pnpm` once per
 machine), and CI installs it through `pnpm/setup`. A standalone pnpm install also works if its major matches.
 
-CI and `.node-version` follow the current Node.js Active LTS major, and workflows reference actions by their latest major tag. When a new Node.js line enters Active LTS (Node 26 is expected in late October 2026), move `.node-version`, the `engines` and `devEngines.runtime` fields and the `@types/node` catalog entry to it in one change.
+Development, CI and release workflows pin Node.js 26.13.1, the [November 2026 security release](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases). Update `.node-version`, `engines` and `devEngines.runtime` together. Published-package minimums and Node type declarations retain their existing compatibility baseline; update them only when required by an API change. Workflows reference actions by their latest major tag.
 
 ```bash
 # install local Git hooks

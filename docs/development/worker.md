@@ -5,7 +5,7 @@ this page does not log in, and it does not name an account, a database id, a dom
 below is a placeholder.
 
 Run the commands from `packages/worker`, so `pnpm exec cf` is the `cf` pinned by this repository. `cf` does not
-reuse a Wrangler login. It needs Node.js `^22.23.0 || ^24.22.0 || ^26.12.0`. This repository develops on Node 24.
+reuse a Wrangler login. It needs Node.js `^22.23.0 || ^24.22.0 || ^26.12.0`. This repository develops and builds deployment artifacts on Node 26.13.1.
 
 ## Log in
 
