@@ -12,7 +12,7 @@
     "format": "pnpm -r run format",
     "format:check": "pnpm -r run format:check",
     "changeset": "changeset",
-    "version-packages": "changeset version && pnpm run format",
+    "version-packages": "changeset version",
     "check": "pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test && node scripts/check-release-plan.ts"
   },
   "engines": {
