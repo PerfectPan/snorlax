@@ -104,7 +104,7 @@ For non-trivial changes:
   `CONTRIBUTING.md`). Changesets are not CI-enforced; adding one is the maintainer's call. Name only published
   packages: `pnpm run check` rejects a changeset that names a private package such as `@rivus/snorlax-protocol`.
 - Never bump versions, edit generated `CHANGELOG.md` files, create release tags, or publish by hand. Every push to
-  `main` runs the one Release workflow (`publish-npm.yml`): while changesets are pending it opens or updates the
+  `main` runs the one Release workflow (`publish.yml`): while changesets are pending it opens or updates the
   draft version PR, and once a merged version PR has consumed them it publishes and tags and releases each
   package. Follow `docs/development/release.md`.
 - Workspace dependencies between packages use `workspace:*`; pnpm replaces them with exact versions when packing.

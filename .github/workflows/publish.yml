@@ -1,5 +1,5 @@
-# npm Trusted Publishing for @rivus/snorlax is registered against this file name; renaming it requires changing the
-# package's trusted publisher on npmjs.com first.
+# The npm trusted publisher of @rivus/snorlax is bound to this file name; see One-Time Setup in
+# docs/development/release.md before renaming it.
 name: Release
 
 on:

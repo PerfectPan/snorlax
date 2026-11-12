@@ -210,7 +210,7 @@ The review checks come from [`PerfectPan/gh-repo-checks`](https://github.com/Per
 
 Run `gh repo-checks repository` locally before opening review. This generic check does not replace stack-specific tests, but it catches missing template files, tracked local artifacts, obvious secrets, private paths, and drift in review templates.
 
-Workflows reference actions by their latest major version tag, such as `actions/checkout@v7`, not by commit SHA. The Release workflow is the exception: it pins `changesets/action` to an exact release tag (see the comment in `publish-npm.yml`). Workflow files copied from this template take action upgrades from the template rather than local edits.
+Workflows reference actions by their latest major version tag, such as `actions/checkout@v7`, not by commit SHA. The Release workflow is the exception: it pins `changesets/action` to an exact release tag (see the comment in `publish.yml`). Workflow files copied from this template take action upgrades from the template rather than local edits.
 
 ## Local Git Hooks
 

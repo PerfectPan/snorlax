@@ -9,16 +9,16 @@ and creates its GitHub Release. No long-lived npm token is stored in the reposit
 | Step | Where | Result |
 | --- | --- | --- |
 | Changeset | feature PR | `.changeset/<name>.md`, written with `pnpm changeset` or by hand; CI does not check for it |
-| Version PR | `publish-npm.yml`, on each push to `main` with pending changesets | draft PR `chore(release): version packages` from `changeset-release/main`, whose body lists the package's new changelog section |
+| Version PR | `publish.yml`, on each push to `main` with pending changesets | draft PR `chore(release): version packages` from `changeset-release/main`, whose body lists the package's new changelog section |
 | Version PR merge | GitHub, the release decision | bumped `package.json` version and `CHANGELOG.md` on `main`, no pending changesets |
-| Publish | `publish-npm.yml`, on the merge push | the release gates run, the package publishes, and the workflow pushes its tag and creates its GitHub Release |
+| Publish | `publish.yml`, on the merge push | the release gates run, the package publishes, and the workflow pushes its tag and creates its GitHub Release |
 
 Each row is a separate completion state. A merged version PR is not a published release, and a started publish
 workflow is not a published package.
 
 ## The Release Workflow
 
-`publish-npm.yml` runs on every push to `main` (a PR merge is a push) and on manual dispatch. One job:
+`publish.yml` runs on every push to `main` (a PR merge is a push) and on manual dispatch. One job:
 
 1. `changesets/action/select-mode@v2.1.2` selects `version` for pending records, `publish` for unpublished
    versions without pending records, or `none` when there is no release work. `none` skips the remaining steps.
@@ -31,7 +31,7 @@ workflow is not a published package.
    `pnpm --filter @rivus/snorlax audit --audit-level=high`: the collector bundles its devDependencies into `dist`,
    so a `--prod` audit would skip the code that ships. The filter does not follow workspace packages, so a runtime
    dependency of the bundled `@rivus/snorlax-protocol` is audited only because the collector declares it too (see
-   the comment in `publish-npm.yml`).
+   the comment in `publish.yml`).
 4. `changesets/action@v2.1.2` owns versioning and publication: it opens or updates the draft version PR, or
    publishes the unpublished versions and tags each published package. The version commit goes through the
    GitHub API, so GitHub signs it.
@@ -128,14 +128,14 @@ exists:
    The `@rivus` scope must belong to an npm organization or user the maintainer owns. Skip this step if the name
    already exists on npm.
 2. On npmjs.com open the package **Settings → Trusted Publisher → GitHub Actions** and enter the owner
-   `PerfectPan`, the repository `snorlax`, the workflow filename `publish-npm.yml`, and no environment. The trusted
+   `PerfectPan`, the repository `snorlax`, the workflow filename `publish.yml`, and no environment. The trusted
    publisher is bound to that file name, so renaming the workflow means configuring it again. Enable **direct
    publishing** ("Allow npm publish"): new configurations default to staged publishing only, and `pnpm publish`
    then fails with an authorization error. The CLI equivalent (npm 11.15 or later, two-factor authentication on
    the account) is:
 
    ```bash
-   npm trust github @rivus/snorlax --repo PerfectPan/snorlax --file publish-npm.yml --allow-publish
+   npm trust github @rivus/snorlax --repo PerfectPan/snorlax --file publish.yml --allow-publish
    npm trust list @rivus/snorlax
    ```
 
@@ -144,7 +144,7 @@ exists:
 3. Under **Publishing access**, select "Require two-factor authentication and disallow tokens" so that only the
    trusted workflow can publish.
 
-The workflow filename in the form is `publish-npm.yml`, the file `.github/workflows/publish-npm.yml`. Its
+The workflow filename in the form is `publish.yml`, the file `.github/workflows/publish.yml`. Its
 `release` job sets `permissions.id-token: write` (that permission is the OIDC token the exchange requires) and
 sets no `environment:`, which is why the form's environment stays empty. The job does not read `NPM_TOKEN` or
 `NODE_AUTH_TOKEN`. A form whose workflow filename or environment does not match this file fails the exchange even
@@ -195,9 +195,9 @@ publisher does not authorize another.
   bundles or its runtime behavior.
 - **Dependabot GitHub Actions PRs** move an action to its next major version tag (for example `actions/checkout@v7`
   to `@v8`); minor and patch releases need no PR because workflows reference the major tag. The changesets actions
-  in `publish-npm.yml` are pinned to an exact release tag instead, so their PRs also arrive for patch and minor
+  in `publish.yml` are pinned to an exact release tag instead, so their PRs also arrive for patch and minor
   releases; review the release notes before merging, since that job holds write and OIDC permissions. Merge them
-  for this repository's own workflows (`ci.yml`, `publish-npm.yml`). Close PRs that touch `review.yml` or another
+  for this repository's own workflows (`ci.yml`, `publish.yml`). Close PRs that touch `review.yml` or another
   file synced from [PerfectPan/project-template](https://github.com/PerfectPan/project-template), with a comment that
   the bump comes from upstream, and sync the file once upstream has it. Dependabot cannot ignore an action per file,
   so these PRs keep appearing.
