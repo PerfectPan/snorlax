@@ -11,7 +11,8 @@ import { defineConfig } from "vite-plus";
  * import would embed the whole manifest, including devDependency names, in the shipped file.
  */
 export default defineConfig({
-  fmt,
+  // Changesets generates CHANGELOG.md.
+  fmt: { ...fmt, ignorePatterns: ["CHANGELOG.*"] },
   lint: { ...lint, ignorePatterns: ["node_modules/**", "dist/**"] },
   build: {
     target: "node22.13",
