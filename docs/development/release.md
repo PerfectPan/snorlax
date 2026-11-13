@@ -18,23 +18,27 @@ workflow is not a published package.
 
 ## The Release Workflow
 
-`publish.yml` runs on every push to `main` (a PR merge is a push) and on manual dispatch. One job:
+`publish.yml` runs on every push to `main` (a PR merge is a push) and on manual dispatch. It calls the shared
+workflow `PerfectPan/gh-repo-checks/.github/workflows/npm-release.yml@v1`, whose
+[runbook](https://github.com/PerfectPan/gh-repo-checks/blob/v1/docs/npm-release.md) describes each job and its
+recovery:
 
-1. `changesets/action/select-mode@v2.1.2` selects `version` for pending records, `publish` for unpublished
-   versions without pending records, or `none` when there is no release work. `none` skips the remaining steps.
-2. `scripts/check-first-publish.ts` uses `npm view` to require an existing npm version before versioning or
-   publishing. In `version` mode it checks only the release plan's affected public packages, so an unrelated new
-   package does not block an existing package's version PR. In `publish` mode it checks all public, non-ignored
-   packages.
-3. Only in `publish` mode, the repository's complete gate (`pnpm run check`, which includes
-   `scripts/check-release-plan.ts`) and a dependency audit run before anything is published. The audit is
-   `pnpm --filter @rivus/snorlax audit --audit-level=high`: the collector bundles its devDependencies into `dist`,
-   so a `--prod` audit would skip the code that ships. The filter does not follow workspace packages, so a runtime
-   dependency of the bundled `@rivus/snorlax-protocol` is audited only because the collector declares it too (see
-   the comment in `publish.yml`).
-4. `changesets/action@v2.1.2` owns versioning and publication: it opens or updates the draft version PR, or
-   publishes the unpublished versions and tags each published package. The version commit goes through the
-   GitHub API, so GitHub signs it.
+1. **select release mode** (read-only) runs `changesets/action/select-mode`: `version` for pending records,
+   `publish` for unpublished versions without pending records, or `none` when there is no release work. `none`
+   skips the remaining jobs. In `version` mode `gh repo-checks release-plan` checks the pending records again. In
+   both modes `gh repo-checks first-publish` uses `npm view` to require an existing npm version: in `version` mode
+   for the release plan's affected public packages, so an unrelated new package does not block an existing
+   package's version PR, and in `publish` mode for all public, non-ignored packages.
+2. **version packages** opens or updates the draft version PR with `pnpm run version-packages`. The version commit
+   goes through the GitHub API, so GitHub signs it.
+3. **check and pack packages** (read-only, `publish` mode) runs the repository's complete gate (`pnpm run check`)
+   and the one input this repository sets, `audit-command: pnpm --filter @rivus/snorlax audit --audit-level=high`:
+   the collector bundles its devDependencies into `dist`, so a `--prod` audit would skip the code that ships. The
+   filter does not follow workspace packages, so a runtime dependency of the bundled `@rivus/snorlax-protocol` is
+   audited only because the collector declares it too (see the comment in `publish.yml`). It then packs the
+   unpublished version.
+4. **publish packages** is the only job with the OIDC permission. It installs without lifecycle scripts, publishes
+   the packed tarball through Trusted Publishing, pushes the tag and creates the GitHub Release.
 
 Runs share one concurrency group with `cancel-in-progress: false`: a push waits for the running run, and GitHub
 keeps only the newest waiting run, cancelling older waiting ones.
@@ -62,12 +66,15 @@ Correct the doctor verdict line.
 
 The summary becomes the changelog entry, so write it for users of the package. Rules for the bump:
 
-- Use `patch` for fixes, `minor` for features and `major` for a breaking release.
+- Use `patch` for fixes and `minor` for features. While `@rivus/snorlax` is 0.x, a breaking change is also `minor`:
+  `major` would release 1.0.0, and `gh repo-checks release-plan` rejects it unless the PR that adds the record also
+  lists `allow-major @rivus/snorlax` in `.github/repo-checks.conf`. Remove that line after 1.0.0 is published.
 - Name only `@rivus/snorlax`. `@rivus/snorlax-protocol` and `@rivus/snorlax-worker` are private, and
   `privatePackages.version: false` means Changesets never versions them. A record naming only a private package is
   never consumed by `changeset version`, so it stays pending and the flow would never publish again; a record
-  naming a private package beside `@rivus/snorlax` fails `changeset version` outright. `check-release-plan.ts`
-  rejects both, including `none` records. Describe a protocol change by its effect on `@rivus/snorlax` instead.
+  naming a private package beside `@rivus/snorlax` fails `changeset version` outright.
+  `gh repo-checks release-plan`, which CI runs on every pull request, rejects both, including `none` records.
+  Describe a protocol change by its effect on `@rivus/snorlax` instead.
 - `pnpm changeset status --verbose` prints the pending changesets and the version they would release.
 
 ## Versioning Configuration
@@ -88,11 +95,11 @@ the choice here. If the new package's `vite.config.ts` sets its own `fmt.ignoreP
 
 ## First Releases
 
-Publishing a package name that has never existed on npm fails at the trusted-publishing exchange: OIDC cannot
-create package names. `check-first-publish.ts` stops the Release workflow before it creates a version PR for a new
-package name. `@rivus/snorlax` has no version on npm yet, so every run with pending records fails that check until
-the placeholder publish in One-Time Setup exists. Publish the placeholder and re-run the failed run to get the
-version PR; configure the trusted publisher right before merging that PR (see One-Time Setup for why not earlier).
+Publishing a package name that has never existed on npm fails at the trusted-publishing exchange: OIDC cannot create
+package names. The first-publish check in select release mode stops the Release workflow before it creates a version
+PR for a new package name. `@rivus/snorlax` has no version on npm yet, so every run with pending records fails that
+check until the placeholder publish in One-Time Setup exists. Publish the placeholder and re-run the failed run to get
+the version PR; configure the trusted publisher right before merging that PR (see One-Time Setup for why not earlier).
 
 The placeholder `0.0.0` never collides with real releases, which are higher. The manifest's `0.1.0` was never
 published, and the pending records include `minor` bumps, so the first version PR releases `0.2.0`.
@@ -145,11 +152,11 @@ exists:
 3. Under **Publishing access**, select "Require two-factor authentication and disallow tokens" so that only the
    trusted workflow can publish.
 
-The workflow filename in the form is `publish.yml`, the file `.github/workflows/publish.yml`. Its
-`release` job sets `permissions.id-token: write` (that permission is the OIDC token the exchange requires) and
-sets no `environment:`, which is why the form's environment stays empty. The job does not read `NPM_TOKEN` or
-`NODE_AUTH_TOKEN`. A form whose workflow filename or environment does not match this file fails the exchange even
-after the placeholder publish.
+The workflow filename in the form is `publish.yml`, the file `.github/workflows/publish.yml`: npm checks this calling
+file, not the shared workflow it calls. Its `release` job grants `id-token: write` (the OIDC token the exchange
+requires), which the shared workflow passes only to its publish job, and neither sets an `environment:`, which is why
+the form's environment stays empty. Neither reads `NPM_TOKEN` or `NODE_AUTH_TOKEN`. A form whose workflow filename or
+environment does not match this file fails the exchange even after the placeholder publish.
 
 `@rivus/snorlax-protocol` and `@rivus/snorlax-worker` are private: they need no trusted publisher and no placeholder
 release. A package that later becomes public needs its own placeholder and trusted publisher; one package's trusted
@@ -158,7 +165,7 @@ publisher does not authorize another.
 ## Cutting a Release
 
 1. Merge feature PRs with changesets (see [Changesets](#changesets)).
-2. Each such merge runs the Release workflow. With pending records, `changesets/action` runs `pnpm run
+2. Each such merge runs the Release workflow. With pending records, the version job runs `pnpm run
    version-packages`: `changeset version` consumes the changesets, bumps the package, writes its changelog
    (with PR links and author thanks) and deletes the consumed records. The action then commits the result through
    the GitHub API (signed) and opens or updates the draft PR `chore(release): version packages` from
@@ -174,9 +181,10 @@ publisher does not authorize another.
 4. Confirm the `check` and `macos` jobs actually ran and passed for the current head alongside the Review checks,
    and squash-merge. Merging the version PR is the release decision.
 5. The merge push runs the Release workflow on the merge commit, where no record is pending: select-mode chooses
-   `publish`, the gates run, and `changeset publish` runs `pnpm publish` for the unpublished version through
-   Trusted Publishing. pnpm sends the workflow's OIDC token and attaches provenance itself. The action pushes the
-   tag `@rivus/snorlax@X.Y.Z` and creates the GitHub Release with the version's changelog section.
+   `publish`, a read-only job runs the gates and the audit and packs the unpublished version, and the publish job's
+   `changeset publish` runs `pnpm publish` on that tarball through Trusted Publishing. pnpm sends the job's OIDC token
+   and attaches provenance itself. The action pushes the tag `@rivus/snorlax@X.Y.Z` and creates the GitHub Release
+   with the version's changelog section.
 6. Verify the package at the new version, for example `npm view @rivus/snorlax@X.Y.Z`, `git ls-remote --tags
    origin`, the GitHub Release, and a clean `npm install -g @rivus/snorlax@X.Y.Z` in a scratch prefix. Registry
    reads can lag the publish by a minute; retry the read, not the publish. The npm package page shows a provenance
@@ -193,14 +201,13 @@ publisher does not authorize another.
   (`npm:@voidzero-dev/vite-plus-core`) land in separate PRs; add the alias bump to the first branch before
   merging so the two stay in lockstep. Add a `patch` changeset for `@rivus/snorlax` when an update changes what it
   bundles or its runtime behavior.
-- **Dependabot GitHub Actions PRs** move an action to its next major version tag (for example `actions/checkout@v7`
-  to `@v8`); minor and patch releases need no PR because workflows reference the major tag. The changesets actions
-  in `publish.yml` are pinned to an exact release tag instead, so their PRs also arrive for patch and minor
-  releases; review the release notes before merging, since that job holds write and OIDC permissions. Merge them
-  for this repository's own workflows (`ci.yml`, `publish.yml`). Close PRs that touch `review.yml` or another
-  file synced from [PerfectPan/project-template](https://github.com/PerfectPan/project-template), with a comment that
-  the bump comes from upstream, and sync the file once upstream has it. Dependabot cannot ignore an action per file,
-  so these PRs keep appearing.
+- **Dependabot GitHub Actions PRs** move an action to its next major version tag (for example `actions/checkout@v7` to
+  `@v8`); minor and patch releases need no PR because workflows reference the major tag. `publish.yml` references the
+  shared release workflow's `v1` tag the same way, and that workflow pins the changesets actions itself. Merge them
+  for this repository's own workflows (`ci.yml`, `publish.yml`). Close PRs that touch `review.yml` or another file
+  synced from [PerfectPan/project-template](https://github.com/PerfectPan/project-template), with a comment that the
+  bump comes from upstream, and sync the file once upstream has it. Dependabot cannot ignore an action per file, so
+  these PRs keep appearing.
 
 ## Failure Recovery
 
@@ -208,8 +215,9 @@ The action publishes only when no record is pending; with records pending it pre
 if an earlier version is still unpublished. Recovery therefore re-runs the run of the release commit itself whenever
 it can.
 
-- **First-publish check failed**: the package name has no version on npm. Publish the placeholder (One-Time Setup),
-  then re-run the failed run. Nothing was versioned or published.
+- **select release mode failed**: `release-plan` names a record to fix or remove, or the package a major record
+  would move to 1.0.0. `first-publish` names a package name with no version on npm: publish the placeholder
+  (One-Time Setup), then re-run the failed run. Nothing was versioned or published.
 - **Version step failed** (`changeset version`, changelog lookup): nothing changed on `main` or the release branch.
   Re-run the latest run for a transient failure; otherwise fix the cause in a reviewed PR, whose merge regenerates
   the version PR. A missing `GITHUB_TOKEN` fails this step.
@@ -221,10 +229,10 @@ it can.
   record is pending, so it publishes. If a later push with records ran instead, it prepared the next version PR and
   the merged version stays unpublished until this re-run. Avoid merging PRs with records while the merge run is
   still waiting.
-- **Publication stopped part-way**: re-run the failed run; `changeset publish` skips versions already on npm and
-  tags the rest on the run's commit. **Run workflow** on `main` does the same only while no record is pending, and
-  it tags the current `main` commit instead of the release commit. Never bump the version to retry, and never
-  unpublish.
+- **Publication stopped part-way**: use **Re-run failed jobs** on the failed run, which keeps its commit and packed
+  tarball; `changeset publish` skips versions already on npm and tags the rest on the run's commit. **Run workflow**
+  on `main` does the same only while no record is pending, and it tags the current `main` commit instead of the
+  release commit. Never bump the version to retry, and never unpublish.
 - **Published but the tag or Release is missing**: the version is already on npm, so re-runs do not add them.
   Create them by hand on the release commit: `gh release create '@rivus/snorlax@X.Y.Z' --target <release commit>`
   with the version's changelog section as notes.
@@ -232,7 +240,7 @@ it can.
 - **Trusted Publishing rejected the package**: fix its trusted publisher on npmjs.com (owner, repository, workflow
   file name, environment, direct publishing allowed) and re-run.
 - **A record is never consumed**: it names a private or ignored package. Remove it or move its note to
-  `@rivus/snorlax`; `check-release-plan.ts` names it.
+  `@rivus/snorlax`; `gh repo-checks release-plan` names it in CI and in select release mode.
 - **Bad published contents**: npm versions are immutable. Deprecate the version and release a fix:
 
   ```bash

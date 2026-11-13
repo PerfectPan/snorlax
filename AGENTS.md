@@ -46,8 +46,11 @@ pnpm install
 # After adding or changing a dependency, refresh the lockfile and commit it:
 pnpm install
 
-# Aggregate gate: format:check, build, lint, typecheck, test, pending change records (check-release-plan):
+# Aggregate gate: format:check, build, lint, typecheck, test:
 pnpm run check
+
+# Pending change records (CI runs it before the aggregate gate; gh-repo-checks v1.4.0 or later):
+gh repo-checks release-plan
 
 # Individual gates (run in every workspace package that defines them):
 pnpm run format        # or format:check
@@ -102,7 +105,9 @@ For non-trivial changes:
 - A PR that changes what a published package ships (source, manifest, build config) or the lockfile includes a
   changeset under `.changeset/`. Create it with `pnpm changeset`, or write the file directly (format in
   `CONTRIBUTING.md`). Changesets are not CI-enforced; adding one is the maintainer's call. Name only published
-  packages: `pnpm run check` rejects a changeset that names a private package such as `@rivus/snorlax-protocol`.
+  packages: `gh repo-checks release-plan` (run in CI) rejects a changeset that names a private package such as
+  `@rivus/snorlax-protocol`. While `@rivus/snorlax` is 0.x, a breaking change takes `minor`; the same check rejects
+  a `major` record unless `.github/repo-checks.conf` lists `allow-major @rivus/snorlax`.
 - Never bump versions, edit generated `CHANGELOG.md` files, create release tags, or publish by hand. Every push to
   `main` runs the one Release workflow (`publish.yml`): while changesets are pending it opens or updates the
   draft version PR, and once a merged version PR has consumed them it publishes and tags and releases each

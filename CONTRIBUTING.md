@@ -60,8 +60,11 @@ Small typo corrections, narrow documentation fixes, and repository metadata upda
 # Local Git hooks:
 ./scripts/install-git-hooks.sh
 
-# Aggregate gate: format:check, build, lint, typecheck, test, pending change records (check-release-plan):
+# Aggregate gate: format:check, build, lint, typecheck, test:
 pnpm run check
+
+# Pending change records (CI runs it before the aggregate gate; gh-repo-checks v1.4.0 or later):
+gh repo-checks release-plan
 
 # PR/MR title:
 gh repo-checks pr-title "docs: update project template"
@@ -100,12 +103,12 @@ Update runtime dependencies.
 ```
 
 The file name is a short kebab-case slug. Name only published packages: `@rivus/snorlax-protocol` and
-`@rivus/snorlax-worker` are private, Changesets never versions them, and `pnpm run check` rejects a record that
-names one. Describe a protocol or Worker change by its effect on `@rivus/snorlax` when it changes what that package
-ships. `pnpm changeset status --verbose` previews what pending changesets would release, and the Release
-workflow's version pull request (`changeset version`) consumes them. Tests, fixtures and Markdown changes usually
-do not need a changeset; changesets are not CI-enforced, so whether a change rides a release is the maintainer's
-call. See [`docs/development/release.md`](docs/development/release.md) for the release procedure.
+`@rivus/snorlax-worker` are private, Changesets never versions them, and `gh repo-checks release-plan` (run in CI)
+rejects a record that names one. Describe a protocol or Worker change by its effect on `@rivus/snorlax` when it
+changes what that package ships. `pnpm changeset status --verbose` previews what pending changesets would release,
+and the Release workflow's version pull request (`changeset version`) consumes them. Tests, fixtures and Markdown
+changes usually do not need a changeset; changesets are not CI-enforced, so whether a change rides a release is the
+maintainer's call. See [`docs/development/release.md`](docs/development/release.md) for the release procedure.
 
 ## SDD Workflow And Document Lifecycle
 
@@ -210,7 +213,7 @@ The review checks come from [`PerfectPan/gh-repo-checks`](https://github.com/Per
 
 Run `gh repo-checks repository` locally before opening review. This generic check does not replace stack-specific tests, but it catches missing template files, tracked local artifacts, obvious secrets, private paths, and drift in review templates.
 
-Workflows reference actions by their latest major version tag, such as `actions/checkout@v7`, not by commit SHA. The Release workflow is the exception: it pins `changesets/action` to an exact release tag (see the comment in `publish.yml`). Workflow files copied from this template take action upgrades from the template rather than local edits.
+Workflows reference actions by their latest major version tag, such as `actions/checkout@v7`, not by commit SHA. The Release workflow calls the shared release workflow at `PerfectPan/gh-repo-checks/.github/workflows/npm-release.yml@v1`, which pins `changesets/action` to an exact release tag itself. Workflow files copied from this template take action upgrades from the template rather than local edits.
 
 ## Local Git Hooks
 
