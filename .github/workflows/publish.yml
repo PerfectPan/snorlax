@@ -1,5 +1,6 @@
 # The npm trusted publisher of @rivus/snorlax is bound to this file name; see One-Time Setup in
-# docs/development/release.md before renaming it.
+# docs/development/release.md before renaming it. The release jobs come from the shared workflow in
+# PerfectPan/gh-repo-checks; docs/development/release.md describes how this repository uses it.
 name: Release
 
 on:
@@ -16,70 +17,16 @@ concurrency:
 
 jobs:
   release:
-    name: version or publish packages
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    uses: PerfectPan/gh-repo-checks/.github/workflows/npm-release.yml@v1
+    # The shared workflow narrows these per job; only its publish job can request an OIDC token.
     permissions:
-      # Pushes the version branch, release tags and GitHub Releases.
       contents: write
       pull-requests: write
-      # npm Trusted Publishing exchanges the workflow's OIDC token for a publish credential.
       id-token: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # changelog-github looks up the commit that added each change record.
-          fetch-depth: 0
-          # Keeps the write token out of .git/config while repository code runs; the action pushes through the
-          # GitHub API with its own token input.
-          persist-credentials: false
-      # The setup step runs in ci.yml too, so the release gates run on the same Node.js and pnpm.
-      # pnpm/setup installs the pnpm from `packageManager` and the Node.js range in `devEngines.runtime`,
-      # then runs `pnpm install --frozen-lockfile`.
-      - uses: pnpm/setup@v3
-        with:
-          runtime: node
-          require-lockfile: true
-          # The store cache is keyed on the lockfile content hash; the action restores before installing.
-          cache: true
-
-      # Both changesets actions are pinned to an exact release tag, not the major tag the other workflows use: this
-      # job holds write and OIDC permissions.
-      - name: Select release mode
-        id: mode
-        uses: changesets/action/select-mode@v2.1.2
-
-      - name: Check first-publish setup
-        if: steps.mode.outputs.mode != 'none'
-        run: node scripts/check-first-publish.ts '${{ steps.mode.outputs.mode }}'
-
-      - name: Run release gates
-        if: steps.mode.outputs.mode == 'publish'
-        run: pnpm run check
+    with:
       # @rivus/snorlax bundles its devDependencies into dist, so `--prod` would skip the code that ships. The filter
       # audits the collector's own dependencies, dev included, but not the trees of the workspace packages it uses:
       # that keeps out the test-only Worker's Cloudflare tooling, and it means a runtime dependency of the bundled
       # @rivus/snorlax-protocol is audited only while packages/collector/package.json also lists it (zod today).
       # Adding `...` to the filter would pull the Worker tooling back in.
-      - name: Audit the published package's dependencies
-        if: steps.mode.outputs.mode == 'publish'
-        run: pnpm --filter @rivus/snorlax audit --audit-level=high
-
-      # With pending change records, runs version-packages and opens or updates the draft pull request
-      # changeset-release/main -> main; its body lists each package's new changelog section. Select Ready for review
-      # to run CI before merging. Without pending records, `changeset publish` runs `pnpm publish` for each
-      # unpublished public version through Trusted Publishing, and the action creates one tag and one GitHub Release
-      # per published package; with nothing unpublished it publishes nothing. The version commit goes through the
-      # GitHub API, so GitHub signs it. The publish script stays set even when the gates were skipped: without one,
-      # the action's version pull request body tells maintainers to publish by hand.
-      - name: Create the version pull request or publish
-        if: steps.mode.outputs.mode != 'none'
-        uses: changesets/action@v2.1.2
-        with:
-          # The action runs these commands without a shell.
-          version-script: pnpm run version-packages
-          publish-script: pnpm exec changeset publish
-          commit-message: "chore(release): version packages"
-          pr-title: "chore(release): version packages"
-          pr-draft: always
+      audit-command: pnpm --filter @rivus/snorlax audit --audit-level=high

@@ -26,6 +26,11 @@ jobs:
           require-lockfile: true
           # The store cache is keyed on the lockfile content hash; the action restores before installing.
           cache: true
+      # Rejects a pending changeset that names a private package, which is never consumed, or that would move
+      # @rivus/snorlax to 1.0.0 without `allow-major` in .github/repo-checks.conf.
+      - uses: PerfectPan/gh-repo-checks@v1
+        with:
+          check: release-plan
       - run: pnpm run check
 
   macos:
