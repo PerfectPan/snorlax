@@ -17,7 +17,7 @@ catalog:
   # `vite-plus` entry (same release train; Dependabot does not see the mapping).
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   '@date-fns/tz': 1.5.0
-  '@hono/node-server': 2.1.5
+  '@hono/node-server': 2.1.6
   '@hono/standard-validator': 0.4.1
   '@perfectpan/lint-config': github:PerfectPan/lint-config#v0.7.1
   '@rivus/agent-kit': 0.23.0
@@ -53,6 +53,8 @@ minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@rivus/agent-kit'
   - '@rivus/agent-kit-collab'
+  # Renovate security update: @hono/node-server@2.1.6
+  - "@hono/node-server@2.1.6"
 
 strictPeerDependencies: true
 autoInstallPeers: true
