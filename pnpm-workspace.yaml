@@ -28,7 +28,7 @@ catalog:
   cf: 1.0.0-beta.25
   wrangler: 4.155.0
   date-fns: 4.4.0
-  hono: 4.13.14
+  hono: 4.13.16
   plist: 5.0.0
   quicktype: 26.0.0
   typescript: 7.0.2
@@ -53,6 +53,8 @@ minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@rivus/agent-kit'
   - '@rivus/agent-kit-collab'
+  # Renovate security update: hono@4.13.16
+  - hono@4.13.16
 
 strictPeerDependencies: true
 autoInstallPeers: true
