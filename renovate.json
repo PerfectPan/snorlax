@@ -2,9 +2,9 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   // Mirrors the retired .github/dependabot.yml: weekly schedule, grouped minor/patch and major
   // updates. minimumReleaseAge must not be shorter than minimumReleaseAge in pnpm-workspace.yaml
-  // (pnpm rejects versions published less than a day ago). The vite core alias mapping in
-  // pnpm-workspace.yaml is bumped by a custom manager grouped with the vite-plus toolchain, since
-  // Dependabot never saw that mapping.
+  // (pnpm rejects versions published less than a day ago). Renovate extracts the vite catalog alias
+  // natively; the toolchain group keeps the alias, vite-plus and the bundled vitest on one release
+  // train — Dependabot proposed the alias separately and needed a manual bump on the branch.
   "extends": ["config:recommended"],
   "enabledManagers": ["npm", "github-actions"],
   "automerge": false,
@@ -43,10 +43,14 @@
       "groupName": "npm major"
     },
     {
-      // vite-plus and its core alias ship on the same release train; grouping keeps the catalog
-      // mapping and the toolchain on one branch.
+      // vite-plus and its vitest monorepo companions ship as one release unit; the preset covers
+      // both monorepos.
       "extends": ["packages:vitePlus"],
-      "matchPackageNames": ["vite-plus", "@voidzero-dev/vite-plus-core"],
+      "groupName": "vite-plus toolchain"
+    },
+    {
+      // The catalog vite alias resolves to the vite-plus core package; group it with the toolchain.
+      "matchPackageNames": ["@voidzero-dev/vite-plus-core"],
       "groupName": "vite-plus toolchain"
     },
     {
@@ -75,18 +79,6 @@
       // its tags and proposes downgrades (v0.5.0 -> v0.3.2).
       "matchPackageNames": ["@perfectpan/lint-config"],
       "enabled": false
-    }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Bump the vite core alias in lockstep with the vite-plus toolchain (same release train)",
-      "managerFilePatterns": ["/^pnpm-workspace\\.yaml$/"],
-      "matchStrings": [
-        "vite:\\s*npm:@voidzero-dev/vite-plus-core@(?<currentValue>[^\\s]+)"
-      ],
-      "depNameTemplate": "@voidzero-dev/vite-plus-core",
-      "datasourceTemplate": "npm"
     }
   ],
   "vulnerabilityAlerts": {
