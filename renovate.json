@@ -1,0 +1,95 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  // Mirrors the retired .github/dependabot.yml: weekly schedule, grouped minor/patch and major
+  // updates. minimumReleaseAge must not be shorter than minimumReleaseAge in pnpm-workspace.yaml
+  // (pnpm rejects versions published less than a day ago). The vite core alias mapping in
+  // pnpm-workspace.yaml is bumped by a custom manager grouped with the vite-plus toolchain, since
+  // Dependabot never saw that mapping.
+  "extends": ["config:recommended"],
+  "enabledManagers": ["npm", "github-actions"],
+  "automerge": false,
+  "ignorePaths": ["**/node_modules/**"],
+  "timezone": "Asia/Shanghai",
+  "schedule": ["* 0-6 * * 1"],
+  "minimumReleaseAge": "7 days",
+  "rangeStrategy": "bump",
+  "prConcurrentLimit": 5,
+  "osvVulnerabilityAlerts": true,
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "prBodyNotes": [
+    "Bot PRs carry no changeset. If this PR changes a published package's behavior, add a patch changeset before merging."
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "GitHub Actions minor and patch"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "groupName": null
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "npm minor and patch"
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "npm major"
+    },
+    {
+      // vite-plus and its core alias ship on the same release train; grouping keeps the catalog
+      // mapping and the toolchain on one branch.
+      "extends": ["packages:vitePlus"],
+      "matchPackageNames": ["vite-plus", "@voidzero-dev/vite-plus-core"],
+      "groupName": "vite-plus toolchain"
+    },
+    {
+      "matchDepTypes": ["packageManager"],
+      "groupName": "pnpm"
+    },
+    {
+      // Runtime types follow the Node LTS major pinned in .node-version.
+      "matchPackageNames": ["@types/node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      // The runtime itself is pinned in lockstep across .node-version and the workflows; bots move
+      // them together or not at all.
+      "matchManagers": ["npm"],
+      "matchDatasources": ["node-version"],
+      "enabled": false
+    },
+    {
+      "matchDepTypes": ["engines", "devEngines.runtime"],
+      "enabled": false
+    },
+    {
+      // lint-config is a git dependency whose upgrades land with their code fixes; Renovate misreads
+      // its tags and proposes downgrades (v0.5.0 -> v0.3.2).
+      "matchPackageNames": ["@perfectpan/lint-config"],
+      "enabled": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Bump the vite core alias in lockstep with the vite-plus toolchain (same release train)",
+      "managerFilePatterns": ["/^pnpm-workspace\\.yaml$/"],
+      "matchStrings": [
+        "vite:\\s*npm:@voidzero-dev/vite-plus-core@(?<currentValue>[^\\s]+)"
+      ],
+      "depNameTemplate": "@voidzero-dev/vite-plus-core",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "rangeStrategy": "bump"
+  }
+}
