@@ -171,8 +171,8 @@ catalogs:
       specifier: 4.0.5
       version: 4.0.5
     '@hono/node-server':
-      specifier: 2.1.5
-      version: 2.1.5
+      specifier: 2.1.6
+      version: 2.1.6
     '@hono/standard-validator':
       specifier: 0.4.1
       version: 0.4.1
@@ -244,7 +244,7 @@ importers:
         version: 4.0.5(effect@4.0.5)(redis@6.3.0)
       '@hono/node-server':
         specifier: 'catalog:'
-        version: 2.1.5(hono@4.13.14)
+        version: 2.1.6(hono@4.13.14)
       '@perfectpan/lint-config':
         specifier: 'catalog:'
         version: https://codeload.github.com/PerfectPan/lint-config/tar.gz/5b361c053389ac978dfec1121d11731c904ec1d0(oxfmt@0.72.0(vite-plus@1.4.0(@types/node@24.19.2)(@vitest/ui@5.0.5)(esbuild@0.28.2)(terser@5.51.2)(typescript@7.0.2)(yaml@2.9.1)))(oxlint-tsgolint@7.0.2004)(oxlint@1.87.0(oxlint-tsgolint@7.0.2004)(vite-plus@1.4.0(@types/node@24.19.2)(@vitest/ui@5.0.5)(esbuild@0.28.2)(terser@5.51.2)(typescript@7.0.2)(yaml@2.9.1)))(typescript@7.0.2)(vite-plus@1.4.0(@types/node@24.19.2)(@vitest/ui@5.0.5)(esbuild@0.28.2)(terser@5.51.2)(typescript@7.0.2)(yaml@2.9.1))
@@ -699,8 +699,8 @@ packages:
   '@glideapps/ts-necessities@2.4.0':
     resolution: {integrity: sha512-mDC+qosuNa4lxR3ioMBb6CD0XLRsQBplU+zRPUYiMLXKeVPZ6UYphdNG/EGReig0YyfnVlBKZEXl1wzTotYmPA==}
 
-  '@hono/node-server@2.1.5':
-    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
+  '@hono/node-server@2.1.6':
+    resolution: {integrity: sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4 || ^5.0.0-0
@@ -3168,7 +3168,7 @@ snapshots:
 
   '@glideapps/ts-necessities@2.4.0': {}
 
-  '@hono/node-server@2.1.5(hono@4.13.14)':
+  '@hono/node-server@2.1.6(hono@4.13.14)':
     dependencies:
       hono: 4.13.14
 
