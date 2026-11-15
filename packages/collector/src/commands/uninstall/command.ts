@@ -24,7 +24,7 @@ const humanResult = (
   return keychainNotice === undefined ? base : `${base}${keychainNotice}\n`;
 };
 
-/** Removes the scheduled refresh. `--data` also deletes the data directory and, from Batch 7, the keychain item. */
+/** Removes the scheduled refresh. `--data` also deletes the data directory and the keychain item. */
 export const uninstallCommand = {
   name: "uninstall",
   description: "remove the scheduled refresh; --data deletes the data directory",

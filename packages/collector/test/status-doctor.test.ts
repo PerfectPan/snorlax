@@ -106,14 +106,14 @@ describe("status", () => {
     const { exitCode, stdout, nodeFiles } = await runCommand(["status", "--json"], {});
     const status = z.parse(statusSchema, JSON.parse(stdout));
     expect(status.ok).toBe(true);
-    // cli/ redacts every output, so the data directory is spelled relative to the home (plan 3.13).
+    // cli/ redacts every output, so the data directory is spelled relative to the home.
     expect(status.dataDir).toBe("~/snorlax-data");
     expect(status.device).toEqual({ id: null, name: null });
     expect(status.lastScanAt).toBeNull();
     expect(status.sync).toEqual({ state: "unpaired", at: null });
     expect(status.failuresByAgent).toEqual({});
     expect(exitCode).toBe(0);
-    // Reading status creates nothing: the appends the logger dropped are the only trace (plan 3.13).
+    // Reading status creates nothing: the appends the logger dropped are the only trace.
     expect(nodeFiles.appended).toHaveLength(1);
   });
 
@@ -145,7 +145,7 @@ describe("status", () => {
       [`${DATA_DIR}/config.json`]: JSON.stringify({ deviceName: "Studio" })
     });
     const status = z.parse(statusSchema, JSON.parse(stdout));
-    // Batch 2: the device id and last scan come from the ledger (absent here); sync state and decode
+    // The device id and last scan come from the ledger (absent here); sync state and decode
     // failures stay the last refresh's, persisted in the snapshot.
     expect(status.sync).toEqual({ state: "ok", at: "2026-10-22T12:00:00.000Z" });
     expect(status.device).toEqual({ id: null, name: "Studio" });

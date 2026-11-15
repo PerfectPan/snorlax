@@ -23,8 +23,8 @@ export class SnorlaxPlatform extends Context.Service<SnorlaxPlatform, Platform>(
 
 /**
  * File operations the agent-kit `Platform` does not model: appending to the log file, and reading or setting
- * a directory's mode. The collector needs both for the 0700 data directory (plan 3.4.1) and the append-only
- * log (plan 3.9). Everything else goes through the kit platform.
+ * a directory's mode. The collector needs both for the 0700 data directory and the append-only
+ * log. Everything else goes through the kit platform.
  */
 export interface NodeFileOps {
   /** Appends, creating the file when missing. */

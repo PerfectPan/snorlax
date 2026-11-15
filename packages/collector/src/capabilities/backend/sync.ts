@@ -10,7 +10,7 @@ import { storeProgramMissingNotice, type Secrets } from "../secrets/secrets.ts";
 import { BackendInvalidResponse, type Backend, type BackendCallFailure } from "./backend.ts";
 
 /**
- * How many dirty rows one push sends. Plan 3.2.4 allows 1–200; the client never sends more, and it does not
+ * How many dirty rows one push sends. The bucket endpoint allows 1–200; the client never sends more, and it does not
  * send a push when nothing is dirty.
  */
 export const PUSH_BATCH = 200;
@@ -45,12 +45,12 @@ const toBucket = (deviceId: string, row: BucketRow): Bucket => ({
 });
 
 /**
- * Push, pull, then refresh the device list (plan 3.4.1 step 6). Runs after the scan commits and before the
+ * Push, pull, then refresh the device list. Runs after the scan commits and before the
  * snapshot, on the caller's ledger lock. No SQLite transaction stays open across a request, and a batch's
  * dirty flag is cleared only after that batch's push returns 200, so a failure keeps the rows for the next
  * run. The scan result is already committed by then.
  *
- * The pull body has no per-row sequence (plan 3.2.4). A page that returns rows sets `next` to the last
+ * The pull body has no per-row sequence. A page that returns rows sets `next` to the last
  * row's seq; only an empty page sets `next` to null. Each stored row takes that high-water mark (`next`,
  * or the request's `after` when `next` is null). `meta.pull_cursor` moves to every non-null `next` after
  * the upsert, and the client keeps pulling until `next` is null, so the next refresh starts after the rows

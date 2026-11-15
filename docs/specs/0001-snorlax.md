@@ -178,6 +178,6 @@ Excluded:
 
 ## Acceptance Evidence
 
-- Scenario IDs and corresponding tests: filled in by the implementing PRs, one row per scenario, in the Plan's
-  validation ledger.
-- Runtime or package evidence: the owner's two-device and one-Linux-machine check (Plan, section 5.4).
+- Scenario IDs and corresponding tests: filled in by the implementing PRs, one row per scenario;
+  acceptance decisions are recorded in [validation](../development/validation.md).
+- Runtime or package evidence: the owner's two-device and one-Linux-machine check.

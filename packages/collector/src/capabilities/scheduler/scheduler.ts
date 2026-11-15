@@ -134,7 +134,7 @@ const unavailable = (
 });
 
 /**
- * The scheduled refresh (plan 3.11, 3.13 rule 5). Snorlax.app's Launch at login registers the same job under
+ * The scheduled refresh. Snorlax.app's Launch at login registers the same job under
  * the same label, so the launchd operations refuse, changing nothing, while the loaded job is not provably
  * the CLI's own. One Layer per implementation, picked by `cli/bin.ts`: launchd, systemd, and for win32 one
  * whose operations fail. Tests provide a fake.
@@ -161,7 +161,7 @@ export class Scheduler extends Context.Service<
      */
     readonly uninstall: <A, E>(job: RefreshJob, guard: Effect.Effect<A, E>) => Effect.Effect<A, UninstallFailure | E>;
     /**
-     * Reads the job file and asks the scheduler what it has loaded, writing nothing (plan 3.13 rule 8). A
+     * Reads the job file and asks the scheduler what it has loaded, writing nothing. A
      * scheduler that cannot answer says so in the result instead of failing.
      */
     readonly inspect: Effect.Effect<JobInspection>;

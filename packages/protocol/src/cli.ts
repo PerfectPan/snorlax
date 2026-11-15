@@ -11,7 +11,7 @@ import {
 import { snapshotSchema } from "./snapshot.ts";
 
 /**
- * The `--json` outputs of the `snorlax` CLI (plan 3.2.1). With `--json`, stdout carries exactly one JSON
+ * The `--json` outputs of the `snorlax` CLI. With `--json`, stdout carries exactly one JSON
  * object: one of the success shapes here, or `failureSchema` for any non-zero exit. Unknown keys are dropped
  * on parse, so a newer collector's output still decodes.
  */
@@ -27,7 +27,7 @@ export const failureSchema = z.object({
 });
 export type Failure = z.output<typeof failureSchema>;
 
-/** Known failure codes (plan 3.2.1) plus `invalid-arguments` for exit 2; the schema stays a plain string so new codes parse. */
+/** Known failure codes plus `invalid-arguments` for exit 2; the schema stays a plain string so new codes parse. */
 export type FailureCode =
   | "invalid-arguments"
   | "locked"
@@ -62,7 +62,7 @@ export const uninstallResultSchema = z.object({
 export type UninstallResult = z.output<typeof uninstallResultSchema>;
 
 /**
- * Success body of `snapshot --json` (plan 3.1): the snapshot itself is the file shape of 3.2.2, and
+ * Success body of `snapshot --json`: the snapshot itself is the `snapshot` schema, and
  * the command wraps it in the usual output envelope.
  */
 export const snapshotOutputSchema = z.object({
@@ -111,8 +111,8 @@ export const detectedAgentSchema = z.object({
 export type DetectedAgent = z.output<typeof detectedAgentSchema>;
 
 /**
- * Success body of `status` (plan 3.1). `pricingChanged` is true when the ledger's stored costs were not priced with
- * this collector's pricing table — another table, or none for a ledger scanned before pricing existed (plan 3.7);
+ * Success body of `status`. `pricingChanged` is true when the ledger's stored costs were not priced with
+ * this collector's pricing table — another table, or none for a ledger scanned before pricing existed;
  * `snorlax rebuild --days 180` prices them again.
  */
 export const statusSchema = z.object({

@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { Data } from "effect";
 
 /**
- * The scheduled refresh's launcher (plan 0001 section 7, "Node path changes"): a POSIX shell script in
+ * The scheduled refresh's launcher: a POSIX shell script in
  * the data directory that resolves Node at run time, so removing the Node `snorlax install` ran with (a
  * version manager, a Homebrew upgrade) no longer stops the schedule in silence. The job files start
  * `/bin/sh <launcher>`; the script prefers the data directory's `node-path` — the file Snorlax.app's
- * discovery keeps current (3.11) — and then the fixed fallbacks, and never searches `PATH`: launchd and
+ * discovery keeps current — and then the fixed fallbacks, and never searches `PATH`: launchd and
  * systemd run jobs with a minimal one, exactly why the absolute Node path used to go stale.
  */
 
@@ -24,12 +24,12 @@ export const launcherPath = (dataDir: string): string => join(dataDir, LAUNCHER_
 export const LAUNCHER_MODE = 0o644;
 
 /**
- * Where a Node installed outside a version manager ends up, in the order the app's launcher looks
- * (3.11): Homebrew on Apple silicon, Homebrew on Intel and source installs, the system package.
+ * Where a Node installed outside a version manager ends up, in the order the app's launcher looks:
+ * Homebrew on Apple silicon, Homebrew on Intel and source installs, the system package.
  */
 export const NODE_FALLBACKS = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] as const;
 
-/** The file Snorlax.app's discovery writes the resolved Node into (3.11), and install seeds. */
+/** The file Snorlax.app's discovery writes the resolved Node into, and install seeds. */
 export const NODE_PATH_FILE = "node-path";
 
 /** The launcher could not be written into the data directory. */
@@ -87,7 +87,7 @@ export const renderRefreshLauncher = (spec: RefreshLauncherSpec): string => {
  * What install writes into `<data>/node-path`: the Node binary running the install. It is a working
  * Node by definition — the CLI is executing on it — so the launcher has a candidate even where no
  * fallback exists (a version manager's directory), and `snorlax install` with another Node re-seeds
- * the file. Snorlax.app's discovery keeps the same file current afterwards (3.11); the launcher only
+ * the file. Snorlax.app's discovery keeps the same file current afterwards; the launcher only
  * reads it.
  */
 export const renderNodePathSeed = (nodePath: string): string => `${nodePath}\n`;

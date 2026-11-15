@@ -7,12 +7,12 @@ import type { JobInspection } from "../../capabilities/scheduler/scheduler.ts";
 import { DATA_DIR_MODE } from "../../modules/data-dir/data-dir.ts";
 
 /**
- * Pure verdicts for the `doctor` checks (plan 3.1, 3.13): each takes what the flow observed and
+ * Pure verdicts for the `doctor` checks: each takes what the flow observed and
  * decides status and detail. No Effect types and no I/O here, so the verdicts are testable on their
  * own and the flow only gathers the inputs.
  */
 
-/** The oldest Node the collector runs on (plan: "Compatibility And Constraints", Node 22.13). */
+/** The oldest Node the collector runs on (the Spec's "Compatibility And Constraints": Node 22.13). */
 export const REQUIRED_NODE = "22.13";
 
 const parseNodeVersion = (version: string): [number, number, number] | null => {
@@ -45,8 +45,8 @@ export interface DataDirObservation {
 
 /**
  * The data directory must exist as a directory at mode 0700. A missing directory, a regular file in
- * its place or a wider mode are failed checks — `doctor` reports them and repairs nothing (plan 3.13:
- * the command must not create or change any file).
+ * its place or a wider mode are failed checks — `doctor` reports them and repairs nothing (the
+ * command must not create or change any file).
  */
 export const dataDirCheck = (observed: DataDirObservation): DoctorCheck => {
   const { path } = observed;
@@ -335,7 +335,7 @@ const devicesCheck = (observed: PairedBackendObservation["devices"]): DoctorChec
 };
 
 /**
- * Backend verdicts (plan 3.1). Unpaired is one ok check. Paired is the keychain, `GET /v1/health`, and
+ * Backend verdicts. Unpaired is one ok check. Paired is the keychain, `GET /v1/health`, and
  * `GET /v1/devices`. The flow gathers the observation; this function only decides status and detail.
  */
 export const backendChecks = (observed: SyncObservation): DoctorCheck[] => {
@@ -345,7 +345,7 @@ export const backendChecks = (observed: SyncObservation): DoctorCheck[] => {
   return [keychainCheck(observed.keychain), healthCheck(observed.health), devicesCheck(observed.devices)];
 };
 
-/** The whole `doctor` verdict from the per-check results (plan 3.2.1, R13: the command exits 0 healthy, 1 unhealthy). */
+/** The whole `doctor` verdict from the per-check results (R13: the command exits 0 healthy, 1 unhealthy). */
 export const doctorPayload = (checks: readonly DoctorCheck[]): { healthy: boolean; checks: DoctorCheck[] } => ({
   healthy: checks.every((check) => check.status !== "error"),
   checks: [...checks]

@@ -4,10 +4,10 @@ import { bucketSchema, strictBucketSchema } from "./bucket.ts";
 import { deviceIdSchema, nonNegativeIntSchema, utcTimestampSchema } from "./shared.ts";
 
 /**
- * The HTTP API bodies and the pull query (plan 3.2.4). Request bodies are strict objects that reject unknown
+ * The HTTP API bodies and the pull query. Request bodies are strict objects that reject unknown
  * keys, so nothing beyond the bucket fields can leave a machine (Spec R10, S15); response bodies stay lenient,
  * so a field a newer Worker adds still lets an older collector parse the rest, and the pull query ignores
- * parameters it does not define. The app has no HTTP client (plan 2.1) and consumes none of these shapes;
+ * parameters it does not define. The app has no HTTP client and consumes none of these shapes;
  * they serve the collector's sync client and the Worker's own validation.
  */
 
@@ -34,12 +34,12 @@ export const httpDeviceRegisterRequestSchema = z.strictObject({
 export type HttpDeviceRegisterRequest = z.output<typeof httpDeviceRegisterRequestSchema>;
 
 /**
- * RFC 6750 `b64token` (plan 3.2.4). The hyphen sits at the end of the class so it is not a range, and `=` is
+ * RFC 6750 `b64token`. The hyphen sits at the end of the class so it is not a range, and `=` is
  * only a suffix. A space or a newline cannot pass and later be spliced into a `security -i` command.
  */
 export const b64TokenSchema = z.string().check(z.regex(/^[A-Za-z0-9._~+/-]+=*$/));
 
-/** Response body of `POST /v1/devices`; the token is shown once and stored only as its SHA-256 (plan 3.8). */
+/** Response body of `POST /v1/devices`; the token is shown once and stored only as its SHA-256. */
 export const httpDeviceRegisterResponseSchema = z.object({
   deviceToken: b64TokenSchema
 });
@@ -86,7 +86,7 @@ export const httpHealthResponseSchema = z.object({
 export type HttpHealthResponse = z.output<typeof httpHealthResponseSchema>;
 
 /**
- * Error body codes (plan 3.2.4): `invalid-body` 400, `unauthorized` 401, `forbidden` 403, `not-found` 404,
+ * Error body codes: `invalid-body` 400, `unauthorized` 401, `forbidden` 403, `not-found` 404,
  * `conflict` 409, `payload-too-large` 413, `internal` 5xx. Unlike the CLI failure codes, the Worker owns the
  * whole API surface, so the schema enumerates them; a new status needs a new member here.
  */
@@ -101,7 +101,7 @@ export const httpErrorCodeSchema = z.enum([
 ]);
 export type HttpErrorCode = z.output<typeof httpErrorCodeSchema>;
 
-/** Error body of every non-2xx response (plan 3.2.4). */
+/** Error body of every non-2xx response. */
 export const httpErrorSchema = z.object({
   error: z.object({
     code: httpErrorCodeSchema,

@@ -5,7 +5,7 @@ import { bucketSchema, nonNegativeIntSchema, type Bucket } from "@rivus/snorlax-
 import type { D1Database } from "../db.ts";
 
 /**
- * SQL on `buckets` (plan 3.3.3), including the push batch's `devices.last_push_at` update. Rows are parsed
+ * SQL on `buckets`, including the push batch's `devices.last_push_at` update. Rows are parsed
  * with zod at this boundary, so the use cases see typed values.
  */
 

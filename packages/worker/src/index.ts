@@ -2,7 +2,7 @@ import type { D1Database } from "./db.ts";
 import { createApp } from "./http/app.ts";
 
 /**
- * The Workers entry (plan 3.12.1): the only Workers-specific file, wiring the bindings and the runtime clock
+ * The Workers entry: the only Workers-specific file, wiring the bindings and the runtime clock
  * into the app. `src/http/app.ts` and everything it depends on stays runtime-agnostic, so the same app also
  * runs under plain Node when self-hosting.
  */

@@ -1,5 +1,5 @@
 /**
- * Device token rules (plan 3.8): device tokens are 32 random bytes in base64url, and D1 stores only their
+ * Device token rules: device tokens are 32 random bytes in base64url, and D1 stores only their
  * SHA-256 hex, so lookup goes by hash. Everything here uses WebCrypto primitives that exist in both Node 24
  * and workerd. The admin token is compared by Hono's `bearerAuth` in `http/app.ts`.
  */

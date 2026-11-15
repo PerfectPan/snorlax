@@ -25,7 +25,7 @@ export interface FailureExit {
 }
 
 /**
- * The failure code and exit code each command failure reports (plan 3.2.1, 3.13 rule 7). The keys are
+ * The failure code and exit code each command failure reports. The keys are
  * exactly the `_tag`s of `CommandFailure`, so a failure without an entry, or an entry for a failure that
  * no longer exists, does not compile.
  */
@@ -49,7 +49,7 @@ export const FAILURES = {
   LedgerBackupFailed: { code: "data-dir", exit: 1 },
   LedgerPlatformUnsupported: { code: "internal", exit: 1 },
   SchedulerOsOverrideInvalid: { code: "internal", exit: 1 },
-  // Plan 3.2.1 has no code for an unsupported platform, so win32 stays `internal`.
+  // The failure-code table has no entry for an unsupported platform, so win32 stays `internal`.
   SchedulerUnsupportedOs: { code: "internal", exit: 1 },
   DataDirNotAbsolute: { code: "data-dir", exit: 1, refusesDataDir: true },
   DataDirNotDeletable: { code: "data-dir", exit: 1, refusesDataDir: true },

@@ -76,7 +76,7 @@ const windowsOf = (now: number, timeZone: string): Windows => {
   };
 };
 
-/** `tokens` is `inputTokens + outputTokens` in the kit convention (plan 3.2.2). */
+/** `tokens` is `inputTokens + outputTokens` in the kit convention. */
 const tokensOf = (bucket: SnapshotBucket): number => bucket.inputTokens + bucket.outputTokens;
 
 const addBucket = (total: WindowTotal, bucket: SnapshotBucket): void => {
@@ -181,7 +181,7 @@ const groupEntries = <K extends string>(
 };
 
 /**
- * Builds the snapshot from the ledger's rows (plan 3.2.2, 3.4.1 step 7). A bucket belongs to the local day
+ * Builds the snapshot from the ledger's rows. A bucket belongs to the local day
  * and hour that contain its UTC start hour; `daily` covers the last 180 local days including today and
  * `hourlyToday` the local hours of today, both in `timeZone`. Entries appear only for agents, models and
  * devices with usage inside the 30-day window.

@@ -151,7 +151,7 @@ const listOrNothing = (fs: Platform["fs"], dir: string): Effect.Effect<readonly 
   });
 
 /**
- * Every entry snorlax writes directly in the data directory (3.3.2, 3.4.2, 3.9, 3.11): the ledger
+ * Every entry snorlax writes directly in the data directory: the ledger
  * database with its SQLite sidecars and lock files, the config, the snapshot, the app's `node-path`,
  * the refresh launcher the job files run, and the logs directory. Migration backups and crashed
  * atomic-write temps are matched by pattern below. launchd output files no longer exist
@@ -176,7 +176,7 @@ const LEDGER_BACKUP_PATTERN = /^ledger\.db\.bak-v(\d+)$/;
 /** `platform.fs.writeAtomic` leaves `.<16 hex>.tmp` beside the target when a write crashes. */
 const ATOMIC_TEMP_PATTERN = /^\.[0-9a-f]{16}\.tmp$/;
 
-/** Files the collector writes inside `logs/` (3.9); the last two are what older installs redirected launchd to. */
+/** Files the collector writes inside `logs/`; the last two are what older installs redirected launchd to. */
 const KNOWN_LOG_FILES = [
   "snorlax.log",
   "snorlax.log.1",

@@ -14,7 +14,7 @@ export type SnapshotRead =
   | { readonly kind: "ok"; readonly snapshot: Snapshot };
 
 /**
- * Reads `<data>/snapshot.json` and validates it with the protocol schema (plan 3.2.2). The snapshot is
+ * Reads `<data>/snapshot.json` and validates it with the protocol schema. The snapshot is
  * rewritten atomically by refresh, so a torn read only ever appears as a missing file.
  */
 export async function readSnapshotFile(platform: Pick<Platform, "fs">, dataDir: string): Promise<SnapshotRead> {
@@ -39,9 +39,9 @@ export async function readSnapshotFile(platform: Pick<Platform, "fs">, dataDir: 
 export class SnapshotWriteFailed extends Data.TaggedError("SnapshotWriteFailed")<{ readonly message: string }> {}
 
 /**
- * Rewrites `<data>/snapshot.json` whole through the platform's atomic write (temp file plus rename, plan
- * 3.2.2), so a reader only ever sees the previous snapshot or the new one. A write failure leaves the
- * previous snapshot in place and fails with `SnapshotWriteFailed` (plan 6.8, Batch 2).
+ * Rewrites `<data>/snapshot.json` whole through the platform's atomic write (temp file plus rename), so a
+ * reader only ever sees the previous snapshot or the new one. A write failure leaves the
+ * previous snapshot in place and fails with `SnapshotWriteFailed`.
  */
 export const writeSnapshot = (
   platform: Pick<Platform, "fs">,

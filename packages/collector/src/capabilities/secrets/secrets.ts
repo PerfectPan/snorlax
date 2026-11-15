@@ -17,7 +17,7 @@ type SecretsShape = {
 
 /**
  * `SNORLAX_DEVICE_TOKEN`, when set and non-empty, is the token `read` returns for every device id. Store and
- * delete still talk to the implementation, so a test can inject a token without a keychain (plan 3.4.2).
+ * delete still talk to the implementation, so a test can inject a token without a keychain.
  */
 const withOverride = (env: Platform["env"], service: SecretsShape): SecretsShape => ({
   read: (deviceId) => {
@@ -32,7 +32,7 @@ const withOverride = (env: Platform["env"], service: SecretsShape): SecretsShape
 });
 
 /**
- * The device token store (plan 3.4.2, 3.13). One Layer per implementation, picked by `cli/bin.ts` from
+ * The device token store. One Layer per implementation, picked by `cli/bin.ts` from
  * `platform.os`: the macOS keychain, libsecret on Linux, and a failure on any other system. Tests use
  * `memory` or point `SNORLAX_SECURITY` / `SNORLAX_SECRET_TOOL` at a stub.
  */

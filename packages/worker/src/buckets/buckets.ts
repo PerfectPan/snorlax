@@ -4,7 +4,7 @@ import type { D1Database } from "../db.ts";
 import { readBucketsAfter, writePush } from "./store.ts";
 
 /**
- * Bucket use cases (plan 3.2.4, 3.5): a device pushes absolute rows for itself only, and any device pulls
+ * Bucket use cases: a device pushes absolute rows for itself only, and any device pulls
  * every device's rows after a cursor. They take parsed values and throw the error below, which says what
  * went wrong and knows no HTTP status.
  */

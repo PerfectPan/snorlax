@@ -8,7 +8,7 @@ import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
 
 /**
- * One `snorlax refresh` (plan 3.4.1): prepares the data directory (creating it and its `logs` directory on
+ * One `snorlax refresh`: prepares the data directory (creating it and its `logs` directory on
  * first use — this is a command that owns that side effect), then scans incrementally from the saved scan
  * state through the ledger's scan-and-commit.
  */

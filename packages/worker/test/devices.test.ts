@@ -26,8 +26,8 @@ import {
 
 /**
  * Device ownership (Spec R11, S9): only the owning device's token writes, a revoked device's later
- * writes are rejected while its earlier buckets remain, and registration follows plan 3.2.4's token
- * rules (plan 3.8).
+ * writes are rejected while its earlier buckets remain, and re-registration issues a fresh token
+ * and keeps the device's history.
  */
 
 describe("GET /v1/health", () => {

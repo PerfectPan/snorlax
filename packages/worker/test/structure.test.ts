@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
- * Plan 3.12.1 rule 1 over every source file under `src/` except unit tests, as one pure function of the
+ * The layering rules over every source file under `src/` except unit tests, as one pure function of the
  * files' paths and texts: imports go `index.ts` → `http/` → `devices/`, `buckets/` → the files at the top of
  * `src/` and never back; only `index.ts` and `http/` import `hono` or `@hono/*`; the two domain folders do not
  * import each other; and a `store.ts` is imported only by its own folder's use-case file (and by tests, which
@@ -140,7 +140,7 @@ const readSources = async (dir: string): Promise<SourceFile[]> => {
 const check = (files: Record<string, string>): Violation[] =>
   structureViolations(Object.entries(files).map(([path, text]) => ({ path, text })));
 
-describe("worker structure (plan 3.12.1 rule 1)", () => {
+describe("worker structure", () => {
   it("the worker's sources break none of the rules", async () => {
     const files = await readSources(srcRoot);
     expect(files.map((file) => file.path)).toEqual(

@@ -319,7 +319,7 @@ const hashTree = async (root: string): Promise<string> => {
   return hash.digest("hex");
 };
 
-/** Every agent home the collector knows (plan 3.5); the S14 hash covers them all. */
+/** Every agent home the collector knows; the S14 hash covers them all. */
 const AGENT_DIRS = [".claude", ".codex", ".gemini", ".grok", ".local/share/opencode", ".pi"] as const;
 
 const ensureAgentDirs = async (home: string): Promise<void> => {

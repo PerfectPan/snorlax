@@ -22,10 +22,10 @@ import { offlineCapabilities } from "./fixtures/capabilities.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
- * One refresh at a time per data directory (plan 3.5): the ledger lock serializes overlapping runs, and
+ * One refresh at a time per data directory: the ledger lock serializes overlapping runs, and
  * the ledger — migration, backup, meta and scan state included — opens only under it. A gate hung inside
  * the first run's scan holds the lock mid-transaction, so the second run provably starts while the lock is
- * held. The same gate holds a run mid-scan while it is interrupted (plan 3.13 rule 6: the lock and the ledger
+ * held. The same gate holds a run mid-scan while it is interrupted (the lock and the ledger
  * are released with the run's scope), and a waiter's lock timeout runs on `TestClock`; no test sleeps or
  * asserts on real elapsed time. Fixtures are generated under a temporary home and removed afterwards.
  */

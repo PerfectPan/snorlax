@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import SnorlaxKit
 
-// Compiled launcher (plan 3.11): picks Node the same way the previous /bin/sh
+// Compiled launcher: picks Node the same way the previous /bin/sh
 // script did, then replaces this process with `node <collector> <arguments…>` so
 // launchd sees one short-lived process. Never searches PATH or a login shell.
 

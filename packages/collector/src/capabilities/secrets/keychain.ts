@@ -12,7 +12,7 @@ import {
 import type { Secrets } from "./secrets.ts";
 
 /**
- * macOS login keychain through `security -i` (plan 3.4.2). Every command is one line on stdin, so the device
+ * macOS login keychain through `security -i`. Every command is one line on stdin, so the device
  * token is never a process argument. `security find-generic-password` exits 44 when the item is absent
  * (`errSecItemNotFound`); any other failure means the keychain could not be used. A missing `security` program
  * (`ENOENT`) leaves `read` and `delete` as `StoreBinaryMissing`: an item stored earlier may still be there.

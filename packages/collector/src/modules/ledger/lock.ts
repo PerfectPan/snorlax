@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { acquireProcessLock, type ProcessLockPlatform } from "@rivus/agent-kit-collab/process-lock";
 import { Data, Duration, Effect, type Scope } from "effect";
 
-/** How long a refresh waits for the ledger lock before giving up (plan 3.4.1 step 2). */
+/** How long a refresh waits for the ledger lock before giving up. */
 export const LOCK_WAIT_MS = 60_000;
 
 /** The ledger lock could not be taken within `LOCK_WAIT_MS`: another snorlax process holds it. */

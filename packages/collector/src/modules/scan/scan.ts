@@ -11,7 +11,7 @@ export interface ScanOutcome {
 }
 
 export interface ScanOptions {
-  /** Epoch milliseconds; records before this are left out (plan 3.4.1 step 3). */
+  /** Epoch milliseconds; records before this are left out. */
   readonly since: number;
   /** The saved state of the previous scan; absent on the first run. */
   readonly state?: PersistedScanState;
@@ -23,7 +23,7 @@ export interface ScanOptions {
  * Runs one `scanUsage` to its end, handing every record to `onRecord` and counting the rest as failures,
  * per agent. A `RootMissing` listing means the agent is not installed on this machine (no source exists to
  * fail), so it is not counted as a failure — `status` reports detection instead; every other source or
- * decode failure is (plan 3.4.1 step 3, 3.6).
+ * decode failure is.
  */
 export async function collectUsage(
   platform: Parameters<typeof scanUsage>[0],

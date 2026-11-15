@@ -3,14 +3,14 @@ import { join } from "node:path";
 import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
 
 /**
- * LaunchAgent that runs `snorlax refresh` every 300 seconds (plan 3.11 fallback).
+ * LaunchAgent that runs `snorlax refresh` every 300 seconds.
  * Program paths are absolute because launchd does not search `PATH`: the agent starts the data
  * directory's launcher script through `/bin/sh`, and the script resolves Node at run time — the
  * Node `snorlax install` ran with is not named here, so removing it does not stop the schedule.
  * `SNORLAX_HOME` is copied into `EnvironmentVariables` only when install itself was given that
  * override; otherwise the agent uses the default data directory, and launchd's gui domain already
  * sets `HOME`. StandardOutPath/StandardErrorPath are /dev/null: refresh's summary already goes to
- * the rotating `logs/snorlax.log` (plan 3.9), and an unrotated launchd redirect file would only grow.
+ * the rotating `logs/snorlax.log`, and an unrotated launchd redirect file would only grow.
  */
 export const LAUNCH_AGENT_LABEL = "io.github.perfectpan.snorlax.refresh";
 export const LAUNCH_AGENT_PLIST_NAME = `${LAUNCH_AGENT_LABEL}.plist`;

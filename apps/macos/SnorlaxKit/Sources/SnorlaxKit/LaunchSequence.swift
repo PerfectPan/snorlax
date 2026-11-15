@@ -1,6 +1,6 @@
 import Foundation
 
-/// App launch order (plan 3.11): the data directory is created, the snapshot
+/// App launch order: the data directory is created, the snapshot
 /// watcher starts and the snapshot loads first, then Node discovery runs in
 /// the background — a login shell that hangs discovery cannot keep the menu
 /// bar without data.

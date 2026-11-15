@@ -6,7 +6,7 @@ import { errorMessage } from "../../core/error-message/error-message.ts";
 
 /**
  * The keychain or secret service could not be run. A missing item is not this failure: `read` returns
- * undefined, and `snorlax pair` is what stores one (plan 3.4.2).
+ * undefined, and `snorlax pair` is what stores one.
  */
 export class KeychainUnavailable extends Data.TaggedError("KeychainUnavailable")<{
   readonly message: string;
@@ -88,7 +88,7 @@ const cannotRun = (command: string, error: unknown): KeychainUnavailable =>
 
 /**
  * Runs `command` with `args` and writes `stdin` to the child, then closes it. The token a caller puts in
- * `stdin` is never placed in `args` (plan 3.4.2). `ENOENT` is `StoreBinaryMissing`: the program was not
+ * `stdin` is never placed in `args`. `ENOENT` is `StoreBinaryMissing`: the program was not
  * started, which does not prove that no item exists. Any other failure to start, a signal, or no answer within 15s on the Effect
  * clock is `KeychainUnavailable`. A non-zero exit is still a result, because "not found" is an exit code the
  * caller knows and a broken keychain is a different one.

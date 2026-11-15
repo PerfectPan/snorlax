@@ -3,7 +3,7 @@ import * as z from "zod/mini";
 import type { D1Database } from "../db.ts";
 
 /**
- * SQL on `devices` (plan 3.3.3). Rows are parsed with zod at this boundary, so the use cases see typed values.
+ * SQL on `devices`. Rows are parsed with zod at this boundary, so the use cases see typed values.
  */
 
 interface DeviceRow {

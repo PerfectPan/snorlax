@@ -13,7 +13,7 @@ import {
 import type { Secrets } from "./secrets.ts";
 
 /**
- * Linux secret service through `secret-tool` (plan 3.4.2). `store` reads stdin through EOF and keeps a
+ * Linux secret service through `secret-tool`. `store` reads stdin through EOF and keeps a
  * trailing newline as part of the password, so the token is written with no newline. `lookup` prints the
  * token. Exit 1 with an empty stderr means the item is absent; exit 1 with stderr (the service or D-Bus
  * could not be reached) is `KeychainUnavailable`, and `clear` uses the same split. The token is never a

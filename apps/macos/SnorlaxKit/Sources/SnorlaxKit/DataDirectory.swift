@@ -1,6 +1,6 @@
 import Foundation
 
-/// `<data>` is `SNORLAX_HOME`, or `~/Library/Application Support/snorlax` (plan 3.4.1).
+/// `<data>` is `SNORLAX_HOME`, or `~/Library/Application Support/snorlax`.
 public enum DataDirectory {
     public static func resolve(environment: [String: String], home: URL) -> URL {
         if let override = environment["SNORLAX_HOME"], !override.isEmpty {
