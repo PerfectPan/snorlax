@@ -11,8 +11,8 @@ export const DATA_DIR_MODE = 0o700;
 
 /**
  * Where the collector keeps everything it writes: `SNORLAX_HOME` when set, else the platform default —
- * `~/Library/Application Support/snorlax` on macOS, `${XDG_DATA_HOME:-~/.local/share}/snorlax` elsewhere
- *. `SNORLAX_HOME` is used as given; an absolute path is expected.
+ * `~/Library/Application Support/snorlax` on macOS, `${XDG_DATA_HOME:-~/.local/share}/snorlax` elsewhere.
+ * `SNORLAX_HOME` is used as given; an absolute path is expected.
  */
 export function resolveDataDir(platform: Pick<Platform, "env" | "home" | "os">): string {
   const override = platform.env.SNORLAX_HOME;

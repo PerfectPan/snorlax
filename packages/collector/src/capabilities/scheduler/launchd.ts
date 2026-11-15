@@ -21,7 +21,7 @@ import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 /**
  * The scheduler on macOS: a LaunchAgent in `~/Library/LaunchAgents`.
  *
- * The app's Launch at login (`SMAppService`, 3.11) and this LaunchAgent share one launchd label and are
+ * The app's Launch at login (`SMAppService`) and this LaunchAgent share one launchd label and are
  * mutually exclusive. Before any change, `launchctl print` must name the loaded service's `path`, and the
  * CLI refuses — touching no file — unless that path is its own `~/Library/LaunchAgents` plist.
  *

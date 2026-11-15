@@ -36,8 +36,8 @@ export const backendUrlSchema = z.string().check(
 );
 
 /**
- * `<data>/config.json` holds the user's choices that are not secrets: the device name and the backend URL
- *. It is parsed with a schema at the boundary; a file that is present but invalid fails
+ * `<data>/config.json` holds the user's choices that are not secrets: the device name and the backend URL.
+ * It is parsed with a schema at the boundary; a file that is present but invalid fails
  * with `ConfigInvalid` rather than a silent fallback, so corruption surfaces in `status` and `doctor`.
  */
 export const configSchema = z.object({

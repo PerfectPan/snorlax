@@ -62,7 +62,7 @@ export const uninstallResultSchema = z.object({
 export type UninstallResult = z.output<typeof uninstallResultSchema>;
 
 /**
- * Success body of `snapshot --json`: the snapshot itself is the file shape of 3.2.2, and
+ * Success body of `snapshot --json`: the snapshot itself is the `snapshot` schema, and
  * the command wraps it in the usual output envelope.
  */
 export const snapshotOutputSchema = z.object({

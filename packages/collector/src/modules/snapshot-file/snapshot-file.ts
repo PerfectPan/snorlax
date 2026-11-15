@@ -39,8 +39,8 @@ export async function readSnapshotFile(platform: Pick<Platform, "fs">, dataDir: 
 export class SnapshotWriteFailed extends Data.TaggedError("SnapshotWriteFailed")<{ readonly message: string }> {}
 
 /**
- * Rewrites `<data>/snapshot.json` whole through the platform's atomic write (temp file plus rename, plan
- * 3.2.2), so a reader only ever sees the previous snapshot or the new one. A write failure leaves the
+ * Rewrites `<data>/snapshot.json` whole through the platform's atomic write (temp file plus rename), so a
+ * reader only ever sees the previous snapshot or the new one. A write failure leaves the
  * previous snapshot in place and fails with `SnapshotWriteFailed`.
  */
 export const writeSnapshot = (
