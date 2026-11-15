@@ -8,10 +8,11 @@ packages:
 # does not declare — those install fine, so keep shared versions in the catalog deliberately.
 catalogMode: strict
 catalog:
-  # effect and @effect/platform-node are pinned to the exact version @rivus/agent-kit's
-  # peerDependencies.effect names; both upgrade together with the kit's peer range.
+  # effect is pinned to the exact version @rivus/agent-kit's peerDependencies.effect
+  # names (plan 2.4 D12); it upgrades together with the kit's peer range. The kit's
+  # 0.25 peers name effect only, so no @effect/platform-node entry stays here —
+  # nothing in this repository imports it (see knip.ts).
   effect: 4.1.1
-  '@effect/platform-node': 4.1.1
   # The bundled vitest peers on a real `vite` range, while vite-plus provides `vite` as this core alias;
   # pnpm can only satisfy that peer through the override below. Keep the version in lockstep with the
   # `vite-plus` entry (same release train; Dependabot does not see the mapping).
@@ -19,7 +20,7 @@ catalog:
   '@date-fns/tz': 1.5.0
   '@hono/node-server': 2.1.5
   '@hono/standard-validator': 0.4.1
-  '@perfectpan/lint-config': github:PerfectPan/lint-config#v0.7.1
+  '@perfectpan/lint-config': github:PerfectPan/lint-config#v0.8.0
   '@rivus/agent-kit': 0.25.0
   '@rivus/agent-kit-collab': 0.25.0
   '@types/node': 24.19.2

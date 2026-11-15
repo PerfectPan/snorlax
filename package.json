@@ -6,14 +6,16 @@
   "packageManager": "pnpm@12.8.1",
   "scripts": {
     "build": "pnpm -r --if-present run build",
-    "lint": "pnpm -r run lint",
-    "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test",
+    "changeset": "changeset",
+    "check": "pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
+    "duplicates:audit": "jscpd --config node_modules/@perfectpan/lint-config/jscpd-audit.json packages scripts --absolute --output tmp/duplicates-audit --ignore '**/node_modules/**,**/dist/**,**/coverage/**,**/*.json' --format 'typescript'",
     "format": "pnpm -r run format",
     "format:check": "pnpm -r run format:check",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
-    "check": "pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
+    "knip": "knip",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "typecheck": "pnpm -r run typecheck",
+    "version-packages": "changeset version"
   },
   "engines": {
     "node": "^26.13.1"
@@ -29,6 +31,9 @@
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.1",
-    "@changesets/cli": "3.0.3"
+    "@changesets/cli": "3.0.3",
+    "@perfectpan/lint-config": "catalog:",
+    "jscpd": "5.4.2",
+    "knip": "6.45.1"
   }
 }
