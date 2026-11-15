@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import * as z from "zod/mini";
 
 /**
- * Generates Swift `Codable` types from the committed JSON Schemas (plan 3.2.3).
+ * Generates Swift `Codable` types from the committed JSON Schemas.
  *
  * quicktype names a repeated object after one of its properties, and it does not merge copies that
  * live in different places. Window totals are rewritten to one `$ref` before quicktype runs, and

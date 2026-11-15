@@ -11,7 +11,7 @@ import { CliEnv } from "./env.ts";
 import { runCli } from "./run.ts";
 
 /**
- * The token store of this machine (plan 3.4.2). `platform.os` decides, not `SNORLAX_OS`: that override exists
+ * The token store of this machine. `platform.os` decides, not `SNORLAX_OS`: that override exists
  * so the Linux CI job can exercise launchd, and it must not point the keychain at a binary the machine lacks.
  */
 const secretsLive = Layer.unwrap(
@@ -28,7 +28,7 @@ const secretsLive = Layer.unwrap(
 );
 
 /**
- * The scheduler of the system the CLI runs on (plan 3.13 rule 5). `SNORLAX_OS` (`darwin`, `linux` or
+ * The scheduler of the system the CLI runs on. `SNORLAX_OS` (`darwin`, `linux` or
  * `win32`), when set, stands in for `platform.os`, so the bundled CLI can run either scheduler on any CI
  * job; it is not copied into the job. Picking one only reads the environment, and the win32 implementation
  * fails install and uninstall alone, so every other command runs whatever `SNORLAX_OS` says.
@@ -51,7 +51,7 @@ const schedulerLive = Layer.unwrap(
 );
 
 /**
- * The `snorlax` bin (plan 3.13): composes the Node layers — the kit platform through
+ * The `snorlax` bin: composes the Node layers — the kit platform through
  * `NodePlatformLive`, the real file ops, the scheduler of this system, the process streams — and runs
  * one command.
  */
@@ -84,7 +84,7 @@ process.stdout.on("error", (error: NodeJS.ErrnoException) => {
 });
 
 /**
- * The runner keeps the kernel's signal semantics (plan 3.2.1: a timed-out command must end by
+ * The runner keeps the kernel's signal semantics (a timed-out command must end by
  * signal, which is how the app's CollectorClient tells its timeout apart from a bad result).
  * `NodeRuntime.runMain` would exit(130) instead, so this copies what it does with one difference:
  * on SIGINT/SIGTERM the fiber is interrupted first — layers and databases release — and once it has

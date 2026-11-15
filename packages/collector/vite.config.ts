@@ -5,7 +5,7 @@ import { defineConfig } from "vite-plus";
 
 /**
  * Builds the whole collector into one ESM file, `dist/snorlax.mjs`, with every dependency inlined
- * (plan 2.4 D9): the app bundles exactly this file and runs it with the user's Node. Node builtins stay
+ *: the app bundles exactly this file and runs it with the user's Node. Node builtins stay
  * external; the shebang banner makes the file work as the `snorlax` bin. The package version comes from
  * `src/modules/version/version.ts`'s named JSON import, so the bundler inlines that one field. A default
  * import would embed the whole manifest, including devDependency names, in the shipped file.
@@ -16,7 +16,7 @@ export default defineConfig({
   lint: { ...lint, ignorePatterns: ["node_modules/**", "dist/**"] },
   build: {
     target: "node22.13",
-    // The bundle stays readable and unminified (plan 2.4 D9 keeps a debuggable single file), but
+    // The bundle stays readable and unminified, but
     // rolldown drops the inlined dependencies' doc comments — about half the bytes — while keeping
     // legal ones. minify would reformat the whole file into long lines; comments alone do not.
     minify: false,

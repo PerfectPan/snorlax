@@ -13,7 +13,7 @@ import { readSnapshotFile } from "../../modules/snapshot-file/snapshot-file.ts";
 import { RuntimeInfo } from "../../modules/version/version.ts";
 
 /**
- * Detects the builtin agents without side effects (plan 3.10): the version probe stays off and the recipes'
+ * Detects the builtin agents without side effects: the version probe stays off and the recipes'
  * auth probes are stripped, so no agent command runs and no credential file is read — detection only stats
  * paths. `runnable` therefore never appears.
  */
@@ -36,17 +36,17 @@ const toDetected = (installation: Installation): DetectedAgent => ({
 class StatusReadFailed extends Data.TaggedError("StatusReadFailed")<{ readonly message: string }> {}
 
 /**
- * Assembles the `status` payload (plan 3.1) from reads alone: config, ledger meta (opened read-only,
+ * Assembles the `status` payload from reads alone: config, ledger meta (opened read-only,
  * and only when the ledger file exists), the stored snapshot and stat-only agent detection. A missing
  * ledger or snapshot leaves the fields null; a corrupt config or ledger fails the command, and so does
- * any other read that fails. Nothing is created or written (plan 3.13).
+ * any other read that fails. Nothing is created or written.
  */
 export const statusFlow = Effect.gen(function* () {
   const platform = yield* SnorlaxPlatform;
   const info = yield* RuntimeInfo;
   const dataDir = resolveDataDir(platform);
   const config = yield* readConfig(platform, dataDir);
-  // Device id and last scan come from the ledger (plan 6.8, Batch 2). Sync state and decode
+  // Device id and last scan come from the ledger. Sync state and decode
   // failures are the last refresh's, persisted in the snapshot.
   const ledger = yield* readLedgerStatus(platform, dataDir);
   const snapshot = yield* Effect.promise(() => readSnapshotFile(platform, dataDir));

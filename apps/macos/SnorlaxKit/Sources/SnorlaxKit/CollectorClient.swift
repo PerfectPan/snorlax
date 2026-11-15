@@ -55,7 +55,7 @@ extension CollectorClientError: LocalizedError {
     }
 }
 
-/// Runs the bundled launcher with `--json`, optional stdin, and a 120 s timeout (plan 3.11).
+/// Runs the bundled launcher with `--json`, optional stdin, and a 120 s timeout.
 /// Exit 0 — or an exit code in `acceptingExitStatus` — decodes `Success`. Any other exit decodes
 /// the failure shape.
 public struct CollectorClient: Sendable {

@@ -21,7 +21,7 @@ import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 /**
  * The scheduler on macOS: a LaunchAgent in `~/Library/LaunchAgents`.
  *
- * The app's Launch at login (`SMAppService`, 3.11) and this LaunchAgent share one launchd label and are
+ * The app's Launch at login (`SMAppService`) and this LaunchAgent share one launchd label and are
  * mutually exclusive. Before any change, `launchctl print` must name the loaded service's `path`, and the
  * CLI refuses — touching no file — unless that path is its own `~/Library/LaunchAgents` plist.
  *
@@ -190,7 +190,7 @@ const loadedService = (platform: SchedulerPlatform, target: string): Effect.Effe
   });
 
 /**
- * Plan 3.11 keeps the app's `SMAppService` agent and the CLI's LaunchAgent mutually exclusive: launchd
+ * The app's `SMAppService` agent and the CLI's LaunchAgent are mutually exclusive: launchd
  * holds one label, and two same-label plists would fight over the load at every login. The CLI therefore
  * changes nothing — not its own plist, not the data directory — unless the loaded service provably comes
  * from its own `~/Library/LaunchAgents` plist.

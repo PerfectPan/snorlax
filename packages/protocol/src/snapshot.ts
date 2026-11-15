@@ -13,7 +13,7 @@ import {
 } from "./shared.ts";
 
 /**
- * The snapshot file `<data>/snapshot.json` (plan 3.2.2): the whole file is rewritten atomically after every
+ * The snapshot file `<data>/snapshot.json`: the whole file is rewritten atomically after every
  * refresh. Windows (today, the last 7 and the last 30 days) follow the time zone of the device that shows
  * them (Spec R8); `tokens` is `inputTokens + outputTokens` in the kit convention.
  */

@@ -14,10 +14,11 @@ import { unpairCommand } from "../commands/unpair/command.ts";
 /**
  * The global `--json` flag as an effect/cli Setting: effect/cli parses it once per invocation and
  * provides the parsed value to the command handler as this service, so the output mode follows what
- * was actually parsed — `--json=false`, `--json no`, `--json --no-json` and `--no-json --json` all
- * mean human output — not what an argv scan guesses. The handler `commandOf` builds hands the value
- * on with the command's result; `cli/run` falls back to scanning the tokens before `--` only where no
- * handler ran.
+ * was actually parsed — `--json=false`, a literal after the flag and `--no-json` all mean human
+ * output — not what an argv scan guesses. effect/cli takes the flag at most once: a second spelling
+ * of it fails as invalid arguments instead of keeping the first value. The handler `commandOf`
+ * builds hands the value on with the command's result; `cli/run` falls back to scanning the tokens
+ * before `--` only where no handler ran.
  */
 export const JsonFlag = GlobalFlag.Setting("json")({
   flag: Flag.Boolean("json").pipe(
@@ -29,7 +30,7 @@ export const JsonFlag = GlobalFlag.Setting("json")({
 /**
  * What a command produced on success: `payload` is the protocol shape with `schemaVersion` and
  * `ok: true`; `human` is the plain-text rendering printed when `--json` was not given (it includes
- * the trailing newline). Printing, redaction and the `--json` decision belong to `cli/` (plan 3.13).
+ * the trailing newline). Printing, redaction and the `--json` decision belong to `cli/`.
  * A run that ends without any handler output is a built-in action (`--help`, `--version`):
  * `effect/cli` has rendered it already, and `take` says so with `None` instead of failing.
  */
@@ -76,7 +77,7 @@ export class CommandOutput extends Context.Service<
 /**
  * A command as each `commands/<name>/command.ts` exports it: name, help description and flags, and
  * `run`, which takes the parsed flags and only produces the result. `commands/` cannot import `cli/`
- * (plan 3.13 rule 1), so the commands match this shape structurally.
+ *, so the commands match this shape structurally.
  */
 interface CommandSpec<Name extends string, Flags extends Command.Command.Config, E, R> {
   readonly name: Name;
@@ -101,7 +102,7 @@ const commandOf = <Name extends string, const Flags extends Command.Command.Conf
 class UsageError extends Data.TaggedError("UsageError")<{ readonly message: string }> {}
 
 /**
- * The root command (plan 3.13): the global `--json` flag is an effect/cli Setting, so it is accepted
+ * The root command: the global `--json` flag is an effect/cli Setting, so it is accepted
  * both before and after the command name and its parsed value reaches the handler. The root's own handler only runs when no command was named and
  * fails as a usage error; every other parse failure (unknown command, unknown option, a missing or
  * malformed flag value) surfaces through `effect/cli` as a `ShowHelp` error, which `cli/run` maps to

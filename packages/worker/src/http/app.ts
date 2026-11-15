@@ -26,7 +26,7 @@ import {
 import { errorResponse, failureResponse } from "./failures.ts";
 
 /**
- * The sync HTTP API of plan 3.2.4 as a Hono app (plan 2.4 D14, 3.12.1). Everything HTTP stays here: the
+ * The sync HTTP API as a Hono app. Everything HTTP stays here: the
  * `Authorization` header, the body limit, validation of bodies and the pull query with the protocol schemas,
  * status codes and the error funnel. The use cases below take parsed values. The app needs only fetch and
  * WebCrypto, so it runs on Node too; `src/index.ts` is the only Workers-specific file.
@@ -39,13 +39,13 @@ export interface AppDeps {
   readonly now: () => number;
 }
 
-/** Request bodies above 1 MB are refused (plan 3.12). */
+/** Request bodies above 1 MB are refused. */
 const MAX_BODY_BYTES = 1_000_000;
 
 /**
  * The `Content-Type` under which Hono's JSON validator parses a body: its `jsonRegex` without the needless
  * escapes. Under any other it validates `{}`. `requireJson` answers those requests itself, so a valid body sent
- * without the header is not reported as one that does not match the interface definition (plan 3.2.4).
+ * without the header is not reported as one that does not match the interface definition.
  */
 const JSON_CONTENT_TYPE = /^application\/([a-z.-]+\+)?json(;\s*[a-zA-Z0-9-]+=([^;]+))*$/i;
 
@@ -55,7 +55,7 @@ interface AppEnv {
 
 /**
  * A `bearerAuth` failure option answering 401 with the JSON error body. Every failure takes one, because Hono
- * answers a malformed `Authorization` header with a plain-text 400 by default and plan 3.2.4 says 401.
+ * answers a malformed `Authorization` header with a plain-text 400 by default and the interface requires 401.
  */
 const unauthenticated = (message: string) => ({ message: () => failureResponse("Unauthenticated", message) });
 

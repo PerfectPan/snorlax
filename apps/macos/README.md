@@ -1,6 +1,6 @@
 # macOS app
 
-Menu bar app and desktop widget (plan 3.11, Batch 4). The generated `Snorlax.xcodeproj` is not committed.
+Menu bar app and desktop widget. The generated `Snorlax.xcodeproj` is not committed.
 
 ## Layout
 

@@ -8,7 +8,7 @@ import { b64TokenSchema } from "@rivus/snorlax-protocol";
 export const adminTokenSchema = b64TokenSchema;
 
 /**
- * The admin token from stdin (plan 3.4.2). One trailing newline is removed, and a CR before that newline
+ * The admin token from stdin. One trailing newline is removed, and a CR before that newline
  * goes with it, so a CRLF counts as one newline. Any other whitespace stays, including a second newline.
  */
 export const adminTokenText = (text: string): string => {

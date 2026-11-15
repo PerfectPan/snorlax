@@ -9,7 +9,7 @@ const humanSummary = (result: RefreshResult): string =>
     "\n"
   );
 
-/** `snorlax refresh` (plan 3.1, 3.4.1): scan, commit the ledger, write the snapshot. */
+/** `snorlax refresh`: scan, commit the ledger, write the snapshot. */
 export const refreshCommand = {
   name: "refresh",
   description: "scan agent usage since the last run, update the ledger, write the snapshot",

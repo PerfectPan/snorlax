@@ -16,7 +16,7 @@ import { readLedger, runRebuild, runRefresh } from "./fixtures/flows.ts";
 import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 
 /**
- * `snorlax rebuild --days n` (plan 3.4.3): the last n days of local buckets are zeroed and rescanned in one
+ * `snorlax rebuild --days n`: the last n days of local buckets are zeroed and rescanned in one
  * transaction with the scan's own writes, so a killed rebuild changes nothing; usage older than the window
  * and deleted-log usage behave per Spec R4 (zeroed rows stay as zeros to replace later uploads).
  */
@@ -207,7 +207,7 @@ describe("rebuild", () => {
   });
 });
 
-describe("pricing_version (plan 3.7)", () => {
+describe("pricing_version", () => {
   const OLD_VERSION = "2026-01-01+0000000000000000000000000000000000000000";
   let pricing: RefreshSetup;
 
@@ -230,8 +230,8 @@ describe("pricing_version (plan 3.7)", () => {
     (await bucketRows()).find((row) => row.model === "claude-opus-5-5" && row.hour < rebuildStartHour(NOW, 3));
 
   /**
-   * Stands in for a ledger another table priced (`version`), or one scanned before pricing existed (null, a ledger
-   * from before Batch 5): the version is not the current one, and the rows carry no cost.
+   * Stands in for a ledger another table priced (`version`), or one scanned before pricing existed
+   * (`version` is null): the version is not the current one, and the rows carry no cost.
    */
   const pricedBy = (version: string | null): void => {
     const db = new DatabaseSync(ledgerPath(pricing.dataDir));

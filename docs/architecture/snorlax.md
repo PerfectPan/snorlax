@@ -165,4 +165,4 @@ See the [macOS guide](../../apps/macos/README.md) for the signed owner-run proce
 
 For acceptance scope, synthetic performance results and deferred follow-ups, see
 [validation](../development/validation.md). The completed execution plan is retained by Git history, not a second
-archive. Historical numeric plan references in code comments refer to that retired design.
+archive, and code comments no longer cite it by section number.

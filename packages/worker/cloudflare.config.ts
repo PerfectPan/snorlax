@@ -1,7 +1,7 @@
 import { bindings, defineConfig } from "cf/config";
 
 /**
- * The Worker configuration (plan 3.12): the D1 database is named `snorlax`, as is the Worker, and the
+ * The Worker configuration: the D1 database is named `snorlax`, as is the Worker, and the
  * admin token is a secret binding that `cf dev` reads from `.dev.vars`. No account's ids or domain are
  * committed: `--mode production` takes the D1 id from the environment and refuses to run without it, and
  * publishes on `SNORLAX_DOMAIN` when that is set, otherwise on the Worker's workers.dev URL.
@@ -23,7 +23,7 @@ const environmentValue = (name: string): string => {
   return value;
 };
 
-/** Where production publishes: the custom domain when one is given, else the workers.dev URL (plan 3.12). */
+/** Where production publishes: the custom domain when one is given, else the workers.dev URL. */
 const publishing = (domain: string | undefined) =>
   domain === undefined ? { workersDev: true } : { domains: [domain], workersDev: false };
 

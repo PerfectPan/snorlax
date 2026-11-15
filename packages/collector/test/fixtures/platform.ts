@@ -30,7 +30,7 @@ export interface SetupOptions {
 export async function createRefreshSetup(options: SetupOptions): Promise<RefreshSetup> {
   const home = await mkdtemp(join(tmpdir(), "snorlax-refresh-"));
   const dataDir = join(home, "data");
-  // The CLI's flows create the data directory (plan 3.4.1 step 1); the test runs of the flows prepare
+  // The CLI's flows create the data directory; the test runs of the flows prepare
   // nothing (test/fixtures/flows.ts), so the setup stands in for that step.
   await mkdir(dataDir, { recursive: true });
   const base = createNodePlatform({

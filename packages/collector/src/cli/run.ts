@@ -20,7 +20,7 @@ import { cliConsole, printFailureJson, printFailureMessage, printHuman, printPay
 import { CommandOutput, JsonFlag, rootCommand } from "./root.ts";
 
 /**
- * The `snorlax` invocation (plan 3.2.1, 3.13): one command, one exit. `effect/cli` parses the
+ * The `snorlax` invocation: one command, one exit. `effect/cli` parses the
  * command line and renders help, usage errors and version through its default formatter; command
  * failures are rendered here, so `--json` keeps exactly one JSON object on stdout. Every printed
  * byte is redacted in `cli/output.ts`. Exit codes: 0 success, 1 failure with the failure shape,
@@ -91,6 +91,7 @@ function cliLayersOf(base: Layer.Layer<CliBase>) {
       Terminal.make({
         columns: Effect.succeed(80),
         rows: Effect.succeed(24),
+        size: Effect.die("unused"),
         readInput: Effect.die("unused"),
         readLine: Effect.die("unused"),
         display: () => Effect.void
@@ -226,7 +227,7 @@ export const runCli = (argv: readonly string[], base: Layer.Layer<CliBase>): Eff
     return yield* Effect.fail(new CliExit(exitCode));
   }).pipe(
     Effect.provide(cliLayersOf(base)),
-    // Only help and version stay built in: --wizard would start an interactive prompt (plan 3.1
-    // allows none), and --completions/--log-level are not part of the snorlax calling convention.
+    // Only help and version stay built in: --wizard would start an interactive prompt, which the
+    // CLI never allows, and --completions/--log-level are not part of the snorlax calling convention.
     Effect.provide(CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] }))
   );

@@ -13,7 +13,7 @@ public protocol WatchScheduling: AnyObject {
     func scheduleRepeating(every interval: Duration, execute: @escaping () -> Void) -> any WatchCanceling
 }
 
-/// Watches the data directory because a refresh replaces `snapshot.json` by rename (plan 3.11).
+/// Watches the data directory because a refresh replaces `snapshot.json` by rename.
 /// Directory events are debounced 200 ms. A 60 s timer polls in case an event is missed.
 public final class SnapshotWatcher {
     public static let debounce: Duration = .milliseconds(200)

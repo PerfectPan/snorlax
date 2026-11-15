@@ -18,7 +18,7 @@ struct UsageProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
         let entry = load()
-        // Plan 3.11: one entry, refreshed after 15 minutes.
+        // One entry, refreshed after 15 minutes.
         let next = entry.date.addingTimeInterval(15 * 60)
         completion(Timeline(entries: [entry], policy: .after(next)))
     }

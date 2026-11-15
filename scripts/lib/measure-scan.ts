@@ -8,7 +8,7 @@ export type ScanPlatform = Parameters<typeof scanUsage>[0];
 type ScanState = ReturnType<typeof scanUsage>["state"];
 
 /**
- * Two hours, the margin a refresh keeps behind `last_scan_completed_at` (plan 3.4.1). The incremental phase uses
+ * Two hours, the margin a refresh keeps behind `last_scan_completed_at`. The incremental phase uses
  * that margin, so its duration is the refresh this measurement is for.
  */
 const INCREMENTAL_SINCE_MARGIN_MS = 2 * 60 * 60 * 1000;

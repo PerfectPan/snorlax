@@ -42,7 +42,7 @@ afterAll(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
-describe("calling convention (plan 3.2.1)", () => {
+describe("calling convention", () => {
   it("status --json prints exactly one JSON object that parses as Status, and exits 0", () => {
     const result = run(["status", "--json"], home);
     expect(result.stderr).toBe("");
@@ -104,13 +104,13 @@ describe("calling convention (plan 3.2.1)", () => {
   });
 
   it("the output mode follows the parsed --json value, however it was spelled", () => {
-    // effect/cli parses a boolean literal after the flag as its value and knows --no-json; the
+    // effect/cli consumes a boolean literal after the flag as its value and knows --no-json; the
     // handler sees exactly that value, so these all print human text and exit 0.
     for (const args of [
       ["status", "--json", "false"],
       ["status", "--json", "no"],
       ["status", "--json", "0"],
-      ["status", "--no-json", "--json"],
+      ["status", "--no-json"],
       ["status", "--json=false"]
     ]) {
       const result = run(args, home);
@@ -118,16 +118,25 @@ describe("calling convention (plan 3.2.1)", () => {
       expect(result.stdout.startsWith("{")).toBe(false);
       expect(result.stdout).toContain("snorlax");
     }
-    // --json=true and a bare --json parse to true; effect/cli keeps the first value when the flag is
-    // spelled both ways, so --json --no-json stays JSON too.
+    // --json=true and a bare --json parse to true.
     for (const args of [
       ["status", "--json"],
-      ["status", "--json=true"],
-      ["status", "--json", "--no-json"]
+      ["status", "--json=true"]
     ]) {
       const result = run(args, home);
       expect(result.status).toBe(0);
       expect(parseOneJsonObject(result.stdout).ok).toBe(true);
+    }
+    // effect/cli 4.1 rejects a second spelling of the flag instead of keeping the first value; the
+    // argv scan in cli/run sees the --json token and reports the failure as the JSON envelope.
+    for (const args of [
+      ["status", "--no-json", "--json"],
+      ["status", "--json", "--no-json"]
+    ]) {
+      const result = run(args, home);
+      expect(result.status).toBe(2);
+      const failure = z.parse(failureSchema, parseOneJsonObject(result.stdout));
+      expect(failure.error.code).toBe("invalid-arguments");
     }
   });
 
@@ -172,7 +181,7 @@ describe("built-in flags", () => {
 });
 
 describe("data directory", () => {
-  it("is not created by read-only commands: status leaves the fresh home empty (plan 3.13)", async () => {
+  it("is not created by read-only commands: status leaves the fresh home empty", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-readonly-"));
     try {
       expect(run(["status", "--json"], fresh).status).toBe(0);
@@ -203,7 +212,7 @@ describe("snapshot command", () => {
     expect(output.snapshot.generatedAt).toBe("2026-10-22T12:00:00.000Z");
 
     // Sync state and decode failures come from the snapshot (the last refresh's); the device id and last
-    // scan come from the ledger (plan 6.8, Batch 2), and no ledger exists in this home yet.
+    // scan come from the ledger, and no ledger exists in this home yet.
     const status = z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], home).stdout));
     expect(status.sync).toEqual({ state: "ok", at: "2026-10-22T12:00:00.000Z" });
     expect(status.failuresByAgent).toEqual({});
@@ -275,7 +284,7 @@ describe("refresh and rebuild", () => {
     expect(missing.status).toBe(2);
   });
 
-  it("status reports a changed pricing table and suggests rebuild --days 180, which clears it (plan 3.7)", async () => {
+  it("status reports a changed pricing table and suggests rebuild --days 180, which clears it", async () => {
     const pricingHome = await mkdtemp(join(tmpdir(), "snorlax-cli-pricing-"));
     const status = () => z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], pricingHome).stdout));
     try {
@@ -302,7 +311,7 @@ describe("refresh and rebuild", () => {
     }
   });
 
-  it("refresh and rebuild log their summary and command lines in the data directory (plan 3.9)", async () => {
+  it("refresh and rebuild log their summary and command lines in the data directory", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-log-"));
     try {
       expect(run(["refresh"], fresh).status).toBe(0);

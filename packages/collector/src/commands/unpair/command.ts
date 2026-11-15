@@ -7,7 +7,7 @@ const HUMAN =
   "local data is kept\n" +
   "if this device was registered, the backend still lists it until it is revoked with the admin token\n";
 
-/** `snorlax unpair` (plan 3.1): drop the local pairing. The backend keeps the device until an admin revoke. */
+/** `snorlax unpair`: drop the local pairing. The backend keeps the device until an admin revoke. */
 export const unpairCommand = {
   name: "unpair",
   description: "remove the local pairing; the backend device stays until it is revoked",

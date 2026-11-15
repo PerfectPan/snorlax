@@ -37,7 +37,7 @@ const BUCKET_COLUMNS =
   "hour, agent, model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, requests, sessions_started, cost_usd, unpriced_requests";
 
 /**
- * The persisted scan state (plan 3.3.2, `scan_state`), read back with a schema at the boundary. The shape
+ * The persisted scan state (`scan_state`), read back with a schema at the boundary. The shape
  * mirrors the kit's `UsageScanState`; a cursor's `state` and the items of its `queue` are the kit's own
  * opaque JSON — written by this collector from the kit's output and read back leniently by the kit's
  * decoders — so they stay `unknown` here.
@@ -70,7 +70,7 @@ const scanCursorSchema = z.looseObject({
 });
 
 // Loose at every level: the state returns to the kit's decoders, so fields a newer kit adds must survive
-// this build's read-back instead of being stripped (plan 3.7).
+// this build's read-back instead of being stripped.
 const scanStateSchema = z.looseObject({
   sources: z.record(
     z.string(),
@@ -101,7 +101,7 @@ export interface Ledger {
    * the ledger lock guarantees.
    */
   transaction<A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R>;
-  /** Adds each bucket's numbers into its row and marks the row dirty (absolute totals, plan 3.3.1). */
+  /** Adds each bucket's numbers into its row and marks the row dirty (absolute totals). */
   addBuckets(buckets: readonly BucketDelta[]): Effect.Effect<void>;
   /** Records sessions first seen in this run; a row that exists already is ignored. */
   addSessionsSeen(sessions: readonly { agent: string; sessionId: string; firstHour: number }[]): Effect.Effect<void>;
@@ -109,12 +109,12 @@ export interface Ledger {
   sessionsSeen(): Effect.Effect<Map<string, Set<string>>, LedgerUnreadable>;
   setScanState(state: unknown): Effect.Effect<void>;
   setLastScanCompleted(atMs: number): Effect.Effect<void>;
-  /** Records the version of the pricing table that priced the buckets (plan 3.7). */
+  /** Records the version of the pricing table that priced the buckets. */
   setPricingVersion(version: string): Effect.Effect<void>;
   readBuckets(): Effect.Effect<BucketRow[], LedgerUnreadable>;
   readRemoteBuckets(): Effect.Effect<RemoteBucketRow[], LedgerUnreadable>;
   readRemoteDevices(): Effect.Effect<RemoteDeviceRow[], LedgerUnreadable>;
-  /** Zeroes every bucket at or after `startHour` and marks it dirty, for `rebuild` (plan 3.4.3). */
+  /** Zeroes every bucket at or after `startHour` and marks it dirty, for `rebuild`. */
   zeroBucketsFrom(startHour: number): Effect.Effect<void>;
   /** Drops session-first-seen rows at or after `startHour`, so a rescan counts those sessions again. */
   deleteSessionsSeenFrom(startHour: number): Effect.Effect<void>;
@@ -125,7 +125,7 @@ export interface Ledger {
    * transaction, so a failed push leaves the rows dirty.
    */
   clearDirty(keys: readonly { hour: number; agent: string; model: string }[]): Effect.Effect<void>;
-  /** Marks every local bucket dirty, so the next sync uploads the whole ledger (`pair`, plan 3.4.2). */
+  /** Marks every local bucket dirty, so the next sync uploads the whole ledger (`pair`). */
   markAllDirty(): Effect.Effect<void>;
   /** Inserts or replaces pulled rows. `seq` is the page high-water mark the caller stored on each row. */
   upsertRemoteBuckets(rows: readonly RemoteBucketRow[]): Effect.Effect<void>;
@@ -133,7 +133,7 @@ export interface Ledger {
   replaceRemoteDevices(devices: readonly RemoteDeviceRow[]): Effect.Effect<void>;
   /** Stores `pull_cursor` after a pull page whose `next` is not null. */
   setPullCursor(cursor: number): Effect.Effect<void>;
-  /** Drops remote rows and sets `pull_cursor` back to 0 (`pair`, plan 3.4.2). */
+  /** Drops remote rows and sets `pull_cursor` back to 0 (`pair`). */
   resetRemote(): Effect.Effect<void>;
 }
 
@@ -157,7 +157,7 @@ export const ledgerPath = (dataDir: string): string => join(dataDir, "ledger.db"
  * without the ledger lock, so its read and a refresh's COMMIT in another process can meet: in the rollback journal
  * the COMMIT waits for open reads to end and a read waits for the COMMIT to finish, neither longer than one
  * statement or one commit. WAL would remove the wait, but every read-only `status` would then create and write
- * `ledger.db-wal` and `-shm`, which plan 3.13 rule 8 forbids. `uninstall --data` relies on the rollback journal too:
+ * `ledger.db-wal` and `-shm`, which a read-only command must not do. `uninstall --data` relies on the rollback journal too:
  * it does not take a WAL `ledger.db` as snorlax's.
  */
 const BUSY_TIMEOUT_MS = 5_000;
@@ -184,7 +184,7 @@ export class LedgerUnreadable extends Data.TaggedError("LedgerUnreadable")<{ rea
 export class LedgerNotSnorlax extends Data.TaggedError("LedgerNotSnorlax")<{ readonly message: string }> {}
 
 // The ledger rows are unknown data at the read boundary: every table is parsed through a schema, and a row
-// this build cannot read fails as `LedgerUnreadable` naming the table (AGENTS.md, plan 3.6).
+// this build cannot read fails as `LedgerUnreadable` naming the table (AGENTS.md).
 const metaRowSchema = z.object({
   device_id: z.string(),
   device_name: z.nullable(z.string()),
@@ -193,7 +193,7 @@ const metaRowSchema = z.object({
   pricing_version: z.nullable(z.string())
 });
 
-/** The bucket columns `buckets` and `remote_buckets` share (plan 3.3.2). */
+/** The bucket columns `buckets` and `remote_buckets` share. */
 const bucketColumnsSchema = {
   hour: z.number(),
   agent: z.string(),
@@ -267,7 +267,7 @@ const readMeta = (path: string, db: SqliteDatabase): Effect.Effect<LedgerMeta, L
     });
   });
 
-/** The schema version the database is on (plan 3.3.2). */
+/** The schema version the database is on. */
 const readUserVersion = (path: string, db: SqliteDatabase): Effect.Effect<number, LedgerUnreadable> =>
   Effect.suspend(() => {
     const parsed = z.safeParse(userVersionSchema, db.prepare("PRAGMA user_version").get());
@@ -611,7 +611,7 @@ const ledgerOn = (
 /**
  * Opens (creating on first run) `<data>/ledger.db` for the rest of the scope, migrates it to `SCHEMA_VERSION`
  * with a backup first, and makes sure the `meta` row with its device id exists. The device id is generated once
- * per data directory and never derived from the host name (plan 2.4 D7). The connection closes with the scope.
+ * per data directory and never derived from the host name. The connection closes with the scope.
  */
 export const openLedger = (
   platform: LedgerPlatform,
@@ -647,7 +647,7 @@ export const openLedger = (
 /**
  * The part of `meta` that `status` reports, read without taking the ledger lock or migrating anything; null when
  * there is no ledger yet. `pricingChanged` says a scanned ledger's buckets were not priced with this build's table
- * (plan 3.7): another version, or none, because the ledger was scanned before pricing existed; a ledger never
+ *: another version, or none, because the ledger was scanned before pricing existed; a ledger never
  * scanned has nothing priced. `uninstall --data` reads it as the snorlax marker. A `stat` that throws is a defect;
  * a ledger that cannot be opened, or whose meta row cannot be read, is `LedgerUnreadable`, as in `openLedger`; a
  * database SQLite reads without a `meta` table is `LedgerNotSnorlax`.
@@ -704,10 +704,10 @@ export interface ScanAndCommitDeps<E = never> {
   readonly platform: Platform;
   readonly dataDir: string;
   readonly log: Logger;
-  /** IANA time zone of this device; the snapshot's day windows follow it (plan 3.2.2). */
+  /** IANA time zone of this device; the snapshot's day windows follow it. */
   readonly timeZone: string;
   /**
-   * Plan 3.4.1 step 6, supplied by the caller. `modules/` cannot import `capabilities/` (plan 3.13 rule 1),
+   * Supplied by the caller: `modules/` cannot import `capabilities/`,
    * so the sync flow lives with the backend client and is passed in. Omitted, the run reports unpaired and
    * does not touch a keychain.
    */
@@ -724,12 +724,12 @@ export interface ScanRun {
 }
 
 /** The scan margin: records and sources this much before the last completed scan are read again, so the
- *  kit's 30-minute quiet window cannot leave a late record outside the scan (plan 3.4.1 step 3). */
+ * kit's 30-minute quiet window cannot leave a late record outside the scan. */
 const RESCAN_MARGIN_MS = 2 * 3_600_000;
 
 /**
  * Refresh's and `pair`'s scan window: incremental from the saved scan state. It lives here so `pair` can run
- * the same window as `refresh` without importing another command (plan 3.13 rule 2).
+ * the same window as `refresh` without importing another command.
  */
 export const refreshScan: ScanRun = {
   event: "refresh",
@@ -742,7 +742,7 @@ export const refreshScan: ScanRun = {
 /**
  * Holds the ledger lock and opens the ledger for `body`. The lock and the connection stay in a scope, so a
  * failure or an interrupt closes the ledger and releases the lock. `pair` uses this to read the device id
- * before it registers, which creates the ledger when this data directory does not have one yet (plan 3.4.2).
+ * before it registers, which creates the ledger when this data directory does not have one yet.
  */
 export const withLedger = <A, E, R>(
   platform: Platform,
@@ -773,7 +773,7 @@ export interface ScanAndCommitOutcome {
 }
 
 /**
- * One refresh or rebuild over the ledger (plan 3.4.1 steps 2–8): take the ledger lock, open the ledger under
+ * One refresh or rebuild over the ledger: take the ledger lock, open the ledger under
  * it, scan the command's window and commit buckets and scan state in one transaction, run the sync step while
  * still holding the lock, then build and atomically write the snapshot and log the summary line. Opening
  * under the lock puts the migration, the meta write and the read of meta and scan state after the previous

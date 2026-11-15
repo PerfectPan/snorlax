@@ -221,7 +221,7 @@ const refreshPaired = (input: {
   });
 
 /**
- * One `snorlax pair` (plan 3.4.2). The URL and the admin token are checked before anything is created. An
+ * One `snorlax pair`. The URL and the admin token are checked before anything is created. An
  * admin token that is not an RFC 6750 bearer token is a usage error and the value is not printed. `config.json`
  * is read next: an invalid file fails before registration, so nothing is stored and nothing is marked dirty.
  * The ledger is then opened so the device id exists, and `POST /v1/devices` runs. A failed registration writes

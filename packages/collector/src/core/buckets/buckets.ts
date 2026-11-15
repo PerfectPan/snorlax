@@ -1,7 +1,7 @@
 import { priceRecord, type PricedPart, type Pricing } from "@rivus/agent-kit/cost";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
 
-/** One local bucket row: the protocol's bucket fields plus the `dirty` upload flag (plan 3.3.2). */
+/** One local bucket row: the protocol's bucket fields plus the `dirty` upload flag. */
 export interface BucketRow {
   readonly hour: number;
   readonly agent: string;
@@ -54,7 +54,7 @@ export const createAccumulator = (): Accumulator => ({ buckets: new Map(), newSe
 const partTokens = (part: PricedPart): number => (part.usage.inputTokens ?? 0) + (part.usage.outputTokens ?? 0);
 
 /**
- * How many model requests each part of a priced record stands for (plan 3.4.1 step 4): every part of a
+ * How many model requests each part of a priced record stands for: every part of a
  * `request` record counts 1; a whole `turn`/`session` record counts its `modelCalls`, else 1. The kit gives a
  * part of a split only its own share's `modelCalls`, so a split record that reports the record's `modelCalls`
  * divides them here: a part naming its own `modelCalls` keeps it, and the calls left over — never below zero —
@@ -93,7 +93,7 @@ export function partRequestCounts(record: UsageRecord, parts: readonly PricedPar
 const hourOf = (timestampMs: number): number => Math.floor(timestampMs / 3_600_000) * 3600;
 
 /**
- * Adds one record's usage into the accumulator (plan 3.4.1 step 4). The kit's `priceRecord` decides the parts
+ * Adds one record's usage into the accumulator. The kit's `priceRecord` decides the parts
  * and their costs — the agent's own amount, else the table's prices times the record's multiplier — so snorlax
  * keeps only its own rules: the bucket key, the requests each part counts, and sessions. A count the log does not
  * record adds 0; a part without a cost adds its requests to `unpricedRequests` and nothing to `costUsd`. A session

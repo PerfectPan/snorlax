@@ -1,6 +1,6 @@
 import Foundation
 
-/// The app's supported snapshot and CLI `schemaVersion` (plan 3.7).
+/// The app's supported snapshot and CLI `schemaVersion`.
 public enum SchemaGate {
     public static let supportedVersion: Double = 1
     /// Shown when a file or CLI body is newer than this app.

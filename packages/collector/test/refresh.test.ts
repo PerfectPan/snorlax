@@ -529,7 +529,7 @@ describe("bundled CLI end to end", () => {
 
       const printed = run(["snapshot", "--json"]);
       expect(printed.status).toBe(0);
-      // The command wraps the snapshot in SnapshotOutput (plan 3.1).
+      // The command wraps the snapshot in SnapshotOutput.
       const parsed = z.safeParse(snapshotOutputSchema, JSON.parse(printed.stdout));
       expect(parsed.success ? "valid" : z.prettifyError(parsed.error)).toBe("valid");
       const parsedSnapshot = parsed.success && z.safeParse(snapshotSchema, parsed.data.snapshot);

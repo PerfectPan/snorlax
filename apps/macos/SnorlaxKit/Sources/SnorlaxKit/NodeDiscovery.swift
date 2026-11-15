@@ -30,7 +30,7 @@ public protocol NodeProbing: Sendable {
     func loginShellNodePath() -> String?
 }
 
-/// Finds a Node >= 22.13 and writes `<data>/node-path` (plan 3.11).
+/// Finds a Node >= 22.13 and writes `<data>/node-path`.
 /// The launcher reads that file. This type does not search `PATH` itself.
 public enum NodeDiscovery {
     public static let minimum = NodeVersion(major: 22, minor: 13, patch: 0)

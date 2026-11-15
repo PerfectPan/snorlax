@@ -6,7 +6,7 @@ import { Effect } from "effect";
 
 import type { NodeFileOps } from "../platform/platform.ts";
 
-/** Rotate at 5 MB, keep three files: `snorlax.log`, `snorlax.log.1`, `snorlax.log.2` (plan 3.9). */
+/** Rotate at 5 MB, keep three files: `snorlax.log`, `snorlax.log.1`, `snorlax.log.2`. */
 export const LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const LOG_FILES_KEPT = 3;
 
@@ -15,7 +15,7 @@ export type LogFieldValue = string | number | boolean | null;
 export interface Logger {
   /**
    * Appends one line: `<utc timestamp> <event>[ <json fields>]`, rotated as needed. The line passes through
-   * `redactText` before it is written (plan 3.8). Logging never fails the command: a broken log file is
+   * `redactText` before it is written. Logging never fails the command: a broken log file is
    * reported by `doctor`, not by throwing here.
    */
   event(name: string, fields?: Record<string, LogFieldValue>): Effect.Effect<void>;
@@ -66,7 +66,7 @@ const lineOf = (
 ): string => {
   const timestamp = new Date(platform.clock.now()).toISOString();
   const suffix = fields === undefined ? "" : ` ${JSON.stringify(fields)}`;
-  // Every line passes through redactText before it is written (plan 3.8).
+  // Every line passes through redactText before it is written.
   return redactText(`${timestamp} ${name}${suffix}\n`, { home: platform.home });
 };
 
@@ -74,7 +74,7 @@ const lineOf = (
  * The log of `<data>/logs/snorlax.log`. Creating it opens nothing; `event` appends only — when the data
  * directory or its `logs` directory does not exist yet, the line is dropped. Commands that write (`refresh`,
  * `rebuild`, `install`) create the directory through `ensureDataDir`; the other commands log nothing on a
- * fresh machine instead of creating files (plan 3.13).
+ * fresh machine instead of creating files.
  */
 export function appendingLogger(
   platform: Pick<Platform, "fs" | "clock" | "home">,

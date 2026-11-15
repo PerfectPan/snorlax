@@ -60,7 +60,7 @@ const launcherScriptAt = (platform: Pick<Platform, "fs">, path: string): Effect.
 
 /**
  * The launcher's Node resolution, observed: Node from `<data>/node-path` — the file Snorlax.app's
- * discovery keeps current — else the first executable fallback (plan 0001 section 7). A candidate the
+ * discovery keeps current — else the first executable fallback. A candidate the
  * flow cannot look at behaves like the launcher's `[ -x ]`: skipped, unless every candidate is like
  * that, which leaves the run uncheckable rather than reported missing.
  */
@@ -159,7 +159,7 @@ const pairedObservation = (
   });
 
 /**
- * Diagnostics (plan 3.1, 3.13 rule 8). The flow only observes: it creates nothing and repairs nothing.
+ * Diagnostics. The flow only observes: it creates nothing and repairs nothing.
  * An invalid config stays a config error and does not add a "not paired" check, because the URL could not
  * be read. A readable config with no `backendUrl` adds one ok `sync` check. A paired config adds the
  * keychain, health, and devices checks. The command exits 0 healthy and 1 unhealthy; `healthy` is false when

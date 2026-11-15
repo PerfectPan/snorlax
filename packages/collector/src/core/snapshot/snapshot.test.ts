@@ -4,7 +4,7 @@ import type { SyncState } from "@rivus/snorlax-protocol";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
- * Spec S10 and the snapshot's windows and series (plan 3.2.2): days follow the viewer's time zone, a
+ * Spec S10 and the snapshot's windows and series: days follow the viewer's time zone, a
  * bucket belongs to the local day and hour that contain its UTC start hour, `daily` covers the last 180
  * local days including today and `hourlyToday` today's local hours. Built directly from ledger rows with a
  * fixed clock, so every boundary is exact.

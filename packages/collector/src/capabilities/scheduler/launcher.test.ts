@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { launcherPath, NODE_FALLBACKS, NODE_PATH_FILE, renderNodePathSeed, renderRefreshLauncher } from "./launcher.ts";
 
 /**
- * The launcher script's fixed layout (plan 0001 section 7): Node from `node-path` first, then the fixed
+ * The launcher script's fixed layout: Node from `node-path` first, then the fixed
  * fallbacks, never a `PATH` — and the data directory and CLI are sh-quoted, so spaces and quotes stay
  * one word. What the script does when it runs is pinned by the bundle test that executes it with a stub
  * Node; the fallback half of the resolution depends on the host's installed Nodes, so only the text
