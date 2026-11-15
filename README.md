@@ -1,8 +1,8 @@
 # snorlax
 
 Snorlax eats 400 kg a day. snorlax counts what your coding agents eat: the tokens, requests and cost of Claude
-Code, Codex, Gemini CLI, Grok, opencode and Pi, added up across every machine you use, on the macOS menu bar and in
-desktop widgets.
+Code, Codex, Gemini CLI, Grok, DeepSeek Harness, ZCode, opencode and Pi, added up across every machine you use, on
+the macOS menu bar and in desktop widgets.
 
 Status: the initial implementation is accepted; first npm publication remains tracked in
 [#35](https://github.com/PerfectPan/snorlax/issues/35). The behavior is specified in
