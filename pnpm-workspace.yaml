@@ -10,8 +10,8 @@ catalogMode: strict
 catalog:
   # effect and @effect/platform-node are pinned to the exact version @rivus/agent-kit's
   # peerDependencies.effect names (plan 2.4 D12); both upgrade together with the kit's peer range.
-  effect: 4.0.5
-  '@effect/platform-node': 4.0.5
+  effect: 4.1.1
+  '@effect/platform-node': 4.1.1
   # The bundled vitest peers on a real `vite` range, while vite-plus provides `vite` as this core alias;
   # pnpm can only satisfy that peer through the override below. Keep the version in lockstep with the
   # `vite-plus` entry (same release train; Dependabot does not see the mapping).
@@ -20,8 +20,8 @@ catalog:
   '@hono/node-server': 2.1.5
   '@hono/standard-validator': 0.4.1
   '@perfectpan/lint-config': github:PerfectPan/lint-config#v0.7.1
-  '@rivus/agent-kit': 0.23.0
-  '@rivus/agent-kit-collab': 0.23.0
+  '@rivus/agent-kit': 0.25.0
+  '@rivus/agent-kit-collab': 0.25.0
   '@types/node': 24.19.2
   # Pinned exactly (plan 2.4 D13): `cf` takes over from Wrangler as Cloudflare's CLI and delegates its
   # bundling to the package's Wrangler; both upgrade on purpose, not through a floating range.
@@ -39,8 +39,8 @@ catalog:
 overrides:
   vite@*: 'catalog:'
   # @effect/platform-node's caret range would float @effect/platform-node-shared to a version whose
-  # effect peer no longer accepts the pinned 4.0.5; keep the whole effect 4.0.5 train together.
-  '@effect/platform-node-shared@*': 4.0.5
+  # effect peer no longer accepts the pinned 4.1.1; keep the whole effect 4.1.1 train together.
+  '@effect/platform-node-shared@*': 4.1.1
 
 peerDependencyRules:
   allowAny:

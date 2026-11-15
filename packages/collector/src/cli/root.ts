@@ -14,10 +14,11 @@ import { unpairCommand } from "../commands/unpair/command.ts";
 /**
  * The global `--json` flag as an effect/cli Setting: effect/cli parses it once per invocation and
  * provides the parsed value to the command handler as this service, so the output mode follows what
- * was actually parsed — `--json=false`, `--json no`, `--json --no-json` and `--no-json --json` all
- * mean human output — not what an argv scan guesses. The handler `commandOf` builds hands the value
- * on with the command's result; `cli/run` falls back to scanning the tokens before `--` only where no
- * handler ran.
+ * was actually parsed — `--json=false`, a literal after the flag and `--no-json` all mean human
+ * output — not what an argv scan guesses. effect/cli takes the flag at most once: a second spelling
+ * of it fails as invalid arguments instead of keeping the first value. The handler `commandOf`
+ * builds hands the value on with the command's result; `cli/run` falls back to scanning the tokens
+ * before `--` only where no handler ran.
  */
 export const JsonFlag = GlobalFlag.Setting("json")({
   flag: Flag.Boolean("json").pipe(

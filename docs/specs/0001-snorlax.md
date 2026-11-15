@@ -18,7 +18,8 @@ bar and in desktop widgets.
 Included:
 
 - Token counts (input with cache reads and writes, output with reasoning), model requests, new sessions and cost
-  for Claude Code, Codex, Gemini CLI, Grok, opencode and Pi: the agents whose usage `@rivus/agent-kit` decodes.
+  for Claude Code, Codex, Gemini CLI, Grok, DeepSeek Harness, ZCode, opencode and Pi: the agents whose usage
+  `@rivus/agent-kit` decodes.
 - Totals for today, the last 7 days and the last 30 days, by agent, by model and by device, plus a daily series
   and today's hourly series.
 - A macOS menu bar app and desktop widgets; a headless collector on Linux.
