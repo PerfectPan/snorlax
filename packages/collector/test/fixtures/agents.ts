@@ -225,7 +225,7 @@ export async function writePiSession(home: string, fixture: PiSessionFixture): P
   );
 }
 
-export interface GrokTurnFixture {
+interface GrokTurnFixture {
   readonly promptId: string;
   readonly timestampMs: number;
   /** The turn's own totals, as Grok reports them per turn; the model split below must add up to them. */

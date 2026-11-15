@@ -27,6 +27,9 @@ export interface RemoteBucketRow extends Omit<BucketRow, "dirty"> {
   readonly seq: number;
 }
 
+/** A local or remote bucket as one flat row for the windows and series. */
+export type SnapshotBucket = Omit<RemoteBucketRow, "seq">;
+
 /** One `remote_devices` row. */
 export interface RemoteDeviceRow {
   readonly id: string;

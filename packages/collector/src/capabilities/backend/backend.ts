@@ -14,7 +14,10 @@ import { Context, Data, Duration, Effect, Layer } from "effect";
 import * as z from "zod/mini";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
+import { ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import type { Ledger } from "../../modules/ledger/ledger.ts";
+import { appendingLogger } from "../../modules/log/log.ts";
+import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { Secrets } from "../secrets/secrets.ts";
 import { synchronize, type SyncInput } from "./sync.ts";
 
@@ -45,7 +48,7 @@ export class BackendInvalidResponse extends Data.TaggedError("BackendInvalidResp
 }> {}
 
 /** The id is already registered and has not been revoked (HTTP 409). `pair` revokes it and registers again. */
-export class BackendConflict extends Data.TaggedError("BackendConflict")<{
+class BackendConflict extends Data.TaggedError("BackendConflict")<{
   readonly message: string;
 }> {}
 
@@ -338,3 +341,14 @@ export const pairedSync = (input: SyncInput) =>
     const backend = yield* Backend;
     return (ledger: Ledger) => synchronize({ ...input, secrets, backend, ledger });
   });
+
+/** The prepared scan context the scan commands share: data directory, logger and paired sync. */
+export const preparedScanContext = Effect.gen(function* () {
+  const platform = yield* SnorlaxPlatform;
+  const nodeFiles = yield* NodeFiles;
+  const dataDir = resolveDataDir(platform);
+  yield* ensureDataDir(platform, nodeFiles, dataDir);
+  const log = appendingLogger(platform, nodeFiles, dataDir);
+  const sync = yield* pairedSync({ platform, dataDir });
+  return { platform, dataDir, log, sync };
+});

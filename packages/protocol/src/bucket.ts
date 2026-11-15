@@ -37,3 +37,38 @@ export type Bucket = z.output<typeof bucketSchema>;
  */
 export const strictBucketSchema = z.strictObject(bucketFields);
 export type StrictBucket = z.output<typeof strictBucketSchema>;
+
+/**
+ * The bucket column values in the ledger's and the worker store's column order (`hour` through
+ * `unpricedRequests`, without the device or bookkeeping columns) — one list, so the two inserts cannot drift.
+ */
+export const bucketColumnValues = (
+  bucket: Pick<
+    Bucket,
+    | "hour"
+    | "agent"
+    | "model"
+    | "inputTokens"
+    | "cacheReadTokens"
+    | "cacheWriteTokens"
+    | "outputTokens"
+    | "reasoningTokens"
+    | "requests"
+    | "sessionsStarted"
+    | "costUsd"
+    | "unpricedRequests"
+  >
+): [number, string, string, number, number, number, number, number, number, number, number, number] => [
+  bucket.hour,
+  bucket.agent,
+  bucket.model,
+  bucket.inputTokens,
+  bucket.cacheReadTokens,
+  bucket.cacheWriteTokens,
+  bucket.outputTokens,
+  bucket.reasoningTokens,
+  bucket.requests,
+  bucket.sessionsStarted,
+  bucket.costUsd,
+  bucket.unpricedRequests
+];

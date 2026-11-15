@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
 import type { UsageRecord } from "@rivus/agent-kit/transcript/usage";
-import type { RefreshResult, SyncState } from "@rivus/snorlax-protocol";
+import { bucketColumnValues, type RefreshResult, type SyncState } from "@rivus/snorlax-protocol";
 import { Data, Effect, Exit, type Scope } from "effect";
 import * as z from "zod/mini";
 
@@ -14,12 +14,12 @@ import { readConfig, type ConfigInvalid } from "../config/config.ts";
 import type { LogFieldValue, Logger } from "../log/log.ts";
 import { writeSnapshot, type SnapshotWriteFailed } from "../snapshot-file/snapshot-file.ts";
 import { holdLedgerLock, LedgerLockHeld } from "./lock.ts";
-import { LedgerBackupFailed, LedgerSchemaTooNew, prepareMigrations, SCHEMA_VERSION } from "./migrations.ts";
+import { LedgerBackupFailed, LedgerSchemaTooNew, prepareMigrations } from "./migrations.ts";
 import { commitScan, PRICING_VERSION, type ScanWindow } from "./commit-scan.ts";
 import type { PlatformSqlite, SqliteDatabase, SqliteValue } from "./sqlite.ts";
 
 /** The `meta` row; `device_id` is generated once, here, when the ledger is created. */
-export interface LedgerMeta {
+interface LedgerMeta {
   readonly deviceId: string;
   readonly deviceName: string | null;
   readonly lastScanCompletedAt: number | null;
@@ -280,7 +280,8 @@ const readUserVersion = (path: string, db: SqliteDatabase): Effect.Effect<number
         );
   });
 
-const bucketOf = (bucket: z.output<typeof bucketRowSchema>): BucketRow => ({
+/** The snake_case row's bucket fields, as the domain names them; the row's own extras stay with it. */
+const bucketFields = (bucket: Omit<z.output<typeof bucketRowSchema>, "dirty">) => ({
   hour: bucket.hour,
   agent: bucket.agent,
   model: bucket.model,
@@ -292,24 +293,15 @@ const bucketOf = (bucket: z.output<typeof bucketRowSchema>): BucketRow => ({
   requests: bucket.requests,
   sessionsStarted: bucket.sessions_started,
   costUsd: bucket.cost_usd,
-  unpricedRequests: bucket.unpriced_requests,
+  unpricedRequests: bucket.unpriced_requests
+});
+
+const bucketOf = (bucket: z.output<typeof bucketRowSchema>): BucketRow => ({
+  ...bucketFields(bucket),
   dirty: bucket.dirty !== 0
 });
 
-const bucketParams = (bucket: BucketDelta): SqliteValue[] => [
-  bucket.hour,
-  bucket.agent,
-  bucket.model,
-  bucket.inputTokens,
-  bucket.cacheReadTokens,
-  bucket.cacheWriteTokens,
-  bucket.outputTokens,
-  bucket.reasoningTokens,
-  bucket.requests,
-  bucket.sessionsStarted,
-  bucket.costUsd,
-  bucket.unpricedRequests
-];
+const bucketParams = (bucket: BucketDelta): SqliteValue[] => bucketColumnValues(bucket);
 
 const parseScanState = (path: string, raw: string): Effect.Effect<PersistedScanState, LedgerUnreadable> =>
   Effect.gen(function* () {
@@ -464,18 +456,7 @@ const ledgerOn = (
           rows.map((bucket): RemoteBucketRow => ({
             deviceId: bucket.device_id,
             seq: bucket.seq,
-            hour: bucket.hour,
-            agent: bucket.agent,
-            model: bucket.model,
-            inputTokens: bucket.input_tokens,
-            cacheReadTokens: bucket.cache_read_tokens,
-            cacheWriteTokens: bucket.cache_write_tokens,
-            outputTokens: bucket.output_tokens,
-            reasoningTokens: bucket.reasoning_tokens,
-            requests: bucket.requests,
-            sessionsStarted: bucket.sessions_started,
-            costUsd: bucket.cost_usd,
-            unpricedRequests: bucket.unpriced_requests
+            ...bucketFields(bucket)
           }))
         )
       ),
@@ -859,4 +840,4 @@ export const scanAndCommit = <E>(
     })
   );
 
-export { LedgerBackupFailed, LedgerLockHeld, LedgerSchemaTooNew, SCHEMA_VERSION };
+export { LedgerBackupFailed, LedgerLockHeld, LedgerSchemaTooNew,  };

@@ -13,7 +13,7 @@ import { DATA_DIR_MODE } from "../../modules/data-dir/data-dir.ts";
  */
 
 /** The oldest Node the collector runs on (the Spec's "Compatibility And Constraints": Node 22.13). */
-export const REQUIRED_NODE = "22.13";
+const REQUIRED_NODE = "22.13";
 
 const parseNodeVersion = (version: string): [number, number, number] | null => {
   const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?/.exec(version);
@@ -114,172 +114,161 @@ const checkOf = (status: DoctorCheck["status"], detail: string): DoctorCheck => 
 });
 
 /**
- * launchd's verdict. The CLI's LaunchAgent starts the data directory's launcher script, which resolves
- * Node at run time (`node-path`, then fixed fallbacks), so a removed Node no longer stops the job — but
- * a missing launcher script does, and so does no Node anywhere the launcher looks. So is a script or
- * Node path this user cannot check: launchd starts the job as this user, which cannot reach it either.
- * Not scheduling at all is a normal way to use the app (it refreshes when asked), so every state that
- * is not broken outright is a warning, never an error.
+ * The runtime verdicts both schedulers share once a CLI job exists: an unreadable launcher, a launcher
+ * script that is gone, and a Node the launcher cannot run or cannot be checked. The caller's own wording
+ * for a missing script stays with the scheduler.
  */
-const launchdSchedule = (
-  job: InspectedJob,
+const scheduleRuntimeVerdict = (
+  cliJob: { readonly file: string; readonly launcher?: string },
   dataDir: string,
-  launcher: LauncherState | undefined,
-  node: NodeBinary | undefined
-): DoctorCheck => {
-  const { cliJob, loaded } = job;
-  if (loaded.from === "app") {
-    return cliJob === undefined
-      ? checkOf("ok", `Snorlax.app's Launch at login schedules refresh (${loaded.file})`)
+  launcher: Exclude<LauncherState, "missing">,
+  node: NodeBinary | undefined,
+  reinstall: string
+): DoctorCheck | undefined => {
+  if (launcher !== "present") {
+    return checkOf(
+      "error",
+      `cannot check the launcher script ${cliJob.launcher} that ${cliJob.file} runs: ${launcher.unchecked}; ${reinstall}`
+    );
+  }
+  if (node === "missing" || node === "not-executable") {
+    return checkOf(
+      "error",
+      `no Node the launcher ${cliJob.launcher} can run: ${nodeCandidates(dataDir).join(", ")} name none that is ` +
+        `executable, so scheduled refresh stops; ${INSTALL_NODE}`
+    );
+  }
+  if (node !== "runnable") {
+    return checkOf(
+      "error",
+      `cannot check the Node the launcher ${cliJob.launcher} runs: ${
+        node?.unchecked ?? "the launcher's Node resolution was not observed"
+      }; ${reinstall}`
+    );
+  }
+  return undefined;
+};
+
+/**
+ * How one scheduler's schedule verdict words itself; the decision tree is shared. launchd defers to
+ * Snorlax.app's Launch at login, systemd refuses a unit it did not write, and every other state names
+ * what to run.
+ */
+interface ScheduleWording {
+  readonly reinstall: string;
+  readonly appOwned: (loadedFile: string, cliJob: InspectedJob["cliJob"]) => DoctorCheck;
+  readonly cliGone: (loadedFile: string) => DoctorCheck;
+  readonly unknownOwner: (reason: string) => DoctorCheck;
+  readonly notScheduled: () => DoctorCheck;
+  readonly launcherMissing: (jobFile: string, launcher: string) => DoctorCheck;
+  readonly cliLoaded: (jobFile: string, launcher: string) => DoctorCheck;
+  readonly cliUnknown: (jobFile: string, reason: string) => DoctorCheck;
+  readonly notLoaded: (jobFile: string) => DoctorCheck;
+}
+
+/** The schedule verdict's shared tree: the app's job, the gone or unattributable one, then the runtime checks. */
+const scheduleVerdict =
+  (wording: ScheduleWording) =>
+  (job: InspectedJob, dataDir: string, launcher: LauncherState | undefined, node: NodeBinary | undefined): DoctorCheck => {
+    const { cliJob, loaded } = job;
+    if (loaded.from === "app") {
+      return wording.appOwned(loaded.file, cliJob);
+    }
+    if (cliJob === undefined) {
+      if (loaded.from === "cli") {
+        return wording.cliGone(loaded.file);
+      }
+      if (loaded.from === "unknown") {
+        return wording.unknownOwner(loaded.reason);
+      }
+      return wording.notScheduled();
+    }
+    if (cliJob.launcher === undefined || launcher === undefined) {
+      return checkOf("warn", `cannot read the launcher path from ${cliJob.file}; run \`snorlax install\` to rewrite it`);
+    }
+    if (launcher === "missing") {
+      return wording.launcherMissing(cliJob.file, cliJob.launcher);
+    }
+    const runtime = scheduleRuntimeVerdict(cliJob, dataDir, launcher, node, wording.reinstall);
+    if (runtime !== undefined) {
+      return runtime;
+    }
+    if (loaded.from === "cli") {
+      return wording.cliLoaded(cliJob.file, cliJob.launcher);
+    }
+    if (loaded.from === "unknown") {
+      return wording.cliUnknown(cliJob.file, loaded.reason);
+    }
+    return wording.notLoaded(cliJob.file);
+  };
+
+const launchdSchedule = scheduleVerdict({
+  reinstall: REINSTALL,
+  appOwned: (loadedFile, cliJob) =>
+    cliJob === undefined
+      ? checkOf("ok", `Snorlax.app's Launch at login schedules refresh (${loadedFile})`)
       : checkOf(
           "warn",
           `Snorlax.app's Launch at login schedules refresh, and ${cliJob.file} registers the same job; turn ` +
             "Launch at login off, run `snorlax uninstall`, then turn Launch at login on again"
-        );
-  }
-  if (cliJob === undefined) {
-    if (loaded.from === "cli") {
-      return checkOf(
-        "warn",
-        `launchd runs the LaunchAgent, but ${loaded.file} is gone; run \`snorlax install\` to restore it or ` +
-          "`snorlax uninstall` to stop it"
-      );
-    }
-    if (loaded.from === "unknown") {
-      return checkOf("warn", `a refresh job is loaded, but its owner cannot be confirmed: ${loaded.reason}`);
-    }
-    return checkOf(
+        ),
+  cliGone: (loadedFile) =>
+    checkOf(
+      "warn",
+      `launchd runs the LaunchAgent, but ${loadedFile} is gone; run \`snorlax install\` to restore it or ` +
+        "`snorlax uninstall` to stop it"
+    ),
+  unknownOwner: (reason) => checkOf("warn", `a refresh job is loaded, but its owner cannot be confirmed: ${reason}`),
+  notScheduled: () =>
+    checkOf(
       "warn",
       "refresh is not scheduled: turn on Launch at login in Snorlax's Settings, or run `snorlax install`; until " +
         "then the snapshot changes only when refresh runs"
-    );
-  }
-  if (cliJob.launcher === undefined || launcher === undefined) {
-    return checkOf("warn", `cannot read the launcher path from ${cliJob.file}; run \`snorlax install\` to rewrite it`);
-  }
-  if (launcher === "missing") {
-    return checkOf(
+    ),
+  launcherMissing: (jobFile, launcher) =>
+    checkOf(
       "error",
-      `${cliJob.file} runs the launcher script ${cliJob.launcher}, which does not exist, so scheduled refresh ` +
+      `${jobFile} runs the launcher script ${launcher}, which does not exist, so scheduled refresh ` +
         "stops; run `snorlax install` to write it back"
-    );
-  }
-  if (launcher !== "present") {
-    return checkOf(
-      "error",
-      `cannot check the launcher script ${cliJob.launcher} that ${cliJob.file} runs: ${launcher.unchecked}; ${REINSTALL}`
-    );
-  }
-  if (node === "missing" || node === "not-executable") {
-    return checkOf(
-      "error",
-      `no Node the launcher ${cliJob.launcher} can run: ${nodeCandidates(dataDir).join(", ")} name none that is ` +
-        `executable, so scheduled refresh stops; ${INSTALL_NODE}`
-    );
-  }
-  if (node !== "runnable") {
-    return checkOf(
-      "error",
-      `cannot check the Node the launcher ${cliJob.launcher} runs: ${
-        node?.unchecked ?? "the launcher's Node resolution was not observed"
-      }; ${REINSTALL}`
-    );
-  }
-  if (loaded.from === "cli") {
-    return checkOf("ok", `the LaunchAgent ${cliJob.file} is loaded and runs refresh through ${cliJob.launcher}`);
-  }
-  if (loaded.from === "unknown") {
-    return checkOf("warn", `cannot tell whether launchd runs ${cliJob.file}: ${loaded.reason}`);
-  }
-  return checkOf("warn", `${cliJob.file} exists, but launchd has not loaded it; run \`snorlax install\` to load it`);
-};
+    ),
+  cliLoaded: (jobFile, launcher) =>
+    checkOf("ok", `the LaunchAgent ${jobFile} is loaded and runs refresh through ${launcher}`),
+  cliUnknown: (jobFile, reason) => checkOf("warn", `cannot tell whether launchd runs ${jobFile}: ${reason}`),
+  notLoaded: (jobFile) =>
+    checkOf("warn", `${jobFile} exists, but launchd has not loaded it; run \`snorlax install\` to load it`)
+});
 
 /**
- * The same decisions as `launchdSchedule`, worded for the systemd user timer. Linux has no app registering
+ * The same decisions as launchd's verdict, worded for the systemd user timer. Linux has no app registering
  * the timer, so a job that says it came from the app is treated as an owner that cannot be confirmed.
  */
-const systemdSchedule = (
-  job: InspectedJob,
-  dataDir: string,
-  launcher: LauncherState | undefined,
-  node: NodeBinary | undefined
-): DoctorCheck => {
-  const { cliJob, loaded } = job;
-  if (loaded.from === "app") {
-    return checkOf(
+const systemdSchedule = scheduleVerdict({
+  reinstall: SYSTEMD_REINSTALL,
+  appOwned: (loadedFile) =>
+    checkOf("warn", `a refresh timer is loaded from ${loadedFile}, which is not a unit file snorlax install writes`),
+  cliGone: (loadedFile) =>
+    checkOf(
       "warn",
-      `a refresh timer is loaded from ${loaded.file}, which is not a unit file snorlax install writes`
-    );
-  }
-  if (cliJob === undefined) {
-    if (loaded.from === "cli") {
-      return checkOf(
-        "warn",
-        `systemd runs the user timer ${loaded.file}, but the service unit it starts is gone; run ` +
-          "`snorlax install` to restore it or `snorlax uninstall` to stop it"
-      );
-    }
-    // A failed unit-directory query is not evidence that a timer is loaded.
-    if (loaded.from === "unknown") {
-      return checkOf("warn", `cannot confirm the timer's state: ${loaded.reason}`);
-    }
-    return checkOf(
-      "warn",
-      "refresh is not scheduled: run `snorlax install`; until then the snapshot changes only when refresh runs"
-    );
-  }
-  if (cliJob.launcher === undefined || launcher === undefined) {
-    return checkOf("warn", `cannot read the launcher path from ${cliJob.file}; run \`snorlax install\` to rewrite it`);
-  }
-  if (launcher === "missing") {
-    return checkOf(
+      `systemd runs the user timer ${loadedFile}, but the service unit it starts is gone; run ` +
+        "`snorlax install` to restore it or `snorlax uninstall` to stop it"
+    ),
+  // A failed unit-directory query is not evidence that a timer is loaded.
+  unknownOwner: (reason) => checkOf("warn", `cannot confirm the timer's state: ${reason}`),
+  notScheduled: () =>
+    checkOf("warn", "refresh is not scheduled: run `snorlax install`; until then the snapshot changes only when refresh runs"),
+  launcherMissing: (jobFile, launcher) =>
+    checkOf(
       "error",
-      `the service unit ${cliJob.file} runs the launcher script ${cliJob.launcher}, which does not exist, so ` +
+      `the service unit ${jobFile} runs the launcher script ${launcher}, which does not exist, so ` +
         "scheduled refresh stops; run `snorlax install` to write it back"
-    );
-  }
-  if (launcher !== "present") {
-    return checkOf(
-      "error",
-      `cannot check the launcher script ${cliJob.launcher} that ${cliJob.file} runs: ${launcher.unchecked}; ` +
-        `${SYSTEMD_REINSTALL}`
-    );
-  }
-  if (node === "missing" || node === "not-executable") {
-    return checkOf(
-      "error",
-      `no Node the launcher ${cliJob.launcher} can run: ${nodeCandidates(dataDir).join(", ")} name none that is ` +
-        `executable, so scheduled refresh stops; ${INSTALL_NODE}`
-    );
-  }
-  if (node !== "runnable") {
-    return checkOf(
-      "error",
-      `cannot check the Node the launcher ${cliJob.launcher} runs: ${
-        node?.unchecked ?? "the launcher's Node resolution was not observed"
-      }; ${SYSTEMD_REINSTALL}`
-    );
-  }
-  if (loaded.from === "cli") {
-    return checkOf(
-      "ok",
-      `the systemd user timer is running and ${cliJob.file} runs refresh through ${cliJob.launcher}`
-    );
-  }
-  if (loaded.from === "unknown") {
-    return checkOf("warn", `cannot tell whether systemd runs ${cliJob.file}: ${loaded.reason}`);
-  }
-  return checkOf(
-    "warn",
-    `${cliJob.file} exists, but the systemd user timer is not running; run \`snorlax install\` to enable it`
-  );
-};
+    ),
+  cliLoaded: (jobFile, launcher) =>
+    checkOf("ok", `the systemd user timer is running and ${jobFile} runs refresh through ${launcher}`),
+  cliUnknown: (jobFile, reason) => checkOf("warn", `cannot tell whether systemd runs ${jobFile}: ${reason}`),
+  notLoaded: (jobFile) =>
+    checkOf("warn", `${jobFile} exists, but the systemd user timer is not running; run \`snorlax install\` to enable it`)
+});
 
-/**
- * Whether refresh runs on its own. Only a missing launcher script and a missing or uncheckable Node are
- * errors, and only an error turns `healthy` false (`doctorPayload`). Every other state is a warning: not
- * scheduling is a normal way to use the app, which refreshes when asked.
- */
 export const scheduleCheck = ({ job, dataDir, launcher, node }: ScheduleObservation): DoctorCheck => {
   if (job.kind === "unsupported") {
     return checkOf("warn", `${job.reason}; refresh runs only when something calls it`);

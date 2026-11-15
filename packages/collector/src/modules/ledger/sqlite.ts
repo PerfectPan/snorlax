@@ -6,5 +6,5 @@ import type { UsagePlatform } from "@rivus/agent-kit/transcript/usage";
  */
 export type PlatformSqlite = NonNullable<UsagePlatform["sqlite"]>;
 export type SqliteDatabase = ReturnType<PlatformSqlite["open"]>;
-export type SqliteStatement = ReturnType<SqliteDatabase["prepare"]>;
+type SqliteStatement = ReturnType<SqliteDatabase["prepare"]>;
 export type SqliteValue = Parameters<SqliteStatement["run"]>[number];

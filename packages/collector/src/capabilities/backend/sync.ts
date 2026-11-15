@@ -58,6 +58,17 @@ const toBucket = (deviceId: string, row: BucketRow): Bucket => ({
  * sync is reported failed and the loop stops, so a repeated cursor cannot hold the lock. A crash before
  * the cursor write retries the page; the upsert is idempotent. Rows for this device are skipped.
  */
+/** A checked call as a plain outcome, so the sync loops inspect `{ kind }` pairs instead of Effect channels. */
+const outcomeOf = <A, E>(
+  effect: Effect.Effect<A, E>
+): Effect.Effect<{ kind: "error"; error: E } | { kind: "value"; value: A }> =>
+  effect.pipe(
+    Effect.match({
+      onFailure: (error) => ({ kind: "error" as const, error }),
+      onSuccess: (value) => ({ kind: "value" as const, value })
+    })
+  );
+
 export const synchronize = (
   input: SyncInput & {
     readonly secrets: SecretStore;
@@ -71,12 +82,7 @@ export const synchronize = (
     if (config.backendUrl === undefined) {
       return { state: "unpaired", pushed: 0, pulled: 0, at: null };
     }
-    const read = yield* input.secrets.read(input.ledger.meta.deviceId).pipe(
-      Effect.match({
-        onFailure: (error) => ({ kind: "error" as const, error }),
-        onSuccess: (value) => ({ kind: "value" as const, value })
-      })
-    );
+    const read = yield* outcomeOf(input.secrets.read(input.ledger.meta.deviceId));
     // A missing item is "not paired". A missing store program is also unpaired, but the item may still be
     // stored, so the reason says it was not deleted. A keychain that cannot be read is a failed sync: the
     // snapshot is still written, and the `keychain` failure code stays for pair, unpair and doctor.
@@ -117,19 +123,14 @@ export const synchronize = (
 
     let batch = yield* input.ledger.readDirtyBuckets(PUSH_BATCH);
     while (batch.length > 0) {
-      const outcome = yield* input.backend
-        .pushBuckets(
+      const outcome = yield* outcomeOf(
+        input.backend.pushBuckets(
           baseUrl,
           token,
           deviceId,
           batch.map((row) => toBucket(deviceId, row))
         )
-        .pipe(
-          Effect.match({
-            onFailure: (error) => ({ kind: "error" as const, error }),
-            onSuccess: (value) => ({ kind: "value" as const, value })
-          })
-        );
+      );
       if (outcome.kind === "error") {
         return reportFor(outcome.error);
       }
@@ -144,12 +145,7 @@ export const synchronize = (
     const limit = input.pullLimit ?? DEFAULT_PULL_LIMIT;
     let after = input.ledger.meta.pullCursor;
     for (;;) {
-      const outcome = yield* input.backend.pullBuckets(baseUrl, token, after, limit).pipe(
-        Effect.match({
-          onFailure: (error) => ({ kind: "error" as const, error }),
-          onSuccess: (value) => ({ kind: "value" as const, value })
-        })
-      );
+      const outcome = yield* outcomeOf(input.backend.pullBuckets(baseUrl, token, after, limit));
       if (outcome.kind === "error") {
         return reportFor(outcome.error);
       }
@@ -181,12 +177,7 @@ export const synchronize = (
       after = page.next;
     }
 
-    const listed = yield* input.backend.listDevices(baseUrl, token).pipe(
-      Effect.match({
-        onFailure: (error) => ({ kind: "error" as const, error }),
-        onSuccess: (value) => ({ kind: "value" as const, value })
-      })
-    );
+    const listed = yield* outcomeOf(input.backend.listDevices(baseUrl, token));
     if (listed.kind === "error") {
       return reportFor(listed.error);
     }

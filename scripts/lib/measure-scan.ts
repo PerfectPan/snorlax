@@ -20,7 +20,7 @@ const INCREMENTAL_SINCE_MARGIN_MS = 2 * 60 * 60 * 1000;
 const SOURCE_FAILURE_TAGS: ReadonlySet<string> = new Set(["RootMissing"]);
 
 /** Counts from one phase. Agent ids are the only strings: state and records carry paths, models and session ids. */
-export interface PhaseMeasurement {
+interface PhaseMeasurement {
   readonly phase: "full" | "incremental";
   readonly records: number;
   readonly sources: number;

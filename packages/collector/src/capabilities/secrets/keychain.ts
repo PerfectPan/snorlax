@@ -2,13 +2,7 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import type { Context } from "effect";
 import { Effect } from "effect";
 
-import {
-  commandPath,
-  KeychainUnavailable,
-  lastLine,
-  runStdinCommand,
-  unavailableWhenBinaryMissing
-} from "./command.ts";
+import { commandFailureFor, commandPath, readThroughCommand, runStdinCommand, storeThroughCommand } from "./command.ts";
 import type { Secrets } from "./secrets.ts";
 
 /**
@@ -33,15 +27,7 @@ const commandFor = (deviceId: string, operation: "read" | "store" | "delete", to
   return `delete-generic-password -s ${SERVICE} -a ${deviceId}\n`;
 };
 
-/** A tool that echoes its command line must not put the token into the failure a command prints. */
-const redact = (text: string, secret: string | undefined): string =>
-  secret === undefined || secret === "" ? text : text.replaceAll(secret, "[redacted]");
-
-const failed = (stderr: string, stdout: string, code: number, secret?: string): KeychainUnavailable => {
-  const detail = redact((stderr !== "" ? stderr : stdout).trim(), secret);
-  const suffix = detail === "" ? "" : `: ${detail}`;
-  return new KeychainUnavailable({ message: `security failed (exit ${code})${suffix}` });
-};
+const failed = commandFailureFor("security");
 
 /** The macOS implementation over `platform`. The env override of `read` is applied by `Secrets`. */
 export const keychainSecrets = (
@@ -50,30 +36,16 @@ export const keychainSecrets = (
   const binary = commandPath(platform.env, "SNORLAX_SECURITY", "/usr/bin/security");
   const run = (stdin: string) => runStdinCommand(platform, binary, ["-i"], stdin);
   return {
-    read: (deviceId) =>
-      Effect.gen(function* () {
-        const result = yield* run(commandFor(deviceId, "read"));
-        if (result.code === NOT_FOUND) {
-          return undefined;
-        }
-        if (result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code);
-        }
-        const token = lastLine(result.stdout);
-        if (token === "") {
-          return yield* new KeychainUnavailable({ message: "security printed no token" });
-        }
-        return token;
-      }),
-    store: (deviceId, token) =>
-      unavailableWhenBinaryMissing(
-        Effect.gen(function* () {
-          const result = yield* run(commandFor(deviceId, "store", token));
-          if (result.code !== 0) {
-            return yield* failed(result.stderr, result.stdout, result.code, token);
-          }
-        })
-      ),
+    read: readThroughCommand({
+      binary: "security",
+      absent: (result) => result.code === NOT_FOUND,
+      failed,
+      run: (deviceId) => run(commandFor(deviceId, "read"))
+    }),
+    store: storeThroughCommand({
+      failed,
+      run: (deviceId, token) => run(commandFor(deviceId, "store", token))
+    }),
     delete: (deviceId) =>
       Effect.gen(function* () {
         const result = yield* run(commandFor(deviceId, "delete"));

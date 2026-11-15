@@ -4,13 +4,14 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import { Data, Effect } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
+import { concatChunks } from "../read-text-file/read-text-file.ts";
 
 /**
  * The ledger's schema history. `PRAGMA user_version` holds the version a database is on; every
  * entry older than the database's version has run already. Migrations are forward-only: a database on a newer
  * version than this build refuses to open instead of being downgraded.
  */
-export interface Migration {
+interface Migration {
   readonly version: number;
   readonly sql: readonly string[];
 }
@@ -20,7 +21,7 @@ export interface Migration {
  * exist from the start, so a later migration only adds columns. `IF NOT EXISTS` keeps the
  * statements idempotent for a database that predates `user_version` bookkeeping.
  */
-export const MIGRATIONS: readonly Migration[] = [
+const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
     sql: [
@@ -89,9 +90,9 @@ export const MIGRATIONS: readonly Migration[] = [
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
 /** How many `ledger.db.bak-v*` files the data directory keeps. */
-export const BACKUPS_KEPT = 2;
+const BACKUPS_KEPT = 2;
 
-export const backupName = (version: number): string => `ledger.db.bak-v${version}`;
+const backupName = (version: number): string => `ledger.db.bak-v${version}`;
 
 const BACKUP_PATTERN = /^ledger\.db\.bak-v(\d+)$/;
 
@@ -117,7 +118,7 @@ export async function listBackups(fs: Platform["fs"], dataDir: string): Promise<
  * `BACKUPS_KEPT` backups by version. Copying goes through the platform (read plus atomic write), so a test
  * platform sees it like any other write.
  */
-export async function backupLedger(
+async function backupLedger(
   fs: Platform["fs"],
   dataDir: string,
   ledgerPath: string,
@@ -127,16 +128,7 @@ export async function backupLedger(
   for await (const chunk of fs.read(ledgerPath)) {
     chunks.push(chunk);
   }
-  let length = 0;
-  for (const chunk of chunks) {
-    length += chunk.byteLength;
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  const bytes = concatChunks(chunks);
   const backup: LedgerBackup = { version, path: join(dataDir, backupName(version)) };
   await fs.writeAtomic(backup.path, bytes);
   for (const old of (await listBackups(fs, dataDir)).slice(0, -BACKUPS_KEPT)) {
@@ -146,7 +138,7 @@ export async function backupLedger(
 }
 
 /** Runs every migration newer than `from` inside one transaction, ending at `SCHEMA_VERSION`. */
-export function runMigrations(
+function runMigrations(
   db: { exec(sql: string): void; prepare(sql: string): { get(): Record<string, unknown> | undefined } },
   from: number,
   sqlByVersion = MIGRATIONS

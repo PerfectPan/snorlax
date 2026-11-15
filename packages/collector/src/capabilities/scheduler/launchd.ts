@@ -1,22 +1,15 @@
-import { isAbsolute, join, resolve } from "node:path";
-import process from "node:process";
+import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { Cause, Data, Duration, Effect, type Context } from "effect";
+import { Cause, Data, Effect, type Context } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
-import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
-import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
-import {
-  LAUNCHER_MODE,
-  LauncherWriteFailed,
-  launcherPath,
-  NODE_PATH_FILE,
-  renderNodePathSeed,
-  renderRefreshLauncher
-} from "./launcher.ts";
+import { runSchedulerCommand, schedulerCommandFailure, runningCliPath, type SchedulerPlatform, UNIT_FILE_MODE } from "./command.ts";
 import { LAUNCH_AGENT_LABEL, launchAgentLauncherPath, launchAgentPlistPath, renderLaunchAgentPlist } from "./plist.ts";
+import { renderRefreshLauncher, writeLauncherFiles } from "./launcher.ts";
 import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
+import { requireAbsoluteDataDir, type DataDirNotAbsolute } from "../../modules/data-dir/data-dir.ts";
+import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
 
 /**
  * The scheduler on macOS: a LaunchAgent in `~/Library/LaunchAgents`.
@@ -40,6 +33,8 @@ export class UserIdUnavailable extends Data.TaggedError("UserIdUnavailable")<{ r
 /** `launchctl` could not be started, did not finish, or exited non-zero. */
 export class LaunchctlFailed extends Data.TaggedError("LaunchctlFailed")<{ readonly message: string }> {}
 
+type LaunchctlResult = Awaited<ReturnType<SchedulerPlatform["process"]["run"]>>;
+
 /**
  * The loaded service with this label is not provably loaded from the CLI's own plist: Snorlax.app's Launch
  * at login owns it, or `launchctl print` names no plist.
@@ -52,22 +47,7 @@ export class PlistWriteFailed extends Data.TaggedError("PlistWriteFailed")<{ rea
 /** The LaunchAgent plist could not be removed. */
 export class PlistRemoveFailed extends Data.TaggedError("PlistRemoveFailed")<{ readonly message: string }> {}
 
-const LAUNCHCTL_TIMEOUT_MS = 15_000;
-/**
- * How long an interrupted run waits for its stopped `launchctl` child to exit. The kit sends SIGKILL 2 s after
- * SIGTERM, so the child is normally gone well before this; the limit keeps a child that never exits from holding
- * the interrupted run open.
- */
-const CHILD_EXIT_LIMIT = Duration.seconds(5);
-const PLIST_MODE = 0o644;
 const DEFAULT_LAUNCHCTL = "/bin/launchctl";
-
-/** `run` is the only process operation install uses. */
-type SchedulerPlatform = Pick<Platform, "env" | "fs" | "home"> & {
-  readonly process: Pick<Platform["process"], "run">;
-};
-
-type LaunchctlResult = Awaited<ReturnType<SchedulerPlatform["process"]["run"]>>;
 
 const launchctlBinary = (platform: Pick<Platform, "env">): string => {
   const override = platform.env.SNORLAX_LAUNCHCTL;
@@ -77,18 +57,7 @@ const launchctlBinary = (platform: Pick<Platform, "env">): string => {
   return override;
 };
 
-/** The `snorlax.mjs` entry this process was started with; the launcher script bakes it in. */
-const runningCliPath: Effect.Effect<string, CollectorPathUnresolved> = Effect.suspend(() => {
-  const entry = process.argv[1];
-  if (entry === undefined || entry === "") {
-    return Effect.fail(new CollectorPathUnresolved({ message: "cannot resolve the running snorlax CLI path" }));
-  }
-  const cliPath = resolve(entry);
-  if (!isAbsolute(cliPath)) {
-    return Effect.fail(new CollectorPathUnresolved({ message: "the CLI path in the LaunchAgent must be absolute" }));
-  }
-  return Effect.succeed(cliPath);
-});
+const launchctlFailed = (message: string): LaunchctlFailed => new LaunchctlFailed({ message });
 
 const currentUid: Effect.Effect<number, UserIdUnavailable> = Effect.suspend(() => {
   const uid = process.getuid?.();
@@ -99,53 +68,32 @@ const currentUid: Effect.Effect<number, UserIdUnavailable> = Effect.suspend(() =
 
 const guiDomain = (uid: number): string => `gui/${uid}`;
 
-/**
- * An interrupted run stops the `launchctl` child and waits, up to `CHILD_EXIT_LIMIT` on the Effect clock, until it
- * has exited — the kit settles `run` only after the child has closed — so whatever the interrupted run reads from
- * launchd next is no longer changing under it.
- */
 const runLaunchctl = (
   platform: SchedulerPlatform,
   args: readonly string[]
-): Effect.Effect<LaunchctlResult, LaunchctlFailed> => {
-  const command = launchctlBinary(platform);
-  return Effect.callback<LaunchctlResult, LaunchctlFailed>((resume) => {
-    const controller = new AbortController();
-    const running = Promise.resolve().then(() =>
-      platform.process.run(command, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, signal: controller.signal })
-    );
-    void running.then(
-      (result) => resume(Effect.succeed(result)),
-      (error: unknown) =>
-        resume(
-          Effect.fail(new LaunchctlFailed({ message: `cannot run launchctl (${command}): ${errorMessage(error)}` }))
-        )
-    );
-    return Effect.sync(() => controller.abort()).pipe(
-      Effect.andThen(Effect.ignore(Effect.tryPromise(() => running))),
-      Effect.timeoutOption(CHILD_EXIT_LIMIT),
-      Effect.asVoid
-    );
-  }).pipe(
-    Effect.flatMap((result) => {
-      if (result.timedOut || result.signal !== null) {
-        const reason = result.timedOut ? "timeout" : result.signal;
-        return Effect.fail(
-          new LaunchctlFailed({ message: `launchctl ${args[0] ?? "command"} did not finish (${reason})` })
-        );
-      }
-      return Effect.succeed(result);
-    })
-  );
-};
-
-const launchctlFailure = (result: LaunchctlResult, action: string): LaunchctlFailed => {
-  const detail = (result.stderr !== "" ? result.stderr : result.stdout).trim();
-  const suffix = detail === "" ? "" : `: ${detail}`;
-  return new LaunchctlFailed({
-    message: `launchctl ${action} failed (exit ${result.code ?? "unknown"})${suffix}`
+): Effect.Effect<LaunchctlResult, LaunchctlFailed> =>
+  runSchedulerCommand(platform, {
+    program: launchctlBinary(platform),
+    name: "launchctl",
+    args,
+    fail: launchctlFailed
   });
-};
+
+const launchctlFailure = (result: LaunchctlResult, action: string): LaunchctlFailed =>
+  schedulerCommandFailure(result, { name: "launchctl", action, fail: launchctlFailed });
+
+/**
+ * The launchd target install and uninstall share: the data directory checked absolute, then this user's
+ * gui-domain label target.
+ */
+const ownTarget = (
+  dataDir: string
+): Effect.Effect<{ readonly domain: string; readonly target: string }, DataDirNotAbsolute | UserIdUnavailable> =>
+  Effect.gen(function* () {
+    yield* requireAbsoluteDataDir(dataDir);
+    const domain = guiDomain(yield* currentUid);
+    return { domain, target: `${domain}/${LAUNCH_AGENT_LABEL}` };
+  });
 
 /**
  * One `launchctl print` outcome for this label: `loaded` carries the plist the loaded service was started
@@ -213,6 +161,20 @@ const refuseForeignService = (
   return Effect.fail(new ForeignServiceLoaded({ message: `refusing to change the LaunchAgent: ${detail}` }));
 };
 
+/** The ownership check install and uninstall share: the loaded service must be the CLI's own, or the effect
+ * fails and nothing changes.
+ */
+const ownLoadedService = (
+  platform: SchedulerPlatform,
+  plistPath: string,
+  target: string
+): Effect.Effect<LoadedService, LaunchctlFailed | ForeignServiceLoaded> =>
+  Effect.gen(function* () {
+    const loaded = yield* loadedService(platform, target);
+    yield* refuseForeignService(loaded, plistPath, target);
+    return loaded;
+  });
+
 const bootout = (platform: SchedulerPlatform, target: string): Effect.Effect<void, LaunchctlFailed> =>
   Effect.flatMap(runLaunchctl(platform, ["bootout", target]), (result) =>
     result.code === 0 ? Effect.void : Effect.fail(launchctlFailure(result, "bootout"))
@@ -278,37 +240,26 @@ export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.S
     kind: "launchd",
     install: (job, prepare) =>
       Effect.gen(function* () {
-        yield* requireAbsoluteDataDir(job.dataDir);
-        const domain = guiDomain(yield* currentUid);
-        const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
+        const { domain, target } = yield* ownTarget(job.dataDir);
         // Ownership comes before any write: a foreign or unattributable service is never replaced.
-        const loaded = yield* loadedService(platform, target);
-        yield* refuseForeignService(loaded, plistPath, target);
+        const loaded = yield* ownLoadedService(platform, plistPath, target);
         yield* prepare;
         // The launcher files go into the data directory first, so a bootstrap that starts the job always
         // finds them: the plist only names the script, and the script resolves Node at run time — seeded
         // with the Node running this install, which the app's discovery keeps current afterwards.
-        const launcher = renderRefreshLauncher({ dataDir: job.dataDir, cliPath: yield* runningCliPath });
+        const launcher = renderRefreshLauncher({
+          dataDir: job.dataDir,
+          cliPath: yield* runningCliPath((message) => new CollectorPathUnresolved({ message }), "LaunchAgent")
+        });
         const plist = renderLaunchAgentPlist({
           dataDir: job.dataDir,
           snorlaxHome: snorlaxHomeOverride(platform)
         });
-        yield* Effect.tryPromise({
-          try: async () => {
-            await platform.fs.writeAtomic(join(job.dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath), {
-              mode: LAUNCHER_MODE
-            });
-            await platform.fs.writeAtomic(launcherPath(job.dataDir), launcher, { mode: LAUNCHER_MODE });
-          },
-          catch: (error) =>
-            new LauncherWriteFailed({
-              message: `cannot write ${launcherPath(job.dataDir)}: ${errorMessage(error)}`
-            })
-        });
+        yield* writeLauncherFiles(platform, job.dataDir, launcher);
         yield* Effect.tryPromise({
           try: async () => {
             await platform.fs.mkdir(join(platform.home, "Library", "LaunchAgents"));
-            await platform.fs.writeAtomic(plistPath, plist, { mode: PLIST_MODE });
+            await platform.fs.writeAtomic(plistPath, plist, { mode: UNIT_FILE_MODE });
           },
           catch: (error) => new PlistWriteFailed({ message: `cannot write ${plistPath}: ${errorMessage(error)}` })
         });
@@ -336,14 +287,11 @@ export const launchdScheduler = (platform: SchedulerPlatform): Context.Service.S
       }),
     uninstall: (job, guard) =>
       Effect.gen(function* () {
-        yield* requireAbsoluteDataDir(job.dataDir);
-        const domain = guiDomain(yield* currentUid);
-        const target = `${domain}/${LAUNCH_AGENT_LABEL}`;
+        const { target } = yield* ownTarget(job.dataDir);
         // The caller's guard runs before anything changes: a refused `--data` must not have already booted
         // out the agent and removed its plist.
         const guarded = yield* guard;
-        const loaded = yield* loadedService(platform, target);
-        yield* refuseForeignService(loaded, plistPath, target);
+        const loaded = yield* ownLoadedService(platform, plistPath, target);
         if (loaded.state === "loaded") {
           yield* bootout(platform, target);
         }

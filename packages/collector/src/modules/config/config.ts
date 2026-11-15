@@ -52,7 +52,7 @@ export class ConfigInvalid extends Data.TaggedError("ConfigInvalid")<{ readonly 
 /** `config.json` could not be written. The previous file stays in place. */
 export class ConfigWriteFailed extends Data.TaggedError("ConfigWriteFailed")<{ readonly message: string }> {}
 
-export const configFilePath = (dataDir: string): string => join(dataDir, "config.json");
+const configFilePath = (dataDir: string): string => join(dataDir, "config.json");
 
 /** Reads `config.json`; a missing file is an empty config, and a read that fails for another reason is a defect. */
 export const readConfig = (

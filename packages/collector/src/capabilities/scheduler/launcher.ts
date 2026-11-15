@@ -1,6 +1,10 @@
 import { join } from "node:path";
+import process from "node:process";
 
-import { Data } from "effect";
+import type { Platform } from "@rivus/agent-kit/platform";
+import { Data, Effect } from "effect";
+
+import { errorMessage } from "../../core/error-message/error-message.ts";
 
 /**
  * The scheduled refresh's launcher: a POSIX shell script in
@@ -12,7 +16,7 @@ import { Data } from "effect";
  */
 
 /** The launcher script's name in the data directory; `uninstall --data` deletes it with the rest. */
-export const LAUNCHER_NAME = "refresh.sh";
+const LAUNCHER_NAME = "refresh.sh";
 
 /** The system shell the job files name: POSIX sh, present on macOS and Linux. */
 export const LAUNCHER_SHELL = "/bin/sh";
@@ -21,7 +25,7 @@ export const LAUNCHER_SHELL = "/bin/sh";
 export const launcherPath = (dataDir: string): string => join(dataDir, LAUNCHER_NAME);
 
 /** The launcher script is data, not a program: `/bin/sh` reads it. */
-export const LAUNCHER_MODE = 0o644;
+const LAUNCHER_MODE = 0o644;
 
 /**
  * Where a Node installed outside a version manager ends up, in the order the app's launcher looks:
@@ -91,3 +95,25 @@ export const renderRefreshLauncher = (spec: RefreshLauncherSpec): string => {
  * reads it.
  */
 export const renderNodePathSeed = (nodePath: string): string => `${nodePath}\n`;
+
+/**
+ * The launcher files install writes into the data directory, before anything that starts the job: the Node
+ * seed and the refresh script. A bootstrap or enable that starts the job always finds them there.
+ */
+export const writeLauncherFiles = (
+  platform: Pick<Platform, "fs">,
+  dataDir: string,
+  launcher: string
+): Effect.Effect<void, LauncherWriteFailed> =>
+  Effect.tryPromise({
+    try: async () => {
+      await platform.fs.writeAtomic(join(dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath), {
+        mode: LAUNCHER_MODE
+      });
+      await platform.fs.writeAtomic(launcherPath(dataDir), launcher, { mode: LAUNCHER_MODE });
+    },
+    catch: (error) =>
+      new LauncherWriteFailed({
+        message: `cannot write ${launcherPath(dataDir)}: ${errorMessage(error)}`
+      })
+  });
