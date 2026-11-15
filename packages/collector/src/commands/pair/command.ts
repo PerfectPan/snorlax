@@ -6,7 +6,7 @@ import { syncLine } from "../../core/sync-text/sync-text.ts";
 import { REREGISTERED, pairFlow } from "./flow.ts";
 
 /**
- * `snorlax pair --url <url> --name <name>` (plan 3.1, 3.4.2). The admin token is read from stdin. JSON output
+ * `snorlax pair --url <url> --name <name>`. The admin token is read from stdin. JSON output
  * is `PairResult`; the refresh that follows is in the human text and the log.
  */
 export const pairCommand = {

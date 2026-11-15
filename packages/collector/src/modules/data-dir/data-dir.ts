@@ -6,13 +6,13 @@ import { Data, Effect } from "effect";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 import type { NodeFileOps } from "../platform/platform.ts";
 
-/** The data directory is private to the user (plan 3.4.1, Spec 3.8). */
+/** The data directory is private to the user. */
 export const DATA_DIR_MODE = 0o700;
 
 /**
  * Where the collector keeps everything it writes: `SNORLAX_HOME` when set, else the platform default —
  * `~/Library/Application Support/snorlax` on macOS, `${XDG_DATA_HOME:-~/.local/share}/snorlax` elsewhere
- * (plan 3.4.1 step 1). `SNORLAX_HOME` is used as given; an absolute path is expected.
+ *. `SNORLAX_HOME` is used as given; an absolute path is expected.
  */
 export function resolveDataDir(platform: Pick<Platform, "env" | "home" | "os">): string {
   const override = platform.env.SNORLAX_HOME;
@@ -31,9 +31,9 @@ export function resolveDataDir(platform: Pick<Platform, "env" | "home" | "os">):
 export class DataDirCreateFailed extends Data.TaggedError("DataDirCreateFailed")<{ readonly message: string }> {}
 
 /**
- * Creates the directory (and parents) and the `logs` subdirectory (plan 3.9), and keeps the data
+ * Creates the directory (and parents) and the `logs` subdirectory, and keeps the data
  * directory at mode 0700; existing wider modes are tightened. Only commands that write call this —
- * `status`, `doctor` and `snapshot` run without it and create nothing (plan 3.13).
+ * `status`, `doctor` and `snapshot` run without it and create nothing.
  */
 export const ensureDataDir = (
   platform: Pick<Platform, "fs">,

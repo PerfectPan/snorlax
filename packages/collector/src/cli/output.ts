@@ -6,7 +6,7 @@ import type { Failure } from "@rivus/snorlax-protocol";
 import type { Sink } from "./env.ts";
 
 /**
- * Every byte the CLI puts on a stream leaves through here (plan 3.8, 3.13): JSON payloads are
+ * Every byte the CLI puts on a stream leaves through here: JSON payloads are
  * redacted as values, human text and messages as strings, so no code path can print a home path or a
  * secret-shaped string. Human text stays plain; the only color is the failure message on stderr, via
  * `styleText` against a TTY without `NO_COLOR`.
@@ -42,7 +42,7 @@ const consoleInto = (write: Write): Console.Console => ({
 /**
  * The Console effect/cli renders through — help, version, formatted parse errors — redacted here,
  * because an error line can quote the command line it came from and that line may name paths under
- * the home (plan 3.8). Everything is held back in `buffered` instead of written out: the parsed
+ * the home. Everything is held back in `buffered` instead of written out: the parsed
  * `--json` value is only known after the run, and a JSON envelope must drop the rendering while
  * human mode flushes it.
  */

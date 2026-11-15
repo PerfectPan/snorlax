@@ -6,7 +6,7 @@ import { Data, Effect } from "effect";
 import { errorMessage } from "../../core/error-message/error-message.ts";
 
 /**
- * The ledger's schema history (plan 3.3.2). `PRAGMA user_version` holds the version a database is on; every
+ * The ledger's schema history. `PRAGMA user_version` holds the version a database is on; every
  * entry older than the database's version has run already. Migrations are forward-only: a database on a newer
  * version than this build refuses to open instead of being downgraded.
  */
@@ -16,8 +16,8 @@ export interface Migration {
 }
 
 /**
- * Version 1 is the whole M1 schema (plan 3.3.2). The `remote_*` tables stay empty until sync arrives in
- * Batch 7 but exist from the start, so a later migration only adds columns. `IF NOT EXISTS` keeps the
+ * Version 1 is the whole initial schema. The `remote_*` tables stay empty until sync arrives but
+ * exist from the start, so a later migration only adds columns. `IF NOT EXISTS` keeps the
  * statements idempotent for a database that predates `user_version` bookkeeping.
  */
 export const MIGRATIONS: readonly Migration[] = [
@@ -88,7 +88,7 @@ export const MIGRATIONS: readonly Migration[] = [
 /** The schema version this build writes; the last entry of `MIGRATIONS`. */
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
-/** How many `ledger.db.bak-v*` files the data directory keeps (plan 3.3.2). */
+/** How many `ledger.db.bak-v*` files the data directory keeps. */
 export const BACKUPS_KEPT = 2;
 
 export const backupName = (version: number): string => `ledger.db.bak-v${version}`;

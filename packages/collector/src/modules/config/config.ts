@@ -9,7 +9,7 @@ import { readTextFile } from "../read-text-file/read-text-file.ts";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** `https`, or `http` only on loopback so `cf dev` can smoke the Worker. `pair` (Batch 7b) reuses this. */
+/** `https`, or `http` only on loopback so `cf dev` can smoke the Worker. `pair` reuses this. */
 const isBackendUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
@@ -37,7 +37,7 @@ export const backendUrlSchema = z.string().check(
 
 /**
  * `<data>/config.json` holds the user's choices that are not secrets: the device name and the backend URL
- * (plan 3.2.1, 3.4.2). It is parsed with a schema at the boundary; a file that is present but invalid fails
+ *. It is parsed with a schema at the boundary; a file that is present but invalid fails
  * with `ConfigInvalid` rather than a silent fallback, so corruption surfaces in `status` and `doctor`.
  */
 export const configSchema = z.object({

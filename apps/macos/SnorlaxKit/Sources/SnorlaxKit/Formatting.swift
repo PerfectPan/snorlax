@@ -2,7 +2,7 @@ import Foundation
 
 /// Display strings for token totals and USD cost.
 ///
-/// Token totals use a 1000-based short form so `812345678` is `812M` (plan 3.11).
+/// Token totals use a 1000-based short form so `812345678` is `812M`.
 /// Fraction digits are 0 at 100 and above, 1 at 10 and above, and 2 below that;
 /// trailing zeros after the decimal point are dropped. A number that rounds to
 /// 1000 of a unit is shown in the next unit (`999500` is `1M`).

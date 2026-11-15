@@ -27,8 +27,8 @@ const humanStatus = (payload: Status): string =>
   ].join("\n");
 
 /**
- * `snorlax status` (plan 3.1): version, data directory, device, last scan and sync, detected agents, and whether
- * the pricing table changed since the stored costs were priced (3.7).
+ * `snorlax status`: version, data directory, device, last scan and sync, detected agents, and whether
+ * the pricing table changed since the stored costs were priced.
  */
 export const statusCommand = {
   name: "status",

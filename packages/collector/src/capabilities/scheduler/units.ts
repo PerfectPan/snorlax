@@ -5,13 +5,13 @@ import * as z from "zod/mini";
 import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
 
 /**
- * systemd user units that run `snorlax refresh` (plan 3.1). Program paths are absolute because
+ * systemd user units that run `snorlax refresh`. Program paths are absolute because
  * systemd does not search `PATH`: the service starts the data directory's launcher script through
  * `/bin/sh`, and the script resolves Node at run time — the Node `snorlax install` ran with is not
  * named here, so removing it does not stop the timer. `Environment=` always sets `SNORLAX_HOME` to
  * the absolute data directory install resolved, so the timer does not look that directory up again.
  * Standard output is discarded: the refresh summary already goes to the rotating `logs/snorlax.log`
- * (plan 3.9).
+ *.
  *
  * systemd expands `%` specifiers in both settings. systemd.service(5) does not expand `$` in the
  * program — the first `ExecStart` argument — and does not collapse `$$` there; a doubled `$` would be

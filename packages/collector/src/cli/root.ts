@@ -30,7 +30,7 @@ export const JsonFlag = GlobalFlag.Setting("json")({
 /**
  * What a command produced on success: `payload` is the protocol shape with `schemaVersion` and
  * `ok: true`; `human` is the plain-text rendering printed when `--json` was not given (it includes
- * the trailing newline). Printing, redaction and the `--json` decision belong to `cli/` (plan 3.13).
+ * the trailing newline). Printing, redaction and the `--json` decision belong to `cli/`.
  * A run that ends without any handler output is a built-in action (`--help`, `--version`):
  * `effect/cli` has rendered it already, and `take` says so with `None` instead of failing.
  */
@@ -77,7 +77,7 @@ export class CommandOutput extends Context.Service<
 /**
  * A command as each `commands/<name>/command.ts` exports it: name, help description and flags, and
  * `run`, which takes the parsed flags and only produces the result. `commands/` cannot import `cli/`
- * (plan 3.13 rule 1), so the commands match this shape structurally.
+ *, so the commands match this shape structurally.
  */
 interface CommandSpec<Name extends string, Flags extends Command.Command.Config, E, R> {
   readonly name: Name;
@@ -102,7 +102,7 @@ const commandOf = <Name extends string, const Flags extends Command.Command.Conf
 class UsageError extends Data.TaggedError("UsageError")<{ readonly message: string }> {}
 
 /**
- * The root command (plan 3.13): the global `--json` flag is an effect/cli Setting, so it is accepted
+ * The root command: the global `--json` flag is an effect/cli Setting, so it is accepted
  * both before and after the command name and its parsed value reaches the handler. The root's own handler only runs when no command was named and
  * fails as a usage error; every other parse failure (unknown command, unknown option, a missing or
  * malformed flag value) surfaces through `effect/cli` as a `ShowHelp` error, which `cli/run` maps to

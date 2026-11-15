@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
- * Plan 3.13 rules 1, 2 and 4 over every source file, as one pure function of the files' paths and texts:
+ * The layering rules over every source file, as one pure function of the files' paths and texts:
  * `src/` holds only the five layers; core, module and capability units are folders entered through a file
  * named after them; commands/ holds only command folders; imports go cli → commands → capabilities → modules →
  * core and never up; a command folder never imports another; code outside a unit imports only its entry file;
@@ -139,7 +139,7 @@ const readSources = async (dir: string): Promise<SourceFile[]> => {
 const check = (files: Record<string, string>): Violation[] =>
   structureViolations(Object.entries(files).map(([path, text]) => ({ path, text })));
 
-describe("collector structure (plan 3.13 rules 1, 2 and 4)", () => {
+describe("collector structure", () => {
   it("the collector's sources break none of the rules", async () => {
     const files = await readSources(srcRoot);
     expect(files.map((file) => file.path)).toContain("cli/bin.ts");

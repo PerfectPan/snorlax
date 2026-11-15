@@ -8,7 +8,7 @@ import * as protocol from "../src/index.ts";
 
 /**
  * The protocol build: exports every schema as JSON Schema (`schema/*.json`) and writes one sample document
- * per shape (`fixtures/*.json`). Both directories are committed; Batch 4's Swift tests decode the fixtures
+ * per shape (`fixtures/*.json`). Both directories are committed; the SnorlaxKit tests decode the fixtures
  * and CI fails when regeneration changes either output, so this script must stay deterministic.
  */
 

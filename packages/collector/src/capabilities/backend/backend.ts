@@ -19,8 +19,7 @@ import { Secrets } from "../secrets/secrets.ts";
 import { synchronize, type SyncInput } from "./sync.ts";
 
 /**
- * The backend could not be reached: the request failed, timed out, or the server answered 5xx
- * (plan 3.2.1 `network`).
+ * The backend could not be reached: the request failed, timed out, or the server answered 5xx.
  */
 export class BackendUnreachable extends Data.TaggedError("BackendUnreachable")<{
   readonly message: string;
@@ -69,7 +68,7 @@ export type BackendFailure =
 /** Every failure one HTTP call can return. `BackendConflict` stays out of `cli/failures.ts`; `pair` catches it. */
 export type BackendCallFailure = BackendFailure | BackendConflict;
 
-/** How long one request may run, on the Effect clock, before it is aborted (plan 3.6). */
+/** How long one request may run, on the Effect clock, before it is aborted. */
 const REQUEST_TIMEOUT = Duration.seconds(15);
 
 export type BackendFetch = (request: Request) => Promise<Response>;
@@ -313,7 +312,7 @@ const createClient = (fetchImpl: BackendFetch): Context.Service.Shape<typeof Bac
 });
 
 /**
- * The sync HTTP client (plan 3.2.4, 3.13). One implementation: `fetch` is injected, and tests pass the
+ * The sync HTTP client. One implementation: `fetch` is injected, and tests pass the
  * Worker's `app.fetch` over an in-memory database. `src/` never imports the worker, so the published bundle
  * does not contain it.
  */
@@ -328,8 +327,8 @@ export class Backend extends Context.Service<Backend, BackendShape>()("snorlax/b
 export { PUSH_BATCH } from "./sync.ts";
 
 /**
- * The sync step of a refresh or rebuild (plan 3.4.1 step 6). The caller passes the function into
- * `scanAndCommit`, because `modules/` cannot import `capabilities/` (plan 3.13 rule 1). Backend failures
+ * The sync step of a refresh or rebuild. The caller passes the function into
+ * `scanAndCommit`, because `modules/` cannot import `capabilities/`. Backend failures
  * and a keychain that cannot be read stay inside the step and become a sync report, so the snapshot is
  * still written. The `keychain` failure code is for `pair`, `unpair` and `doctor`.
  */

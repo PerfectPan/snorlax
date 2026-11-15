@@ -20,7 +20,7 @@ afterAll(async () => {
   await rm(tempRoot, { recursive: true, force: true });
 });
 
-describe("resolveDataDir (plan 3.4.1 step 1)", () => {
+describe("resolveDataDir", () => {
   it("prefers SNORLAX_HOME over every platform default", () => {
     const platform = createMemoryPlatform({
       home: "/testroot/tester",

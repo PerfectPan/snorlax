@@ -11,7 +11,7 @@ import { createSqliteD1 } from "../../src/sqlite-d1.ts";
 
 /**
  * Builds the app over an in-memory SQLite database whose schema is the committed D1 migration, with a
- * fixed injected clock, and hands tests its `fetch`. Tests never use real elapsed time (plan 3.12).
+ * fixed injected clock, and hands tests its `fetch`. Tests never use real elapsed time.
  */
 
 export const ADMIN_TOKEN = "test-admin-token-do-not-use";

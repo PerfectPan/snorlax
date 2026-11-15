@@ -33,7 +33,7 @@ describe("an install interrupted inside launchctl bootstrap", () => {
   const domain = `gui/${process.getuid?.()}`;
   const target = `${domain}/io.github.perfectpan.snorlax.refresh`;
 
-  it("an interrupted install stops launchctl and removes the plist it wrote (plan 3.13 rule 6)", async () => {
+  it("an interrupted install stops launchctl and removes the plist it wrote", async () => {
     const bootstrap: { signal?: AbortSignal; plistWritten?: boolean; started: () => void } = { started: () => {} };
     const started = new Promise<void>((resolve) => {
       bootstrap.started = resolve;

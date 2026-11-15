@@ -42,7 +42,7 @@ afterAll(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
-describe("calling convention (plan 3.2.1)", () => {
+describe("calling convention", () => {
   it("status --json prints exactly one JSON object that parses as Status, and exits 0", () => {
     const result = run(["status", "--json"], home);
     expect(result.stderr).toBe("");
@@ -181,7 +181,7 @@ describe("built-in flags", () => {
 });
 
 describe("data directory", () => {
-  it("is not created by read-only commands: status leaves the fresh home empty (plan 3.13)", async () => {
+  it("is not created by read-only commands: status leaves the fresh home empty", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-readonly-"));
     try {
       expect(run(["status", "--json"], fresh).status).toBe(0);
@@ -212,7 +212,7 @@ describe("snapshot command", () => {
     expect(output.snapshot.generatedAt).toBe("2026-10-22T12:00:00.000Z");
 
     // Sync state and decode failures come from the snapshot (the last refresh's); the device id and last
-    // scan come from the ledger (plan 6.8, Batch 2), and no ledger exists in this home yet.
+    // scan come from the ledger, and no ledger exists in this home yet.
     const status = z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], home).stdout));
     expect(status.sync).toEqual({ state: "ok", at: "2026-10-22T12:00:00.000Z" });
     expect(status.failuresByAgent).toEqual({});
@@ -284,7 +284,7 @@ describe("refresh and rebuild", () => {
     expect(missing.status).toBe(2);
   });
 
-  it("status reports a changed pricing table and suggests rebuild --days 180, which clears it (plan 3.7)", async () => {
+  it("status reports a changed pricing table and suggests rebuild --days 180, which clears it", async () => {
     const pricingHome = await mkdtemp(join(tmpdir(), "snorlax-cli-pricing-"));
     const status = () => z.parse(statusSchema, parseOneJsonObject(run(["status", "--json"], pricingHome).stdout));
     try {
@@ -311,7 +311,7 @@ describe("refresh and rebuild", () => {
     }
   });
 
-  it("refresh and rebuild log their summary and command lines in the data directory (plan 3.9)", async () => {
+  it("refresh and rebuild log their summary and command lines in the data directory", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "snorlax-cli-log-"));
     try {
       expect(run(["refresh"], fresh).status).toBe(0);

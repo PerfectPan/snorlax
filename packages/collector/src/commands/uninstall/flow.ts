@@ -58,7 +58,7 @@ const removeKeychainItem = (platform: Platform, dataDir: string) =>
   });
 
 /**
- * One `snorlax uninstall` (plan 3.1): unschedules refresh, then with `deleteData` removes the keychain item and
+ * One `snorlax uninstall`: unschedules refresh, then with `deleteData` removes the keychain item and
  * deletes the data directory. The data directory is checked — its path, then the snorlax marker — before the
  * scheduler looks at the job, so a refused `--data` leaves the job loaded. `deleted` says the data directory was
  * emptied of snorlax's entries; `dataLeftovers` are the entries kept because snorlax did not write them.

@@ -7,7 +7,7 @@ import { accumulateRecord, createAccumulator, partRequestCounts } from "./bucket
 import { snapshotCost, snapshotTierCost } from "../../../test/fixtures/pricing.ts";
 
 /**
- * The bucket arithmetic of plan 3.4.1 step 4 and the pricing of one record through the kit: the kit's
+ * The bucket arithmetic and the pricing of one record through the kit: the kit's
  * `priceRecord` prices each record (the agent's own amount first, else the kit's LiteLLM snapshot), a
  * `turn` record splits by `usageByModel` with the kit's rule, a request whose model has no price counts
  * as unpriced, and snorlax divides a record's requests among its parts. What a refresh writes for real
@@ -28,7 +28,7 @@ const record = (overrides: Partial<UsageRecord> & Pick<UsageRecord, "timestamp" 
   ...overrides
 });
 
-describe("partRequestCounts (plan 3.4.1 step 4)", () => {
+describe("partRequestCounts", () => {
   const usage = { inputTokens: 1, outputTokens: 1 };
   const splitTurn = (overrides: { modelCalls?: number; usageByModel: UsageRecord["usageByModel"] }): UsageRecord =>
     record({

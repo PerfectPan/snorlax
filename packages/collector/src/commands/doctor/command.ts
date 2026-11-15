@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { doctorFlow } from "./flow.ts";
 
 /**
- * `snorlax doctor` (plan 3.1, R13): Node version, data directory, config, the scheduled refresh, and,
+ * `snorlax doctor` (R13): Node version, data directory, config, the scheduled refresh, and,
  * when paired, the keychain and the backend. The command completes with the same payload either way
  * and exits 0 healthy, 1 unhealthy; the human verdict line and `healthy` say which.
  */

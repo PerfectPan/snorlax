@@ -6,7 +6,7 @@ import { bucketsErrors } from "../buckets/buckets.ts";
 import { devicesErrors } from "../devices/devices.ts";
 
 /**
- * The one table from every failure to its HTTP status and error-body code (plan 3.2.4, 3.12.1 rule 3): the
+ * The one table from every failure to its HTTP status and error-body code: the
  * errors the use cases throw, by `_tag`, and the failures this layer finds itself in the request. Anything
  * else is a 500 with a fixed body, the original going to the logs only.
  */

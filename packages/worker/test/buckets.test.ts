@@ -14,7 +14,7 @@ import {
 } from "./fixtures/backend.ts";
 
 /**
- * The bucket endpoints of plan 3.2.4: absolute-value upserts, server-assigned sequence numbers that
+ * The bucket endpoints: absolute-value upserts, server-assigned sequence numbers that
  * grow and re-expose a replaced row, cursor pagination, the 1–200 row bound, strict bodies and the
  * 1 MB request-body limit.
  */

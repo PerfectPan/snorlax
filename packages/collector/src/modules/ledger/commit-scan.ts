@@ -10,13 +10,13 @@ import type { Ledger, LedgerUnreadable, PersistedScanState } from "./ledger.ts";
 /**
  * The version of the table every run prices with: the kit's LiteLLM snapshot as it ships, without overrides or
  * family fallbacks, so a model the snapshot does not name is unpriced (Spec S11) rather than priced as another
- * model. `meta.pricing_version` records the version that priced the ledger's buckets (plan 3.7).
+ * model. `meta.pricing_version` records the version that priced the ledger's buckets.
  */
 export const PRICING_VERSION = litellmPricesVersion;
 
 /** Where a run's scan starts, and what the run writes before the scan. */
 export interface ScanWindow {
-  /** Epoch milliseconds; records before this are left out (plan 3.4.1 step 3). */
+  /** Epoch milliseconds; records before this are left out. */
   readonly since: number;
   /** The saved state to continue from; `undefined` scans the window from scratch. */
   readonly state: PersistedScanState | undefined;
@@ -32,9 +32,9 @@ export interface ScanWindow {
 }
 
 /**
- * Steps 3–5 of a run (plan 3.4.1): scan only what was written since `since`, price every record with the
+ * The scan-and-commit phase of a run: scan only what was written since `since`, price every record with the
  * current table and fold it into hourly buckets, then — in one transaction — write the buckets, the sessions
- * first seen, the pricing version (3.7), the new scan state and `last_scan_completed_at`. The scan iterates inside
+ * first seen, the pricing version, the new scan state and `last_scan_completed_at`. The scan iterates inside
  * the transaction, so a run that fails or is interrupted anywhere before the commit leaves the ledger exactly as it
  * was (Spec S3), and a rebuild's zeroing rolls back with it.
  */

@@ -25,7 +25,7 @@ afterAll(async () => {
 
 const logPath = (): string => join(dataDir, "logs", "snorlax.log");
 
-describe("createLogger (plan 3.9)", () => {
+describe("createLogger", () => {
   it("writes one line per event with an ISO timestamp prefix", async () => {
     const platform = createNodePlatform({ home: dataDir });
     const logger = await Effect.runPromise(createLogger(platform, nodeFileOps, dataDir));

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Resolution for the compiled `Contents/Helpers/snorlax` launcher (plan 3.11).
+/// Resolution for the compiled `Contents/Helpers/snorlax` launcher.
 /// Pure functions: every file lookup is injected, so tests run without a real
 /// bundle. The launcher's `main.swift` applies the result with `execv`.
 public enum LauncherNode {

@@ -3,7 +3,7 @@ import { generateDeviceToken, hashToken } from "../tokens.ts";
 import { findByTokenHash, insertUnlessActive, markRevoked, readDevices } from "./store.ts";
 
 /**
- * Device use cases (plan 3.2.4, 3.8): registration, revocation, listing and device-token authentication.
+ * Device use cases: registration, revocation, listing and device-token authentication.
  * They take parsed values and throw the errors below, which say what went wrong and know no HTTP status.
  */
 
@@ -55,7 +55,7 @@ interface Device {
 
 /**
  * Registers a new id, or a revoked one again under a fresh token, and returns that token: the only time it
- * exists outside the device, since D1 keeps its SHA-256 alone (plan 3.8). An active id is
+ * exists outside the device, since D1 keeps its SHA-256 alone. An active id is
  * `DeviceAlreadyActive`; the store decides that in the same statement that writes.
  */
 export const registerDevice = async (

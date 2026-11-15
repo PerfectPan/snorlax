@@ -16,7 +16,7 @@ import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
  * The read-only commands on a real file system under a temporary home (never a real agent home):
- * `status`, `doctor` and `snapshot` must answer without creating or changing anything (plan 3.13),
+ * `status`, `doctor` and `snapshot` must answer without creating or changing anything,
  * `doctor` reports a missing directory, a directory that is a file and a wrong mode as failed checks
  * with exit 0, and every human output is redacted in `cli/`. The permission bits here are real
  * `chmod` calls, not stand-ins.
@@ -81,7 +81,7 @@ const runCommand = async (args: readonly string[]): Promise<RunOutcome> => {
   return { exitCode: exit.exitCode, stdout: chunks.out.join(""), stderr: chunks.err.join("") };
 };
 
-describe("read-only commands create nothing (plan 3.13)", () => {
+describe("read-only commands create nothing", () => {
   it("status answers on an empty home and creates no data directory", async () => {
     const outcome = await runCommand(["status", "--json"]);
     expect(outcome.exitCode).toBe(0);

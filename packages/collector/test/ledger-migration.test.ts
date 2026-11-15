@@ -13,7 +13,7 @@ import { ledgerPath, LedgerSchemaTooNew, readLedgerStatus } from "../src/modules
 import { readLedger } from "./fixtures/flows.ts";
 
 /**
- * The ledger's forward-only migrations and backups (plan 3.3.2, 5.3): a fresh data directory creates the
+ * The ledger's forward-only migrations and backups: a fresh data directory creates the
  * schema without a backup, a database on an older `user_version` is backed up to
  * `ledger.db.bak-v<old>` and migrated with its data intact, only the latest two backups are kept, and a
  * newer schema refuses to open. A real temporary directory with the Node platform; no agent home is read.
@@ -143,7 +143,7 @@ describe("the persisted scan state", () => {
       })
     );
 
-    // A newer kit reads its own added fields back out of the state this build persisted (plan 3.7).
+    // A newer kit reads its own added fields back out of the state this build persisted.
     const reopened = await open();
     expect(reopened.scanState).toMatchObject({
       futureStateField: "kept",

@@ -93,7 +93,7 @@ public enum UsageSummaryBuilder {
     }
 
     /// Last scan, last sync, and decode failures per agent, as relative times
-    /// (plan 4.2). Older than a week shows the local date-time instead.
+    ///. Older than a week shows the local date-time instead.
     public static func statusLine(
         _ status: SnapshotStatus,
         now: Date = Date(),

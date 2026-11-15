@@ -11,7 +11,7 @@ import { writeSnapshot } from "../../modules/snapshot-file/snapshot-file.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
 
 /**
- * One `snorlax unpair` (plan 3.1, 3.4.2). The device token is deleted first; a keychain failure changes
+ * One `snorlax unpair`. The device token is deleted first; a keychain failure changes
  * nothing else, so a retry can still delete the token. A missing store program does not abort the command:
  * the human output and the log say a stored token was not deleted. Then `backendUrl` is removed and
  * `deviceName` stays.
