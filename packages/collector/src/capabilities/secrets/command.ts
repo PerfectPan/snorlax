@@ -106,9 +106,12 @@ export const runStdinCommand = (
             // The child can exit before it reads; its status is the result that matters.
           }
         })();
-        const finished = Promise.all([readAllChunks(child.stdout), readAllChunks(child.stderr), child.exited, written]).then(
-          ([stdout, stderr, status]) => ({ stdout: decodeChunks(stdout), stderr: decodeChunks(stderr), status })
-        );
+        const finished = Promise.all([
+          readAllChunks(child.stdout),
+          readAllChunks(child.stderr),
+          child.exited,
+          written
+        ]).then(([stdout, stderr, status]) => ({ stdout: decodeChunks(stdout), stderr: decodeChunks(stderr), status }));
         let settled = false;
         const finish = (effect: Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>): void => {
           if (!settled) {
@@ -166,7 +169,12 @@ const redact = (text: string, secret: string | undefined): string =>
   secret === undefined || secret === "" ? text : text.replaceAll(secret, "[redacted]");
 
 /** How a backend turns a non-zero exit into its unavailable error. */
-export type SecretCommandFailure = (stderr: string, stdout: string, code: number, secret?: string) => KeychainUnavailable;
+export type SecretCommandFailure = (
+  stderr: string,
+  stdout: string,
+  code: number,
+  secret?: string
+) => KeychainUnavailable;
 
 /** The non-zero exit both backends report: the binary name, the exit code, the redacted detail. */
 export const commandFailureFor = (binary: string): SecretCommandFailure => {
@@ -194,7 +202,10 @@ const readToken = (binary: string, result: CommandResult): Effect.Effect<string,
  */
 export const storeThroughCommand = (options: {
   readonly failed: SecretCommandFailure;
-  readonly run: (deviceId: string, token: string) => Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>;
+  readonly run: (
+    deviceId: string,
+    token: string
+  ) => Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>;
 }): ((deviceId: string, token: string) => Effect.Effect<void, KeychainUnavailable>) => {
   const { failed, run } = options;
   return (deviceId, token) =>
@@ -212,14 +223,12 @@ export const storeThroughCommand = (options: {
  * The read body both backends share: run the command, read the backend's "no such item" as undefined, turn
  * any other non-zero exit into the redacted failure, then read the token.
  */
-export const readThroughCommand = (
-  options: {
-    readonly binary: string;
-    readonly absent: (result: CommandResult) => boolean;
-    readonly failed: SecretCommandFailure;
-    readonly run: (deviceId: string) => Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>;
-  }
-): ((deviceId: string) => Effect.Effect<string | undefined, KeychainUnavailable | StoreBinaryMissing>) => {
+export const readThroughCommand = (options: {
+  readonly binary: string;
+  readonly absent: (result: CommandResult) => boolean;
+  readonly failed: SecretCommandFailure;
+  readonly run: (deviceId: string) => Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>;
+}): ((deviceId: string) => Effect.Effect<string | undefined, KeychainUnavailable | StoreBinaryMissing>) => {
   const { absent, binary, failed, run } = options;
   return (deviceId) =>
     Effect.gen(function* () {

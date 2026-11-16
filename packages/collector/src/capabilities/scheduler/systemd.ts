@@ -4,7 +4,13 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import { Data, Effect, type Context } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
-import { runSchedulerCommand, schedulerCommandFailure, runningCliPath, type SchedulerPlatform, UNIT_FILE_MODE } from "./command.ts";
+import {
+  runSchedulerCommand,
+  schedulerCommandFailure,
+  runningCliPath,
+  type SchedulerPlatform,
+  UNIT_FILE_MODE
+} from "./command.ts";
 import { renderRefreshLauncher, writeLauncherFiles } from "./launcher.ts";
 import {
   parseSystemctlShow,

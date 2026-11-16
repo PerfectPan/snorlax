@@ -71,7 +71,9 @@ export const quoteSystemdWord = (value: string, kind: SystemdWordKind): string =
  */
 const unquoteDoubleQuotedBody = (
   body: string,
-  extra: ((char: string, body: string, index: number) => { readonly value: string; readonly skip: number } | undefined) | undefined
+  extra:
+    | ((char: string, body: string, index: number) => { readonly value: string; readonly skip: number } | undefined)
+    | undefined
 ): string | undefined => {
   let value = "";
   for (let index = 0; index < body.length; index += 1) {

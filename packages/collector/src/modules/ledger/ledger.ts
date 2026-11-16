@@ -840,4 +840,4 @@ export const scanAndCommit = <E>(
     })
   );
 
-export { LedgerBackupFailed, LedgerLockHeld, LedgerSchemaTooNew,  };
+export { LedgerBackupFailed, LedgerLockHeld, LedgerSchemaTooNew };

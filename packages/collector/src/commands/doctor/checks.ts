@@ -169,7 +169,12 @@ interface ScheduleWording {
 /** The schedule verdict's shared tree: the app's job, the gone or unattributable one, then the runtime checks. */
 const scheduleVerdict =
   (wording: ScheduleWording) =>
-  (job: InspectedJob, dataDir: string, launcher: LauncherState | undefined, node: NodeBinary | undefined): DoctorCheck => {
+  (
+    job: InspectedJob,
+    dataDir: string,
+    launcher: LauncherState | undefined,
+    node: NodeBinary | undefined
+  ): DoctorCheck => {
     const { cliJob, loaded } = job;
     if (loaded.from === "app") {
       return wording.appOwned(loaded.file, cliJob);
@@ -184,7 +189,10 @@ const scheduleVerdict =
       return wording.notScheduled();
     }
     if (cliJob.launcher === undefined || launcher === undefined) {
-      return checkOf("warn", `cannot read the launcher path from ${cliJob.file}; run \`snorlax install\` to rewrite it`);
+      return checkOf(
+        "warn",
+        `cannot read the launcher path from ${cliJob.file}; run \`snorlax install\` to rewrite it`
+      );
     }
     if (launcher === "missing") {
       return wording.launcherMissing(cliJob.file, cliJob.launcher);
@@ -255,7 +263,10 @@ const systemdSchedule = scheduleVerdict({
   // A failed unit-directory query is not evidence that a timer is loaded.
   unknownOwner: (reason) => checkOf("warn", `cannot confirm the timer's state: ${reason}`),
   notScheduled: () =>
-    checkOf("warn", "refresh is not scheduled: run `snorlax install`; until then the snapshot changes only when refresh runs"),
+    checkOf(
+      "warn",
+      "refresh is not scheduled: run `snorlax install`; until then the snapshot changes only when refresh runs"
+    ),
   launcherMissing: (jobFile, launcher) =>
     checkOf(
       "error",
@@ -266,7 +277,10 @@ const systemdSchedule = scheduleVerdict({
     checkOf("ok", `the systemd user timer is running and ${jobFile} runs refresh through ${launcher}`),
   cliUnknown: (jobFile, reason) => checkOf("warn", `cannot tell whether systemd runs ${jobFile}: ${reason}`),
   notLoaded: (jobFile) =>
-    checkOf("warn", `${jobFile} exists, but the systemd user timer is not running; run \`snorlax install\` to enable it`)
+    checkOf(
+      "warn",
+      `${jobFile} exists, but the systemd user timer is not running; run \`snorlax install\` to enable it`
+    )
 });
 
 export const scheduleCheck = ({ job, dataDir, launcher, node }: ScheduleObservation): DoctorCheck => {

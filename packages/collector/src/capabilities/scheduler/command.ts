@@ -78,9 +78,7 @@ export const runSchedulerCommand = <E extends Error>(
     void running.then(
       (result) => resume(Effect.succeed(result)),
       (error: unknown) =>
-        resume(
-          Effect.fail(options.fail(`cannot run ${options.name} (${options.program}): ${errorMessage(error)}`))
-        )
+        resume(Effect.fail(options.fail(`cannot run ${options.name} (${options.program}): ${errorMessage(error)}`)))
     );
     return Effect.sync(() => controller.abort()).pipe(
       Effect.andThen(Effect.ignore(Effect.tryPromise(() => running))),
