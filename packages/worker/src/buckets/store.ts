@@ -35,11 +35,7 @@ export const writePush = async (
 ): Promise<number> => {
   const statements = [
     db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM buckets"),
-    ...buckets.map((bucket) =>
-      db
-        .prepare(PUT_BUCKET_SQL)
-        .bind(bucket.deviceId, ...bucketColumnValues(bucket))
-    ),
+    ...buckets.map((bucket) => db.prepare(PUT_BUCKET_SQL).bind(bucket.deviceId, ...bucketColumnValues(bucket))),
     db.prepare("UPDATE devices SET last_push_at = ?1 WHERE id = ?2").bind(pushedAt, deviceId)
   ];
   const results = await db.batch(statements);
