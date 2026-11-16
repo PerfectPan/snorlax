@@ -45,6 +45,12 @@ const sampleBucket: protocol.Bucket = {
   unpricedRequests: 0
 };
 
+const middleTier = {
+  today: total(12_345_678, 310, 6, 41.8),
+  last7d: total(88_888_888, 1904, 33, 260.1),
+  last30d: total(301_234_567, 7420, 121, 890.5)
+};
+
 const sampleSnapshot: protocol.Snapshot = {
   schemaVersion: 1,
   generatedAt: "2026-10-23T02:35:12.482Z",
@@ -52,21 +58,11 @@ const sampleSnapshot: protocol.Snapshot = {
   totals: { today, last7d, last30d },
   byAgent: [
     { agent: "claude-code", today, last7d, last30d },
-    {
-      agent: "codex",
-      today: total(12_345_678, 310, 6, 41.8),
-      last7d: total(88_888_888, 1904, 33, 260.1),
-      last30d: total(301_234_567, 7420, 121, 890.5)
-    }
+    { agent: "codex", ...middleTier }
   ],
   byModel: [
     { model: "claude-opus-5-5", today, last7d, last30d },
-    {
-      model: "gpt-6.2",
-      today: total(12_345_678, 310, 6, 41.8),
-      last7d: total(88_888_888, 1904, 33, 260.1),
-      last30d: total(301_234_567, 7420, 121, 890.5)
-    }
+    { model: "gpt-6.2", ...middleTier }
   ],
   byDevice: [
     {

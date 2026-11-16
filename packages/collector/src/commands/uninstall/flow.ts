@@ -2,7 +2,7 @@ import type { Platform } from "@rivus/agent-kit/platform";
 import { Data, Effect } from "effect";
 
 import { Scheduler } from "../../capabilities/scheduler/scheduler.ts";
-import { Secrets, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
+import { deleteDeviceToken, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
 import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { readLedgerStatus } from "../../modules/ledger/ledger.ts";
 import { appendingLogger } from "../../modules/log/log.ts";
@@ -38,12 +38,7 @@ const removeKeychainItem = (platform: Platform, dataDir: string) =>
     if (status === null) {
       return undefined;
     }
-    const deleted = yield* (yield* Secrets).delete(status.deviceId).pipe(
-      Effect.match({
-        onFailure: (error) => error,
-        onSuccess: () => undefined
-      })
-    );
+    const deleted = yield* deleteDeviceToken(status.deviceId);
     if (deleted === undefined) {
       return undefined;
     }

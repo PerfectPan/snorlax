@@ -180,11 +180,7 @@ export const doctorFlow = Effect.gen(function* () {
           mode: yield* Effect.promise(() => nodeFiles.mode(path))
         };
   // The config read is a check of its own: a config that does not parse and a read that throws both fail it.
-  const configRead: ConfigRead = yield* readConfig(platform, path).pipe(
-    Effect.map((value) => ({ ok: true as const, value })),
-    Effect.catch((error) => Effect.succeed({ ok: false as const, message: error.message })),
-    Effect.catchDefect((defect) => Effect.succeed({ ok: false as const, message: errorMessage(defect) }))
-  );
+  const configRead: ConfigRead = yield* caught(readConfig(platform, path));
   const config: ConfigObservation = configRead.ok ? { ok: true } : { ok: false, message: configRead.message };
   const job = yield* (yield* Scheduler).inspect;
   const launcherName = job.kind === "inspected" ? job.cliJob?.launcher : undefined;

@@ -1,21 +1,17 @@
-import { isAbsolute, join, resolve } from "node:path";
-import process from "node:process";
+import { join } from "node:path";
 
 import type { Platform } from "@rivus/agent-kit/platform";
-import { Data, Duration, Effect, type Context } from "effect";
+import { Data, Effect, type Context } from "effect";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
-import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
-import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
 import {
-  LAUNCHER_MODE,
-  LauncherWriteFailed,
-  launcherPath,
-  NODE_PATH_FILE,
-  renderNodePathSeed,
-  renderRefreshLauncher
-} from "./launcher.ts";
-import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
+  runSchedulerCommand,
+  schedulerCommandFailure,
+  runningCliPath,
+  type SchedulerPlatform,
+  UNIT_FILE_MODE
+} from "./command.ts";
+import { renderRefreshLauncher, writeLauncherFiles } from "./launcher.ts";
 import {
   parseSystemctlShow,
   parseSystemctlUnitPath,
@@ -27,7 +23,9 @@ import {
   userConfigUnitDir,
   type SystemctlShow
 } from "./units.ts";
-
+import { requireAbsoluteDataDir } from "../../modules/data-dir/data-dir.ts";
+import { readTextFile } from "../../modules/read-text-file/read-text-file.ts";
+import type { CliJob, LoadedJob, Scheduler } from "./scheduler.ts";
 /**
  * The scheduler on Linux: a systemd user timer.
  *
@@ -62,14 +60,6 @@ export class UnitWriteFailed extends Data.TaggedError("UnitWriteFailed")<{ reado
 /** A unit file could not be removed. */
 export class UnitRemoveFailed extends Data.TaggedError("UnitRemoveFailed")<{ readonly message: string }> {}
 
-const SYSTEMCTL_TIMEOUT_MS = 15_000;
-/**
- * How long an interrupted run waits for its stopped `systemctl` child to exit. The kit sends SIGKILL 2 s
- * after SIGTERM, so the child is normally gone well before this; the limit keeps a child that never exits
- * from holding the interrupted run open.
- */
-const CHILD_EXIT_LIMIT = Duration.seconds(5);
-const UNIT_MODE = 0o644;
 const DEFAULT_SYSTEMCTL = "/usr/bin/systemctl";
 
 const SHOW_ARGS = [
@@ -88,13 +78,6 @@ const ENABLE_ARGS = ["--user", "enable", "--now", TIMER_NAME] as const;
 const DISABLE_ARGS = ["--user", "disable", "--now", TIMER_NAME] as const;
 const SHOW_UNIT_PATH_ARGS = ["--user", "show", "--property=UnitPath", "--no-pager"] as const;
 
-/** `run` is the only process operation install uses. */
-type SchedulerPlatform = Pick<Platform, "env" | "fs" | "home"> & {
-  readonly process: Pick<Platform["process"], "run">;
-};
-
-type SystemctlResult = Awaited<ReturnType<SchedulerPlatform["process"]["run"]>>;
-
 const systemctlBinary = (platform: Pick<Platform, "env">): string => {
   const override = platform.env.SNORLAX_SYSTEMCTL;
   if (override === undefined || override === "") {
@@ -103,66 +86,24 @@ const systemctlBinary = (platform: Pick<Platform, "env">): string => {
   return override;
 };
 
-/** The `snorlax.mjs` entry this process was started with; the launcher script bakes it in. */
-const runningCliPath: Effect.Effect<string, UnitPathsUnresolved> = Effect.suspend(() => {
-  const entry = process.argv[1];
-  if (entry === undefined || entry === "") {
-    return Effect.fail(new UnitPathsUnresolved({ message: "cannot resolve the running snorlax CLI path" }));
-  }
-  const cliPath = resolve(entry);
-  if (!isAbsolute(cliPath)) {
-    return Effect.fail(new UnitPathsUnresolved({ message: "the CLI path in the systemd unit must be absolute" }));
-  }
-  return Effect.succeed(cliPath);
-});
+const systemctlFailed = (message: string): SystemctlFailed => new SystemctlFailed({ message });
 
-/**
- * An interrupted run stops the `systemctl` child and waits, up to `CHILD_EXIT_LIMIT` on the Effect clock,
- * until it has exited — the kit settles `run` only after the child has closed — so whatever the interrupted
- * run reads from systemd next is no longer changing under it.
- */
+type SystemctlResult = Awaited<ReturnType<SchedulerPlatform["process"]["run"]>>;
+
 const runSystemctl = (
   platform: SchedulerPlatform,
   args: readonly string[]
-): Effect.Effect<SystemctlResult, SystemctlFailed> => {
-  const command = systemctlBinary(platform);
-  return Effect.callback<SystemctlResult, SystemctlFailed>((resume) => {
-    const controller = new AbortController();
-    const running = Promise.resolve().then(() =>
-      platform.process.run(command, args, { timeoutMs: SYSTEMCTL_TIMEOUT_MS, signal: controller.signal })
-    );
-    void running.then(
-      (result) => resume(Effect.succeed(result)),
-      (error: unknown) =>
-        resume(
-          Effect.fail(new SystemctlFailed({ message: `cannot run systemctl (${command}): ${errorMessage(error)}` }))
-        )
-    );
-    return Effect.sync(() => controller.abort()).pipe(
-      Effect.andThen(Effect.ignore(Effect.tryPromise(() => running))),
-      Effect.timeoutOption(CHILD_EXIT_LIMIT),
-      Effect.asVoid
-    );
-  }).pipe(
-    Effect.flatMap((result) => {
-      if (result.timedOut || result.signal !== null) {
-        const reason = result.timedOut ? "timeout" : result.signal;
-        return Effect.fail(
-          new SystemctlFailed({ message: `systemctl ${args[1] ?? "command"} did not finish (${reason})` })
-        );
-      }
-      return Effect.succeed(result);
-    })
-  );
-};
-
-const systemctlFailure = (result: SystemctlResult, action: string): SystemctlFailed => {
-  const detail = (result.stderr !== "" ? result.stderr : result.stdout).trim();
-  const suffix = detail === "" ? "" : `: ${detail}`;
-  return new SystemctlFailed({
-    message: `systemctl ${action} failed (exit ${result.code ?? "unknown"})${suffix}`
+): Effect.Effect<SystemctlResult, SystemctlFailed> =>
+  runSchedulerCommand(platform, {
+    program: systemctlBinary(platform),
+    name: "systemctl",
+    args,
+    actionArg: 1,
+    fail: systemctlFailed
   });
-};
+
+const systemctlFailure = (result: SystemctlResult, action: string): SystemctlFailed =>
+  schedulerCommandFailure(result, { name: "systemctl", action, fail: systemctlFailed });
 
 /**
  * The manager's unit search path. A non-zero exit or a report that is not one `UnitPath=` line fails
@@ -343,27 +284,19 @@ export const systemdScheduler = (platform: SchedulerPlatform): Context.Service.S
       // again: the user manager does not inherit `XDG_DATA_HOME` from a shell rc. The launcher files go into
       // the data directory first, so an enable that starts the job always finds them: the service only names
       // the script, and the script resolves Node at run time — seeded with the Node running this install.
-      const launcher = renderRefreshLauncher({ dataDir: job.dataDir, cliPath: yield* runningCliPath });
+      const launcher = renderRefreshLauncher({
+        dataDir: job.dataDir,
+        cliPath: yield* runningCliPath((message) => new UnitPathsUnresolved({ message }), "systemd unit")
+      });
       const service = renderRefreshService({ snorlaxHome: job.dataDir });
       const timer = renderRefreshTimer();
-      yield* Effect.tryPromise({
-        try: async () => {
-          await platform.fs.writeAtomic(join(job.dataDir, NODE_PATH_FILE), renderNodePathSeed(process.execPath), {
-            mode: LAUNCHER_MODE
-          });
-          await platform.fs.writeAtomic(launcherPath(job.dataDir), launcher, { mode: LAUNCHER_MODE });
-        },
-        catch: (error) =>
-          new LauncherWriteFailed({
-            message: `cannot write ${launcherPath(job.dataDir)}: ${errorMessage(error)}`
-          })
-      });
+      yield* writeLauncherFiles(platform, job.dataDir, launcher);
       yield* Effect.tryPromise({
         try: async () => {
           await platform.fs.mkdir(paths.unitDir);
-          await platform.fs.writeAtomic(paths.servicePath, service, { mode: UNIT_MODE });
+          await platform.fs.writeAtomic(paths.servicePath, service, { mode: UNIT_FILE_MODE });
           try {
-            await platform.fs.writeAtomic(paths.timerPath, timer, { mode: UNIT_MODE });
+            await platform.fs.writeAtomic(paths.timerPath, timer, { mode: UNIT_FILE_MODE });
           } catch (error) {
             await platform.fs.remove(paths.servicePath);
             throw error;

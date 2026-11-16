@@ -10,7 +10,7 @@ import { doctorFlow } from "./flow.ts";
  */
 
 /** The final human line, on `healthy`'s own terms: only an error is a problem; a warning is not. */
-export const doctorVerdict = (payload: Doctor): string => {
+const doctorVerdict = (payload: Doctor): string => {
   if (payload.healthy) {
     return "doctor: healthy";
   }

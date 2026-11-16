@@ -12,24 +12,7 @@ import type {
   WindowTotal
 } from "@rivus/snorlax-protocol";
 
-import type { BucketRow, RemoteBucketRow, RemoteDeviceRow } from "../buckets/buckets.ts";
-
-/** A local or remote bucket as one flat row for the windows and series. */
-export interface SnapshotBucket {
-  readonly deviceId: string;
-  readonly hour: number;
-  readonly agent: string;
-  readonly model: string;
-  readonly inputTokens: number;
-  readonly cacheReadTokens: number;
-  readonly cacheWriteTokens: number;
-  readonly outputTokens: number;
-  readonly reasoningTokens: number;
-  readonly requests: number;
-  readonly sessionsStarted: number;
-  readonly costUsd: number;
-  readonly unpricedRequests: number;
-}
+import type { BucketRow, RemoteBucketRow, RemoteDeviceRow, SnapshotBucket } from "../buckets/buckets.ts";
 
 export interface BuildSnapshotInput {
   readonly now: number;

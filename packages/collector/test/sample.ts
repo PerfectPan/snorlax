@@ -1,6 +1,6 @@
 import type { Snapshot, WindowTotal } from "@rivus/snorlax-protocol";
 
-export const zeroTotal: WindowTotal = {
+const zeroTotal: WindowTotal = {
   tokens: 0,
   inputTokens: 0,
   outputTokens: 0,

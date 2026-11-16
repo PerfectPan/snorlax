@@ -13,11 +13,11 @@ import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
  * the rotating `logs/snorlax.log`, and an unrotated launchd redirect file would only grow.
  */
 export const LAUNCH_AGENT_LABEL = "io.github.perfectpan.snorlax.refresh";
-export const LAUNCH_AGENT_PLIST_NAME = `${LAUNCH_AGENT_LABEL}.plist`;
-export const REFRESH_INTERVAL_SECONDS = 300;
+const LAUNCH_AGENT_PLIST_NAME = `${LAUNCH_AGENT_LABEL}.plist`;
+const REFRESH_INTERVAL_SECONDS = 300;
 
 /** launchd redirects both standard streams here; the collector's own log file does the recording. */
-export const LAUNCHD_NULL_OUTPUT = "/dev/null";
+const LAUNCHD_NULL_OUTPUT = "/dev/null";
 
 export interface LaunchAgentSpec {
   readonly dataDir: string;

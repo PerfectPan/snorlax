@@ -3,6 +3,7 @@ import { Data, Duration, Effect } from "effect";
 import * as z from "zod/mini";
 
 import { errorMessage } from "../../core/error-message/error-message.ts";
+import { decodeChunks, readAllChunks } from "../../modules/read-text-file/read-text-file.ts";
 
 /**
  * The keychain or secret service could not be run. A missing item is not this failure: `read` returns
@@ -39,7 +40,7 @@ export const storeProgramMissingNotice = (command: string): string =>
   `cannot find ${command}. If the keychain has this device's token, it was not deleted`;
 
 /** `store` stays a failure when the program is missing. The message names the path and not a secret. */
-export const unavailableWhenBinaryMissing = <A>(
+const unavailableWhenBinaryMissing = <A>(
   effect: Effect.Effect<A, KeychainUnavailable | StoreBinaryMissing>
 ): Effect.Effect<A, KeychainUnavailable> =>
   effect.pipe(
@@ -56,32 +57,6 @@ export interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
 }
-
-const decode = (chunks: readonly Uint8Array[]): string => {
-  let length = 0;
-  for (const chunk of chunks) {
-    length += chunk.byteLength;
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
-};
-
-const readAll = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]> => {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  for (;;) {
-    const next = await reader.read();
-    if (next.done) {
-      return chunks;
-    }
-    chunks.push(next.value);
-  }
-};
 
 const cannotRun = (command: string, error: unknown): KeychainUnavailable =>
   new KeychainUnavailable({ message: `cannot run ${command}: ${errorMessage(error)}` });
@@ -131,9 +106,12 @@ export const runStdinCommand = (
             // The child can exit before it reads; its status is the result that matters.
           }
         })();
-        const finished = Promise.all([readAll(child.stdout), readAll(child.stderr), child.exited, written]).then(
-          ([stdout, stderr, status]) => ({ stdout: decode(stdout), stderr: decode(stderr), status })
-        );
+        const finished = Promise.all([
+          readAllChunks(child.stdout),
+          readAllChunks(child.stderr),
+          child.exited,
+          written
+        ]).then(([stdout, stderr, status]) => ({ stdout: decodeChunks(stdout), stderr: decodeChunks(stderr), status }));
         let settled = false;
         const finish = (effect: Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>): void => {
           if (!settled) {
@@ -181,7 +159,86 @@ export const commandPath = (
 };
 
 /** The last non-empty line a tool printed. A successful read is that line; the tools add a trailing newline. */
-export const lastLine = (stdout: string): string => {
+const lastLine = (stdout: string): string => {
   const lines = stdout.split("\n").filter((line) => line !== "");
   return lines.at(-1) ?? "";
+};
+
+/** What a tool that echoes its command line must never do: put the token into a printed failure. */
+const redact = (text: string, secret: string | undefined): string =>
+  secret === undefined || secret === "" ? text : text.replaceAll(secret, "[redacted]");
+
+/** How a backend turns a non-zero exit into its unavailable error. */
+export type SecretCommandFailure = (
+  stderr: string,
+  stdout: string,
+  code: number,
+  secret?: string
+) => KeychainUnavailable;
+
+/** The non-zero exit both backends report: the binary name, the exit code, the redacted detail. */
+export const commandFailureFor = (binary: string): SecretCommandFailure => {
+  return (stderr, stdout, code, secret) => {
+    const detail = redact((stderr !== "" ? stderr : stdout).trim(), secret);
+    const suffix = detail === "" ? "" : `: ${detail}`;
+    return new KeychainUnavailable({ message: `${binary} failed (exit ${code})${suffix}` });
+  };
+};
+
+/** A read that exited zero: the last non-empty line, or the unavailable error when the tool printed none. */
+const readToken = (binary: string, result: CommandResult): Effect.Effect<string, KeychainUnavailable> =>
+  Effect.gen(function* () {
+    const token = lastLine(result.stdout);
+    if (token === "") {
+      return yield* new KeychainUnavailable({ message: `${binary} printed no token` });
+    }
+    return token;
+  });
+
+/**
+ * The store body both backends share: run the command, and a non-zero exit is the redacted failure. The
+ * token is never in `args` — the backend puts it in stdin itself — and `storeProgramMissingNotice` still
+ * names the program when it is missing.
+ */
+export const storeThroughCommand = (options: {
+  readonly failed: SecretCommandFailure;
+  readonly run: (
+    deviceId: string,
+    token: string
+  ) => Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>;
+}): ((deviceId: string, token: string) => Effect.Effect<void, KeychainUnavailable>) => {
+  const { failed, run } = options;
+  return (deviceId, token) =>
+    unavailableWhenBinaryMissing(
+      Effect.gen(function* () {
+        const result = yield* run(deviceId, token);
+        if (result.code !== 0) {
+          return yield* failed(result.stderr, result.stdout, result.code, token);
+        }
+      })
+    );
+};
+
+/**
+ * The read body both backends share: run the command, read the backend's "no such item" as undefined, turn
+ * any other non-zero exit into the redacted failure, then read the token.
+ */
+export const readThroughCommand = (options: {
+  readonly binary: string;
+  readonly absent: (result: CommandResult) => boolean;
+  readonly failed: SecretCommandFailure;
+  readonly run: (deviceId: string) => Effect.Effect<CommandResult, KeychainUnavailable | StoreBinaryMissing>;
+}): ((deviceId: string) => Effect.Effect<string | undefined, KeychainUnavailable | StoreBinaryMissing>) => {
+  const { absent, binary, failed, run } = options;
+  return (deviceId) =>
+    Effect.gen(function* () {
+      const result = yield* run(deviceId);
+      if (absent(result)) {
+        return undefined;
+      }
+      if (result.code !== 0) {
+        return yield* failed(result.stderr, result.stdout, result.code);
+      }
+      return yield* readToken(binary, result);
+    });
 };

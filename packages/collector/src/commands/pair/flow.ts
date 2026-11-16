@@ -40,19 +40,19 @@ import { PairStdin } from "./stdin.ts";
 import { adminTokenSchema, adminTokenText } from "./token.ts";
 
 /** `--url`, `--name`, or the admin token on stdin cannot be used. Exit 2. */
-export class PairUsage extends Data.TaggedError("PairUsage")<{ readonly message: string }> {}
+class PairUsage extends Data.TaggedError("PairUsage")<{ readonly message: string }> {}
 
 /**
  * Revoke succeeded and registering again was still HTTP 409. Exit 1, `conflict`. The first 409 is not this:
  * `pair` revokes that id with the admin token and registers once more.
  */
-export class PairConflict extends Data.TaggedError("PairConflict")<{ readonly message: string }> {}
+class PairConflict extends Data.TaggedError("PairConflict")<{ readonly message: string }> {}
 
 /**
  * Registration succeeded and the device token was not stored. The device stays registered on the backend.
  * Running `pair` again revokes that id and registers once more. Exit 1, `keychain`.
  */
-export class PairTokenNotStored extends Data.TaggedError("PairTokenNotStored")<{ readonly message: string }> {}
+class PairTokenNotStored extends Data.TaggedError("PairTokenNotStored")<{ readonly message: string }> {}
 
 const URL_USAGE = "--url must be an https URL, or http on localhost, 127.0.0.1, or [::1]";
 
@@ -60,7 +60,7 @@ const URL_USAGE = "--url must be an https URL, or http on localhost, 127.0.0.1, 
  * A finished pair. `sync` is set when the refresh produced a report. `refreshNote` is set when the refresh
  * failed before it could report. Pairing itself has already succeeded in both cases.
  */
-export interface Paired {
+interface Paired {
   readonly deviceId: string;
   readonly name: string;
   /** The id was already registered. `pair` revoked it and registered again. */

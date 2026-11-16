@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 
-import { Secrets, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
+import { deleteDeviceToken, storeProgramMissingNotice } from "../../capabilities/secrets/secrets.ts";
 import { buildSnapshot } from "../../core/snapshot/snapshot.ts";
 import { readConfig, writeConfig } from "../../modules/config/config.ts";
 import { resolveDataDir } from "../../modules/data-dir/data-dir.ts";
@@ -27,12 +27,7 @@ export const unpairFlow = Effect.gen(function* () {
   if (status === null) {
     return undefined;
   }
-  const deleted = yield* (yield* Secrets).delete(status.deviceId).pipe(
-    Effect.match({
-      onFailure: (error) => error,
-      onSuccess: () => undefined
-    })
-  );
+  const deleted = yield* deleteDeviceToken(status.deviceId);
   let notice: string | undefined;
   if (deleted !== undefined) {
     if (deleted._tag !== "StoreBinaryMissing") {

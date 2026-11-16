@@ -3,11 +3,11 @@ import type { Context } from "effect";
 import { Effect } from "effect";
 
 import {
+  commandFailureFor,
   commandPath,
-  KeychainUnavailable,
-  lastLine,
+  readThroughCommand,
   runStdinCommand,
-  unavailableWhenBinaryMissing,
+  storeThroughCommand,
   type CommandResult
 } from "./command.ts";
 import type { Secrets } from "./secrets.ts";
@@ -30,15 +30,7 @@ const attributes = (deviceId: string): readonly string[] => ["service", "snorlax
 /** Exit 1 with empty stderr is "no such item". A connection failure also exits 1, and its stderr is not empty. */
 const absent = (result: CommandResult): boolean => result.code === NOT_FOUND && result.stderr === "";
 
-/** A tool that echoes its command line must not put the token into the failure a command prints. */
-const redact = (text: string, secret: string | undefined): string =>
-  secret === undefined || secret === "" ? text : text.replaceAll(secret, "[redacted]");
-
-const failed = (stderr: string, stdout: string, code: number, secret?: string): KeychainUnavailable => {
-  const detail = redact((stderr !== "" ? stderr : stdout).trim(), secret);
-  const suffix = detail === "" ? "" : `: ${detail}`;
-  return new KeychainUnavailable({ message: `secret-tool failed (exit ${code})${suffix}` });
-};
+const failed = commandFailureFor("secret-tool");
 
 /** The Linux implementation over `platform`. The env override of `read` is applied by `Secrets`. */
 export const libsecretSecrets = (
@@ -47,30 +39,16 @@ export const libsecretSecrets = (
   const binary = commandPath(platform.env, "SNORLAX_SECRET_TOOL", "secret-tool");
   const run = (args: readonly string[], stdin: string) => runStdinCommand(platform, binary, args, stdin);
   return {
-    read: (deviceId) =>
-      Effect.gen(function* () {
-        const result = yield* run(["lookup", ...attributes(deviceId)], "");
-        if (absent(result)) {
-          return undefined;
-        }
-        if (result.code !== 0) {
-          return yield* failed(result.stderr, result.stdout, result.code);
-        }
-        const token = lastLine(result.stdout);
-        if (token === "") {
-          return yield* new KeychainUnavailable({ message: "secret-tool printed no token" });
-        }
-        return token;
-      }),
-    store: (deviceId, token) =>
-      unavailableWhenBinaryMissing(
-        Effect.gen(function* () {
-          const result = yield* run(["store", LABEL, ...attributes(deviceId)], token);
-          if (result.code !== 0) {
-            return yield* failed(result.stderr, result.stdout, result.code, token);
-          }
-        })
-      ),
+    read: readThroughCommand({
+      binary: "secret-tool",
+      absent,
+      failed,
+      run: (deviceId) => run(["lookup", ...attributes(deviceId)], "")
+    }),
+    store: storeThroughCommand({
+      failed,
+      run: (deviceId, token) => run(["store", LABEL, ...attributes(deviceId)], token)
+    }),
     delete: (deviceId) =>
       Effect.gen(function* () {
         const result = yield* run(["clear", ...attributes(deviceId)], "");

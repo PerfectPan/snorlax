@@ -7,7 +7,6 @@ import type { KnipConfig } from 'knip';
 // dedicated cleanup pass; configuration and tag hints still fail the run.
 const config: KnipConfig = {
   ...knip,
-  exclude: ['exports', 'types'],
   workspaces: {
     '.': {},
     'packages/collector': {},

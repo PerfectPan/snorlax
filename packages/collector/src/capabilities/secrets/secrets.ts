@@ -99,3 +99,16 @@ export class Secrets extends Context.Service<Secrets, SecretsShape>()("snorlax/s
       })
     );
 }
+
+/** The device token's delete outcome as a plain failure-or-undefined, so `unpair` and `uninstall` branch on it. */
+export const deleteDeviceToken = (
+  deviceId: string
+): Effect.Effect<StoreBinaryMissing | KeychainUnavailable | undefined, never, Secrets> =>
+  Effect.gen(function* () {
+    return yield* (yield* Secrets).delete(deviceId).pipe(
+      Effect.match({
+        onFailure: (error) => error,
+        onSuccess: () => undefined
+      })
+    );
+  });

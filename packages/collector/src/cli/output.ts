@@ -67,7 +67,7 @@ export const printHuman = (env: CliOutputEnv, home: string, text: string): void 
   env.stdout.write(redactText(text, { home }));
 };
 
-export const failurePayload = (code: string, message: string): Failure => ({
+const failurePayload = (code: string, message: string): Failure => ({
   schemaVersion: 1,
   ok: false,
   error: { code, message }

@@ -7,7 +7,7 @@ import { Effect } from "effect";
 import type { NodeFileOps } from "../platform/platform.ts";
 
 /** Rotate at 5 MB, keep three files: `snorlax.log`, `snorlax.log.1`, `snorlax.log.2`. */
-export const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const LOG_FILES_KEPT = 3;
 
 export type LogFieldValue = string | number | boolean | null;

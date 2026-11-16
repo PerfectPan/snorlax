@@ -1,6 +1,6 @@
 import * as z from "zod/mini";
 
-import { bucketSchema, nonNegativeIntSchema, type Bucket } from "@rivus/snorlax-protocol";
+import { bucketColumnValues, bucketSchema, nonNegativeIntSchema, type Bucket } from "@rivus/snorlax-protocol";
 
 import type { D1Database } from "../db.ts";
 
@@ -35,25 +35,7 @@ export const writePush = async (
 ): Promise<number> => {
   const statements = [
     db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM buckets"),
-    ...buckets.map((bucket) =>
-      db
-        .prepare(PUT_BUCKET_SQL)
-        .bind(
-          bucket.deviceId,
-          bucket.hour,
-          bucket.agent,
-          bucket.model,
-          bucket.inputTokens,
-          bucket.cacheReadTokens,
-          bucket.cacheWriteTokens,
-          bucket.outputTokens,
-          bucket.reasoningTokens,
-          bucket.requests,
-          bucket.sessionsStarted,
-          bucket.costUsd,
-          bucket.unpricedRequests
-        )
-    ),
+    ...buckets.map((bucket) => db.prepare(PUT_BUCKET_SQL).bind(bucket.deviceId, ...bucketColumnValues(bucket))),
     db.prepare("UPDATE devices SET last_push_at = ?1 WHERE id = ?2").bind(pushedAt, deviceId)
   ];
   const results = await db.batch(statements);

@@ -24,9 +24,9 @@ import { LAUNCHER_SHELL, launcherPath } from "./launcher.ts";
 export const SERVICE_NAME = "snorlax-refresh.service";
 export const TIMER_NAME = "snorlax-refresh.timer";
 /** Elapse measured from machine boot (systemd.timer(5)). `OnStartupSec` would be from user-manager start. */
-export const TIMER_ON_BOOT = "1min";
+const TIMER_ON_BOOT = "1min";
 /** Gap between activations. Matches the LaunchAgent's 300 s `StartInterval`. */
-export const TIMER_INTERVAL = "5min";
+const TIMER_INTERVAL = "5min";
 
 export interface SystemdUnitSpec {
   /** The absolute data directory install resolved. Written as `SNORLAX_HOME` so the timer uses it. */
@@ -63,16 +63,18 @@ export const quoteSystemdWord = (value: string, kind: SystemdWordKind): string =
 };
 
 /**
- * Inverse of `quoteSystemdWord` for a word this module wrote. `exec` collapses `$$` to `$`, which is
- * what systemd does to an `ExecStart` argument after the program. `program` and `assign` leave `$` in
- * place: the program is executed as written, and `Environment=` does not expand `$`. Any other shape
- * reads as undefined.
+ * Walks a double-quoted body one character at a time: the `\n` and `\r` escapes both systemd words and the
+ * manager's `UnitPath` printer translate, any other `\x` pair stays as written, and a dangling `\` fails
+ * the word. `extra` runs for every remaining character and returns the value and the steps to skip, or
+ * undefined to fail the word — systemd's `%%` and the exec words' `$$` are its own escapes; a body without
+ * any passes none.
  */
-export const unquoteSystemdWord = (quoted: string, kind: SystemdWordKind): string | undefined => {
-  if (quoted.length < 2 || !quoted.startsWith('"') || !quoted.endsWith('"')) {
-    return undefined;
-  }
-  const body = quoted.slice(1, -1);
+const unquoteDoubleQuotedBody = (
+  body: string,
+  extra:
+    | ((char: string, body: string, index: number) => { readonly value: string; readonly skip: number } | undefined)
+    | undefined
+): string | undefined => {
   let value = "";
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index];
@@ -94,22 +96,42 @@ export const unquoteSystemdWord = (quoted: string, kind: SystemdWordKind): strin
       index += 1;
       continue;
     }
-    if (char === "%") {
-      if (body[index + 1] !== "%") {
+    if (extra !== undefined) {
+      const handled = extra(char, body, index);
+      if (handled === undefined) {
         return undefined;
       }
-      value += "%";
-      index += 1;
-      continue;
-    }
-    if (kind === "exec" && char === "$" && body[index + 1] === "$") {
-      value += "$";
-      index += 1;
+      value += handled.value;
+      index += handled.skip;
       continue;
     }
     value += char;
   }
   return value;
+};
+
+/**
+ * Inverse of `quoteSystemdWord` for a word this module wrote. `exec` collapses `$$` to `$`, which is
+ * what systemd does to an `ExecStart` argument after the program. `program` and `assign` leave `$` in
+ * place: the program is executed as written, and `Environment=` does not expand `$`. Any other shape
+ * reads as undefined.
+ */
+export const unquoteSystemdWord = (quoted: string, kind: SystemdWordKind): string | undefined => {
+  if (quoted.length < 2 || !quoted.startsWith('"') || !quoted.endsWith('"')) {
+    return undefined;
+  }
+  return unquoteDoubleQuotedBody(quoted.slice(1, -1), (char, body, index) => {
+    if (char === "%") {
+      if (body[index + 1] !== "%") {
+        return undefined;
+      }
+      return { value: "%", skip: 1 };
+    }
+    if (kind === "exec" && char === "$" && body[index + 1] === "$") {
+      return { value: "$", skip: 1 };
+    }
+    return { value: char, skip: 0 };
+  });
 };
 
 /**
@@ -248,42 +270,7 @@ const unitPathSchema = z.array(z.string().check(z.minLength(1)));
  * escapes the next character, and the C escapes `\n`, `\r`, `\t`, `\a`, `\b`, `\f`, `\v` are the control
  * characters. A dangling `\` reads as undefined.
  */
-const unquoteShellDoubleQuoted = (body: string): string | undefined => {
-  let value = "";
-  for (let index = 0; index < body.length; index += 1) {
-    const char = body[index];
-    if (char === undefined) {
-      return undefined;
-    }
-    if (char !== "\\") {
-      value += char;
-      continue;
-    }
-    const next = body[index + 1];
-    if (next === undefined) {
-      return undefined;
-    }
-    if (next === "n") {
-      value += "\n";
-    } else if (next === "r") {
-      value += "\r";
-    } else if (next === "t") {
-      value += "\t";
-    } else if (next === "a") {
-      value += "\u0007";
-    } else if (next === "b") {
-      value += "\b";
-    } else if (next === "f") {
-      value += "\f";
-    } else if (next === "v") {
-      value += "\v";
-    } else {
-      value += next;
-    }
-    index += 1;
-  }
-  return value;
-};
+const unquoteShellDoubleQuoted = (body: string): string | undefined => unquoteDoubleQuotedBody(body, undefined);
 
 /** The closing quote of a double-quoted word, or undefined when the word does not close. */
 const endOfDoubleQuoted = (text: string): number | undefined => {

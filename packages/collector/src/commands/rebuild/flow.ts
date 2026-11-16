@@ -1,11 +1,8 @@
 import { Effect } from "effect";
 
-import { pairedSync } from "../../capabilities/backend/backend.ts";
-import { ensureDataDir, resolveDataDir } from "../../modules/data-dir/data-dir.ts";
 import { scanAndCommit, type ScanRun } from "../../modules/ledger/ledger.ts";
-import { appendingLogger } from "../../modules/log/log.ts";
-import { NodeFiles, SnorlaxPlatform } from "../../modules/platform/platform.ts";
 import { TimeZone } from "../../modules/time-zone/time-zone.ts";
+import { preparedScanContext } from "../../capabilities/backend/backend.ts";
 
 /** `rebuild --days` accepts 1–180 days. Deleted source logs cannot be recovered; their rebuilt buckets become zero. */
 export const REBUILD_MIN_DAYS = 1;
@@ -44,11 +41,6 @@ export const rebuildScan = (days: number): ScanRun => ({
 /** One `snorlax rebuild --days n`: like refresh, prepares the data directory first, then runs `rebuildScan`. */
 export const rebuildFlow = (days: number) =>
   Effect.gen(function* () {
-    const platform = yield* SnorlaxPlatform;
-    const nodeFiles = yield* NodeFiles;
-    const dataDir = resolveDataDir(platform);
-    yield* ensureDataDir(platform, nodeFiles, dataDir);
-    const log = appendingLogger(platform, nodeFiles, dataDir);
-    const sync = yield* pairedSync({ platform, dataDir });
+    const { platform, dataDir, log, sync } = yield* preparedScanContext;
     return yield* scanAndCommit({ platform, dataDir, log, timeZone: yield* TimeZone, sync }, rebuildScan(days));
   });
