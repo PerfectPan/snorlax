@@ -8,7 +8,6 @@
     "build": "pnpm -r --if-present run build",
     "changeset": "changeset",
     "check": "pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
-    "duplicates": "jscpd --config node_modules/@perfectpan/lint-config/jscpd.json packages scripts --ignore '**/node_modules/**,**/dist/**,**/coverage/**,**/*.json,**/*.test.ts' --format 'typescript'",
     "duplicates:audit": "jscpd --config node_modules/@perfectpan/lint-config/jscpd-audit.json packages scripts --absolute --output tmp/duplicates-audit --ignore '**/node_modules/**,**/dist/**,**/coverage/**,**/*.json' --format 'typescript'",
     "format": "pnpm -r run format",
     "format:check": "pnpm -r run format:check",
