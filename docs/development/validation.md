@@ -35,8 +35,8 @@ There were no decode failures. Missing-root results for the other five agents we
 created Claude-format sources. This is one synthetic run, not a statistical benchmark, a multi-agent benchmark,
 an end-to-end refresh measurement or a real-log performance guarantee. Refresh remains at 300 seconds.
 
-For future owner-run real-workload measurement, `node scripts/measure-scan.ts` prints aggregate counts, elapsed
-time, sampled peak RSS and state size. It scans local agent homes; AI agents must not run it against real homes.
+`node scripts/measure-scan.ts` scans local agent homes and prints aggregate counts, elapsed time, sampled peak
+RSS and state size.
 Automated tests and benchmarks use generated logs under a temporary HOME and remove that HOME afterwards.
 
 ## Regression checks

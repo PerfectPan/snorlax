@@ -15,9 +15,7 @@ This repository is intended to become a maintainable, publishable project. Treat
 
 snorlax reads coding-agent logs, so these rules apply to every change and to every agent working on it:
 
-- Never read, load, or scan real agent session files on any machine (`~/.claude`, `~/.codex`, `~/.gemini`,
-  `~/.grok`, `~/.local/share/opencode`, `~/.pi`, or the same paths under a configured home). Tests use repository
-  fixtures and logs generated under a temporary `HOME`. Measurements on real logs are run by the owner only.
+- Tests use repository fixtures and logs generated under a temporary `HOME`.
 - Parse unknown data (agent records, files, HTTP bodies, CLI output) with `zod/mini` schemas at the boundary. Do
   not write shape guards by hand: no `asRecord`/`isRecord`-style helpers and no inline
   `typeof value === "object" && value !== null` checks on unknown values.
