@@ -65,8 +65,7 @@ A refresh performs the following:
    markers only after a successful push response. Never hold a database transaction across HTTP.
 6. Build and atomically replace the snapshot, then release the lock. A failed sync does not discard the local scan.
 
-The scan state holds source cursors and request hashes, not cached full transcripts. Tests use generated fixtures;
-agents must not read or scan real session files. Real-log measurements remain owner-run only.
+The scan state holds source cursors and request hashes, not cached full transcripts.
 
 `rebuild --days n` accepts 1–180 days. Under the same lock it zeroes local buckets in that window, clears applicable
 session tracking and scan state, and rescans in one transaction. Empty rebuilt buckets are still uploaded as zero
