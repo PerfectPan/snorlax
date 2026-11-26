@@ -40,7 +40,7 @@ public enum UsageFormat {
         return negative ? "-\(text)" : text
     }
 
-    /// Cost plus the unpriced marker (Spec R9). When every request in the window
+    /// Cost plus the unpriced marker. When every request in the window
     /// is unpriced the amount says nothing, so the label is just `unpriced`;
     /// when some are, the shown total is a lower bound: `≥ $x.xx`.
     public static func costLabel(costText: String, requests: Int, unpricedRequests: Int) -> String {

@@ -5,9 +5,8 @@ Code, Codex, Gemini CLI, Grok, DeepSeek Harness, ZCode, opencode and Pi, added u
 the macOS menu bar and in desktop widgets.
 
 Status: the initial implementation is accepted; first npm publication remains tracked in
-[#35](https://github.com/PerfectPan/snorlax/issues/35). The behavior is specified in
-[Spec 0001](docs/specs/0001-snorlax.md), with current [architecture](docs/architecture/snorlax.md) and
-[validation scope](docs/development/validation.md).
+[#35](https://github.com/PerfectPan/snorlax/issues/35). Current invariants and boundaries live in
+[architecture](docs/architecture/snorlax.md) and [validation scope](docs/development/validation.md).
 
 ## How it works
 

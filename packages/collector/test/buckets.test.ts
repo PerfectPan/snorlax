@@ -17,7 +17,7 @@ import { snapshotCost } from "./fixtures/pricing.ts";
 import type { Logger } from "../src/modules/log/log.ts";
 
 /**
- * Spec S11 and S12 through the refresh flow over real fixture logs: a model the pricing table does not
+ * Unpriced models and logged-cost precedence through the refresh flow over real fixture logs: a model the pricing table does not
  * list counts as unpriced, an agent-logged cost wins over the kit's table, a Claude Code API-error entry
  * the CLI wrote itself yields no record, and a turn record with a per-model split divides its tokens,
  * requests and logged cost across its models. The bucket arithmetic itself is unit-tested beside
@@ -198,7 +198,7 @@ describe("S12: agent-logged cost over real fixture logs", () => {
     const piZeroCost = rows.find((row) => row.agent === "pi" && row.model === "gemini-3-flash");
     expect(piZeroCost).toMatchObject({ costUsd: 0, unpricedRequests: 0, requests: 1 });
 
-    // The kit's snapshot prices `anthropic/claude-sonnet-5-5`; the amounts opencode logged still win (Spec S12).
+    // The kit's snapshot prices `anthropic/claude-sonnet-5-5`; the amounts opencode logged still win.
     const opencode = rows.find((row) => row.agent === "opencode" && row.model === "anthropic/claude-sonnet-5-5");
     expect(opencode).toMatchObject({
       inputTokens: 1550,

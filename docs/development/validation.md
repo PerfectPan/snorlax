@@ -1,7 +1,7 @@
 # Validation and acceptance
 
-Use the [Spec scenarios](../specs/0001-snorlax.md) and automated tests for regressions. The implementation
-architecture and operational limits are in [snorlax architecture](../architecture/snorlax.md).
+Use the automated tests and [snorlax architecture](../architecture/snorlax.md) for regressions and current
+invariants and operational limits.
 
 ## Current acceptance scope
 
@@ -15,8 +15,9 @@ architecture and operational limits are in [snorlax architecture](../architectur
 - Second-Apple-ID signing verification is deferred to [#50](https://github.com/PerfectPan/snorlax/issues/50).
   This acceptance does not certify that signing case.
 
-The completed Plan 0001 is retired. Its implementation history remains in Git. The behavioral Spec remains
-available; retirement does not remove current product contracts or close unrelated follow-up issues.
+The completed initial spec and Plan 0001 are retired; their history remains in Git, while current product
+invariants live in [snorlax architecture](../architecture/snorlax.md) and the test suite. Retirement does not close
+unrelated follow-up issues.
 
 ## Synthetic scanner measurement
 

@@ -43,7 +43,7 @@ describe("PUT /v1/devices/:id/buckets", () => {
     expect(z.parse(httpPushResponseSchema, body)).toEqual({ seq: 2 });
   });
 
-  it("replaces a pushed bucket instead of adding one (absolute totals, Spec S8)", async () => {
+  it("replaces a pushed bucket instead of adding one (absolute totals)", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");
     await push(handler, a.token, [bucketFixture(deviceAId)]);
@@ -88,7 +88,7 @@ describe("PUT /v1/devices/:id/buckets", () => {
     ).toBe(3);
   });
 
-  it("rejects a bucket whose deviceId differs from the path id with 403 and writes nothing (Spec S9)", async () => {
+  it("rejects a bucket whose deviceId differs from the path id with 403 and writes nothing", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");
     const b = await registerDevice(handler, deviceBId, "Device B");

@@ -25,7 +25,7 @@ import {
 } from "./fixtures/backend.ts";
 
 /**
- * Device ownership (Spec R11, S9): only the owning device's token writes, a revoked device's later
+ * Device ownership: only the owning device's token writes, a revoked device's later
  * writes are rejected while its earlier buckets remain, and re-registration issues a fresh token
  * and keeps the device's history.
  */
@@ -200,7 +200,7 @@ describe("POST /v1/devices", () => {
 });
 
 describe("DELETE /v1/devices/:id", () => {
-  it("revokes a device: its later writes are 401 and its buckets remain (Spec S9)", async () => {
+  it("revokes a device: its later writes are 401 and its buckets remain", async () => {
     const { handler } = createTestBackend();
     const a = await registerDevice(handler, deviceAId, "Device A");
     const b = await registerDevice(handler, deviceBId, "Device B");

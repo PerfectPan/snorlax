@@ -183,7 +183,7 @@ export interface PiSessionFixture {
     model: string;
     timestampMs: number;
     usage: UsageCounts;
-    /** Pi's own logged cost for the message, kept by the kit even when 0 (Spec S12). */
+    /** Pi's own logged cost for the message, kept by the kit even when 0. */
     costUsd: number;
   }[];
   readonly mtimeMs?: number;
@@ -306,7 +306,7 @@ export interface OpencodeMessageFixture {
   readonly model: string;
   readonly timestampMs: number;
   readonly usage: UsageCounts;
-  /** opencode logs each message's cost itself; the kit keeps it as the agent's (Spec S12). */
+  /** opencode logs each message's cost itself; the kit keeps it as the agent's. */
   readonly costUsd: number;
 }
 

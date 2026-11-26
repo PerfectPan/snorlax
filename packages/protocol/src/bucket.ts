@@ -26,14 +26,14 @@ const bucketFields = {
 /**
  * One hour of usage for one device, agent and model, holding absolute totals for that key.
  * The same row shape is the local ledger row (minus bookkeeping columns), the upload body row and the pull
- * result row; uploads carry only these fields (Spec R10). A count the log does not record is 0.
+ * result row; uploads carry only these fields. A count the log does not record is 0.
  */
 export const bucketSchema = z.object(bucketFields);
 export type Bucket = z.output<typeof bucketSchema>;
 
 /**
  * The upload body row: the same fields as `bucketSchema`, but unknown keys are rejected
- * instead of dropped, so nothing beyond the bucket fields can pass validation (Spec R10, S15).
+ * instead of dropped, so nothing beyond the bucket fields can pass validation.
  */
 export const strictBucketSchema = z.strictObject(bucketFields);
 export type StrictBucket = z.output<typeof strictBucketSchema>;

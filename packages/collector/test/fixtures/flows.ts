@@ -21,7 +21,7 @@ export interface RunDeps extends ScanAndCommitDeps {
   readonly platform: TestPlatform;
 }
 
-/** Spec S3's killed run: it dies with the whole scan decoded, before its transaction commits. */
+/** Simulated killed run: it dies with the whole scan decoded, before its transaction commits. */
 export interface RunHooks {
   readonly failBeforeCommit?: boolean;
 }
@@ -50,7 +50,7 @@ const crashingBeforeCommit = (platform: TestPlatform): TestPlatform => ({
           return sql.startsWith("UPDATE meta SET last_scan_completed_at")
             ? {
                 run: () => {
-                  throw new Error("simulated crash between decode and commit (Spec S3)");
+                  throw new Error("simulated crash between decode and commit");
                 },
                 get: (...params) => statement.get(...params),
                 all: (...params) => statement.all(...params)

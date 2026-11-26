@@ -25,7 +25,7 @@ public protocol TimelineReloading: AnyObject {
     func reloadAllTimelines()
 }
 
-/// Writes the accepted snapshot into the App Group container and reloads widget timelines (Spec S13).
+/// Writes the accepted snapshot into the App Group container and reloads widget timelines.
 /// A newer `schemaVersion` is refused before the file is replaced.
 public struct AppGroupSnapshotCopy {
     public let container: URL
@@ -47,7 +47,7 @@ public struct AppGroupSnapshotCopy {
     }
 
     /// Removes the copy and reloads timelines, so the widget stops showing the
-    /// deleted numbers (Spec R14): the data directory's snapshot is gone — a
+    /// deleted numbers: the data directory's snapshot is gone — a
     /// fresh install, or `snorlax uninstall --data` deleted it. The container
     /// is protected by macOS, so the CLI cannot do this; the app does when it
     /// sees the loss. Returns whether there was a copy to remove.
@@ -61,7 +61,7 @@ public struct AppGroupSnapshotCopy {
 }
 
 /// Publishes an accepted snapshot to the App Group container once per distinct
-/// snapshot. Widget refreshes draw on a daily budget (Spec R12), so re-reads of
+/// snapshot. Widget refreshes draw on a daily budget, so re-reads of
 /// an unchanged snapshot — the 60 s fallback, opening the menu, Refresh now —
 /// must not copy the file or reload timelines again.
 public struct AppGroupSnapshotPublisher {

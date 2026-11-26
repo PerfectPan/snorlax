@@ -16,7 +16,7 @@ import type { BucketRow, RemoteBucketRow, RemoteDeviceRow, SnapshotBucket } from
 
 export interface BuildSnapshotInput {
   readonly now: number;
-  /** IANA time zone of the device that shows the snapshot; days follow it (Spec R8). */
+  /** IANA time zone of the device that shows the snapshot; days follow it. */
   readonly timeZone: string;
   readonly thisDevice: { readonly id: string; readonly name: string | null };
   readonly buckets: readonly BucketRow[];
