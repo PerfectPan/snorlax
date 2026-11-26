@@ -230,7 +230,7 @@ final class MenuModel: ObservableObject {
 
     /// The data directory has no snapshot: a fresh install, or the data directory went away while the app
     /// runs (`snorlax uninstall --data`, or it was deleted by hand). The widget must not keep showing the
-    /// deleted numbers, so the App Group copy goes too (Spec R14). macOS protects the container, so the CLI
+    /// deleted numbers, so the App Group copy goes too. macOS protects the container, so the CLI
     /// cannot delete it; the app does when it sees the loss.
     private func removeAppGroupCopy() {
         guard let container = AppGroup.containerURL() else {

@@ -18,7 +18,7 @@ import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 import { snapshotCost } from "./fixtures/pricing.ts";
 
 /**
- * Spec S1–S5 over generated fixtures under a temporary home, with the clock fixed at 2026-10-22T12:00:00Z
+ * Incremental refresh, crash recovery, deduplication, and retention over generated fixtures under a temporary home, with the clock fixed at 2026-10-22T12:00:00Z
  * and every file read counted through the platform, which proves a later refresh decodes no unchanged
  * source again (S2). Buckets are UTC hours; the snapshot windows run in Asia/Shanghai. Every fixture's
  * mtime is pinned one hour before the fixed clock, so the kit decodes it as a quiet, final source.
@@ -226,7 +226,7 @@ describe("S1: the first run counts the history", () => {
       cacheReadTokens: 6400,
       requests: 6,
       sessions: 3,
-      // Only Codex's gpt-6.2 is missing from the kit's pricing snapshot (Spec S11).
+      // Only Codex's gpt-6.2 is missing from the kit's pricing snapshot.
       unpricedRequests: 2,
       costUsd: expect.closeTo(S1_COST.opusHour9 + S1_COST.haikuHour9 + S1_COST.haikuHour10, 12)
     });

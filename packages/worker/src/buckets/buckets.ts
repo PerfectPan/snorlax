@@ -9,7 +9,7 @@ import { readBucketsAfter, writePush } from "./store.ts";
  * went wrong and knows no HTTP status.
  */
 
-/** A push to another device's path, or a row naming another device (Spec S9). */
+/** A push to another device's path, or a row naming another device. */
 class ForeignDeviceWrite extends Error {
   readonly _tag = "ForeignDeviceWrite";
 }

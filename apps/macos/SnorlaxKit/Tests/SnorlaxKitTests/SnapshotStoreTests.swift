@@ -65,7 +65,7 @@ final class SnapshotStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: publisher.fileURL), changed)
     }
 
-    /// The uninstall path (Spec R14): the data directory's snapshot is gone, so
+    /// The uninstall path: the data directory's snapshot is gone, so
     /// the copy goes too and the widget timeline reloads to its empty state.
     func testRemovePublishedSnapshotDeletesTheCopyAndReloadsTimelines() throws {
         let temp = try TempDirectory()

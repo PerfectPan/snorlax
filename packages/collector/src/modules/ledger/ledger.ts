@@ -88,7 +88,7 @@ const scanStateSchema = z.looseObject({
 /**
  * The open ledger. Every operation runs on the one connection `openLedger` holds for its scope; the
  * multi-statement writes of a run go inside `transaction`, so a run that fails or is interrupted mid-way leaves
- * the database as it was (Spec S3). A SQLite statement that throws is a defect; a row this build cannot read
+ * the database as it was. A SQLite statement that throws is a defect; a row this build cannot read
  * fails as `LedgerUnreadable`.
  */
 export interface Ledger {

@@ -25,7 +25,7 @@ interface NewDevice {
 /**
  * Inserts a fresh id or takes over a revoked one, in one statement, and reports whether a row changed. An
  * active device fails the guard and changes nothing, so two concurrent registrations of one id cannot both
- * pass. The overwrite keeps `created_at` and `last_push_at`, so the usage history survives (Spec R11).
+ * pass. The overwrite keeps `created_at` and `last_push_at`, so the usage history survives.
  */
 export const insertUnlessActive = async (db: D1Database, device: NewDevice): Promise<boolean> => {
   const { meta } = await db

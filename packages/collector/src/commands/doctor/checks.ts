@@ -12,7 +12,7 @@ import { DATA_DIR_MODE } from "../../modules/data-dir/data-dir.ts";
  * own and the flow only gathers the inputs.
  */
 
-/** The oldest Node the collector runs on (the Spec's "Compatibility And Constraints": Node 22.13). */
+/** The oldest Node the collector runs on (Node 22.13). */
 const REQUIRED_NODE = "22.13";
 
 const parseNodeVersion = (version: string): [number, number, number] | null => {

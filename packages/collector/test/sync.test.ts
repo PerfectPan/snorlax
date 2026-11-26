@@ -33,7 +33,7 @@ import { createRefreshSetup, type RefreshSetup } from "./fixtures/platform.ts";
 import { fakeScheduler } from "./fixtures/scheduler.ts";
 
 /**
- * Two collectors and one in-memory Worker (Spec S6–S8, S15). Homes are temporary and the logs
+ * Two collectors and one in-memory Worker. Homes are temporary and the logs
  * are generated fixtures. The fetch is the Worker's own app; nothing here contacts a deployed Worker or a
  * real keychain.
  */

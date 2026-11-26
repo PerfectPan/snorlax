@@ -9,7 +9,7 @@ import type { Ledger, LedgerUnreadable, PersistedScanState } from "./ledger.ts";
 
 /**
  * The version of the table every run prices with: the kit's LiteLLM snapshot as it ships, without overrides or
- * family fallbacks, so a model the snapshot does not name is unpriced (Spec S11) rather than priced as another
+ * family fallbacks, so a model the snapshot does not name is unpriced rather than priced as another
  * model. `meta.pricing_version` records the version that priced the ledger's buckets.
  */
 export const PRICING_VERSION = litellmPricesVersion;
@@ -36,7 +36,7 @@ export interface ScanWindow {
  * current table and fold it into hourly buckets, then — in one transaction — write the buckets, the sessions
  * first seen, the pricing version, the new scan state and `last_scan_completed_at`. The scan iterates inside
  * the transaction, so a run that fails or is interrupted anywhere before the commit leaves the ledger exactly as it
- * was (Spec S3), and a rebuild's zeroing rolls back with it.
+ * was, and a rebuild's zeroing rolls back with it.
  */
 export const commitScan = (
   platform: Platform,

@@ -10,7 +10,7 @@ import {
   type HttpPushRequest
 } from "./http.ts";
 
-describe("httpPushRequestSchema (Spec R10, S15)", () => {
+describe("httpPushRequestSchema", () => {
   const validBucket: StrictBucket = {
     deviceId: "6f1c8d2e-4a3b-4c5d-9e6f-7a8b9c0d1e2f",
     hour: 1_792_658_000,

@@ -7,7 +7,7 @@ public enum WidgetSnapshotLoadError: Error, Equatable {
     case missing
 }
 
-/// What the widget can show (Spec R8, R12): the states a container read can
+/// What the widget can show: the states a container read can
 /// end in, plus the usable snapshot with its as-of caption.
 public enum WidgetSnapshotState: Equatable {
     case containerUnavailable

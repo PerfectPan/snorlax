@@ -12,7 +12,7 @@ export type TestPlatform = Platform & { readonly sqlite: NonNullable<Platform["s
 /**
  * A refresh test bed: a real temporary home (generated fixtures only — a real agent home is never read),
  * the Node platform with its clock replaced by a fixed one, and a byte counter on every file read, which
- * proves a later refresh decodes no unchanged source again (Spec S2).
+ * proves a later refresh decodes no unchanged source again.
  */
 export interface RefreshSetup {
   readonly home: string;

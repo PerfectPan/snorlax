@@ -1,7 +1,7 @@
 # snorlax architecture
 
-This guide describes the shipped source architecture for maintainers. The behavioral contract remains in
-[Spec 0001](../specs/0001-snorlax.md). Protocol schemas and tests are the source of truth for exact fields.
+This guide describes the shipped source architecture, behavioral invariants, and operational limits for maintainers.
+Protocol schemas and tests are the source of truth for exact fields.
 
 ## Boundaries
 
@@ -51,7 +51,10 @@ Migrations are forward-only; backups are made before migration and the latest tw
 The ledger stores local and remote buckets, remote devices, scan state, session-first-seen records and metadata
 (device identity, last completed scan, pull cursor and pricing version). A local bucket is keyed by UTC hour,
 agent and model; remote buckets add device id. Agent-kit token conventions apply: input includes cache reads and
-writes; output includes reasoning. Unknown costs remain unpriced rather than being invented as zero-cost usage.
+writes; output includes reasoning. When an agent logs its own cost for a request, that logged cost wins over the
+bundled pricing table; unknown models remain unpriced rather than being invented as zero-cost usage, and totals
+that include unpriced requests are marked. Ordinary refreshes retain already-counted usage even after an agent
+deletes its old logs.
 
 A refresh performs the following:
 
@@ -118,8 +121,9 @@ See [pairing](../development/pairing.md) for partial failures, revocation and mo
 
 Backend deployments, secrets, account setup and npm publishing are owner operations. See the
 [Worker runbook](../development/worker.md) and [release runbook](../development/release.md).
-The single-user Workers/D1 deployment is current scope; presence tracking, several users and a self-hosted Node
-server require separate design work.
+The single-user Workers/D1 deployment is current scope; presence tracking, teams/multi-user backends, Windows,
+the Mac App Store, subscription quota/rate-limit hooks, cloud-only agents (such as Cursor), and a self-hosted Node
+server are out of scope and require separate design work.
 
 ## macOS and scheduling
 
@@ -163,5 +167,5 @@ See the [macOS guide](../../apps/macos/README.md) for the signed owner-run proce
   35,000 reads and 3,500 Worker requests per day; workload and provider limits can change.
 
 For acceptance scope, synthetic performance results and deferred follow-ups, see
-[validation](../development/validation.md). The completed execution plan is retained by Git history, not a second
-archive, and code comments no longer cite it by section number.
+[validation](../development/validation.md). Retired specs and execution plans are retained by Git history, not a
+second archive, and code comments do not cite them by section or scenario number.

@@ -76,7 +76,7 @@ export const registerDevice = async (
 };
 
 /**
- * Marks a device revoked and keeps its buckets (Spec S9); revoking it again changes nothing. An unknown id is
+ * Marks a device revoked and keeps its buckets; revoking it again changes nothing. An unknown id is
  * `DeviceNotFound`; the store decides that in the same statement that writes.
  */
 export const revokeDevice = async ({ db, now }: DevicesDeps, deviceId: string): Promise<void> => {

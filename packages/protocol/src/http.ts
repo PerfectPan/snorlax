@@ -5,7 +5,7 @@ import { deviceIdSchema, nonNegativeIntSchema, utcTimestampSchema } from "./shar
 
 /**
  * The HTTP API bodies and the pull query. Request bodies are strict objects that reject unknown
- * keys, so nothing beyond the bucket fields can leave a machine (Spec R10, S15); response bodies stay lenient,
+ * keys, so nothing beyond the bucket fields can leave a machine; response bodies stay lenient,
  * so a field a newer Worker adds still lets an older collector parse the rest, and the pull query ignores
  * parameters it does not define. The app has no HTTP client and consumes none of these shapes;
  * they serve the collector's sync client and the Worker's own validation.
