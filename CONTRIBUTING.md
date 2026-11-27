@@ -58,7 +58,7 @@ deliberately. A published package needs a stable `version`, a `repository.url` p
 # Local Git hooks:
 ./scripts/install-git-hooks.sh
 
-# Aggregate gate: format:check, build, lint, typecheck, test:
+# Aggregate gate: format:check, duplicates, build, lint, typecheck, test:
 pnpm run check
 
 # Pending change records (CI runs it before the aggregate gate; gh-repo-checks v1.4.0 or later):

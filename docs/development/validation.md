@@ -39,7 +39,11 @@ Automated tests and benchmarks use generated logs under a temporary HOME and rem
 
 ## Regression checks
 
-- `pnpm run check`: formatting, builds, lint, types, tests and the pending change-record check.
+- `pnpm run check`: formatting, duplicate detection, builds, lint, types, tests and the pending change-record
+  check.
+- Duplicate detection applies lint-config's zero-threshold jscpd profile: an exact clone of at least six lines and
+  forty tokens under `packages` or `scripts` fails the gate (test files and JSON are excluded).
+  `pnpm duplicates:audit` reports renamed and AST-similar candidates to the git-ignored `tmp/duplicates-audit/`.
 - Protocol regeneration must leave the committed JSON schemas and Swift models unchanged.
 - The [macOS guide](../../apps/macos/README.md) documents Xcode and signing checks. Unsigned/ad-hoc tests do not
   validate App Group entitlements or widget gallery availability under another Apple ID.
