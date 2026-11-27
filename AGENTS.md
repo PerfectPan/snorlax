@@ -96,7 +96,7 @@ For non-trivial changes:
 5. Ensure local Git hooks are installed for the checkout when practical.
 6. Run repository checks, title checks, and project-specific validation gates.
 7. For a newly created GitHub repository, configure branch protection with `gh repo-checks protect --repo OWNER/REPO --check check --apply` (add `--approvals 0` for a single maintainer) using an admin-authorized account.
-8. If this change completes an active Plan, migrate lasting non-code knowledge to `docs/` (and local `Why:` comments), move unfinished follow-ups to issues, and delete the Plan in the final PR/MR.
+8. If this change completes an active Plan, retire it in the final PR/MR per [`docs/AGENTS.md` §4](docs/AGENTS.md#4-retiring-a-plan).
 9. Open or update the PR/MR with a summary of what changed and why, the exact validation and skipped gates, and any risks.
 
 ## Releases
@@ -125,10 +125,10 @@ For non-trivial changes:
 
 ## Documentation
 
+- Read [`docs/AGENTS.md`](docs/AGENTS.md) before writing non-code knowledge: adding or changing a file under `docs/`, choosing between a doc and a `Why:` comment, or retiring a Plan.
 - Keep `README.md` focused on orientation, quick start, and current user-facing behavior.
 - Use `CONTRIBUTING.md` for contribution workflow.
 - Use `docs/plans/` for active implementation plans while non-trivial work is in flight, and retire completed plans when code lands.
-- Use `docs/` (`guides/`, `reference/`, `architecture/`, `development/`) for durable current-state knowledge that code alone cannot express; add local `Why:` comments for localized quirks.
 - Record user-facing changes with changesets (`.changeset/*.md`) in the same PR; do not edit generated changelogs or add a hand-written root `CHANGELOG.md`.
 - When behavior, configuration, commands, APIs, deployment, or architecture change, update the relevant docs in the same PR/MR or explain why no docs changed.
 
@@ -169,7 +169,7 @@ rg --hidden --no-ignore -n "private-token|secret|internal-domain.example|HOME_PA
   --glob '!.omx/**' \
   --glob '!**/node_modules/**' \
   --glob '!**/dist/**' \
-  --glob '!AGENTS.md' \
-  --glob '!CONTRIBUTING.md' \
-  --glob '!SECURITY.md'
+  --glob '!/AGENTS.md' \
+  --glob '!/CONTRIBUTING.md' \
+  --glob '!/SECURITY.md'
 ```
