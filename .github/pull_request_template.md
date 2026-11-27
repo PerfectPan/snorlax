@@ -10,7 +10,7 @@
 
 <!-- Commands you ran and their results; logs or screenshots for behavior claims. Name skipped checks and why. -->
 
-- [ ] Aggregate gate (format, build, lint, typecheck, test): `pnpm run check`
+- [ ] Aggregate gate (format, duplicates, build, lint, typecheck, test): `pnpm run check`
 - [ ] Repository checks: `gh repo-checks repository`
 - [ ] PR title and description: `gh repo-checks pr-title "<title>"`, `gh repo-checks pr-body <body-file>`
 - [ ] Changeset for published-package changes, when this PR should produce a release: `.changeset/<name>.md`
