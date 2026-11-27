@@ -6,7 +6,7 @@ the macOS menu bar and in desktop widgets.
 
 Status: the initial implementation is accepted; first npm publication remains tracked in
 [#35](https://github.com/PerfectPan/snorlax/issues/35). Current invariants and boundaries live in
-[architecture](docs/architecture.md) and [validation scope](docs/development/validation.md).
+[architecture](docs/architecture/overview.md) and [validation scope](docs/development/validation.md).
 
 ## How it works
 

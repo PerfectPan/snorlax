@@ -31,7 +31,7 @@ Command flows use Effect scopes for database, lock and process lifetimes. Pure r
 Capabilities provide `Context.Service` interfaces and Layers; constructing a Layer has no side effects. The CLI
 selects implementations and owns the exhaustive error-tag-to-exit-code mapping. Lower layers define their own
 errors without knowing CLI failure codes. These boundaries are enforced by
-[`structure.test.ts`](../packages/collector/test/structure.test.ts).
+[`structure.test.ts`](../../packages/collector/test/structure.test.ts).
 
 `status`, `doctor` and `snapshot` are read-only: no repairs, directory creation or credential probes. Diagnostics
 report failed checks rather than repairing them. `doctor` exits 1 when unhealthy and 0 when healthy.
@@ -97,8 +97,8 @@ compatible defaults in the protocol, local ledger and D1; migrations remain addi
 
 ## Sync and backend
 
-The API is defined in [`http.ts`](../packages/protocol/src/http.ts) and
-[`app.ts`](../packages/worker/src/http/app.ts). Device registration and revocation require the admin token.
+The API is defined in [`http.ts`](../../packages/protocol/src/http.ts) and
+[`app.ts`](../../packages/worker/src/http/app.ts). Device registration and revocation require the admin token.
 A device may upload only its own buckets; authenticated devices may pull the shared bucket stream and device list.
 Revocation keeps historic buckets. D1 read replication stays disabled.
 
@@ -117,10 +117,10 @@ There is no retry loop inside one refresh. Network, timeout and backend quota fa
 next scheduled run. The snapshot remains usable offline. Re-pairing replaces a device registration/token, resets
 remote state and marks every local bucket dirty, including buckets older than the displayed 180-day heatmap.
 Unpairing deletes the device token before clearing the backend URL and regenerates a local-only snapshot.
-See [pairing](guides/pairing.md) for partial failures, revocation and moving the backend origin.
+See [pairing](../guides/pairing.md) for partial failures, revocation and moving the backend origin.
 
 Backend deployments, secrets, account setup and npm publishing are owner operations. See the
-[Worker runbook](guides/worker.md) and [release runbook](development/release.md).
+[Worker runbook](../guides/worker.md) and [release runbook](../development/release.md).
 The single-user Workers/D1 deployment is current scope; presence tracking, teams/multi-user backends, Windows,
 the Mac App Store, subscription quota/rate-limit hooks, cloud-only agents (such as Cursor), and a self-hosted Node
 server are out of scope and require separate design work.
@@ -144,7 +144,7 @@ notice offers an explicit asynchronous 180-day rebuild, with duplicate-click pro
 The main app is not sandboxed because it invokes Node. The widget is sandboxed and reads the App Group snapshot.
 An ad-hoc build is not proof that Personal Team signing, App Group access or widget registration works. A second
 Apple ID's bundle-id/signing validation is deferred to [#50](https://github.com/PerfectPan/snorlax/issues/50).
-See the [macOS guide](../apps/macos/README.md) for the signed owner-run procedure.
+See the [macOS guide](../../apps/macos/README.md) for the signed owner-run procedure.
 
 ## Privacy and operational limits
 
@@ -161,10 +161,10 @@ See the [macOS guide](../apps/macos/README.md) for the signed owner-run procedur
   cursor before syncing. Before backend recovery or re-pairing, preserve a consistent, verified backup of each
   device's ledger. Full recovery needs every device's own data or a verified backup of that data. If a device is
   unavailable, preserve any surviving cached remote history before re-pairing; do not clear it and assume another
-  device can automatically upload it. See [the recovery warning](guides/pairing.md#backend-recovery-warning).
+  device can automatically upload it. See [the recovery warning](../guides/pairing.md#backend-recovery-warning).
 - Monitor the actual Cloudflare quotas rather than treating a capacity estimate as a guarantee. At three devices,
   300-second refreshes and ten changed buckets per refresh, the original estimate was about 17,000 D1 row writes,
   35,000 reads and 3,500 Worker requests per day; workload and provider limits can change.
 
 For acceptance scope, synthetic performance results and deferred follow-ups, see
-[validation](development/validation.md).
+[validation](../development/validation.md).

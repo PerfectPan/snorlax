@@ -1,6 +1,6 @@
 # Validation and acceptance
 
-Use the automated tests and [snorlax architecture](../architecture.md) for regressions and current
+Use the automated tests and [snorlax architecture](../architecture/overview.md) for regressions and current
 invariants and operational limits.
 
 ## Current acceptance scope
@@ -14,7 +14,7 @@ invariants and operational limits.
 - Second-Apple-ID signing verification is deferred to [#50](https://github.com/PerfectPan/snorlax/issues/50).
   This acceptance does not certify that signing case.
 
-Current product invariants live in [snorlax architecture](../architecture.md) and the test suite.
+Current product invariants live in [snorlax architecture](../architecture/overview.md) and the test suite.
 
 ## Synthetic scanner measurement
 

@@ -5,7 +5,7 @@ Contribution workflow and Change Design Gate: [`CONTRIBUTING.md`](../CONTRIBUTIN
 
 ## Index
 
-- [`architecture.md`](architecture.md) — component boundaries, data flow, invariants, and operational limits.
+- [`architecture/overview.md`](architecture/overview.md) — component boundaries, data flow, invariants, and operational limits.
 - [`guides/linux.md`](guides/linux.md) — installing and scheduling the collector on Linux.
 - [`guides/pairing.md`](guides/pairing.md) — pairing, unpairing, revoking, and recovering a machine.
 - [`guides/worker.md`](guides/worker.md) — deploying the Cloudflare Worker and D1 backend.

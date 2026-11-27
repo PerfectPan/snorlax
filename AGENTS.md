@@ -23,7 +23,7 @@ snorlax reads coding-agent logs, so these rules apply to every change and to eve
   global timers). Never assert on real elapsed time.
 - A test or command that sets a temporary `HOME` removes it afterwards:
   `H=$(mktemp -d); HOME=$H <command>; s=$?; rm -rf "$H"; exit $s`.
-- Uploads carry only the bucket fields defined in `docs/architecture.md` and `packages/protocol/src/bucket.ts` (numbers, device id, UTC hour,
+- Uploads carry only the bucket fields defined in `docs/architecture/overview.md` and `packages/protocol/src/bucket.ts` (numbers, device id, UTC hour,
   agent id, model name). Never add prompts, paths, project names, or session ids to anything that leaves the machine.
 - Cloudflare credentials, Apple signing, npm Trusted Publishing, branch protection, and merging are owner steps.
   Prepare the change and the exact command; do not run deploys or publish.
