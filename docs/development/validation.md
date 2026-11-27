@@ -1,6 +1,6 @@
 # Validation and acceptance
 
-Use the automated tests and [snorlax architecture](../architecture/snorlax.md) for regressions and current
+Use the automated tests and [snorlax architecture](../architecture.md) for regressions and current
 invariants and operational limits.
 
 ## Current acceptance scope
@@ -9,15 +9,12 @@ invariants and operational limits.
   a small historic Codex discrepancy was accepted, not diagnosed as exact equality.
 - On 2026-11-07 the owner confirmed cross-device synchronization was acceptable. This is owner acceptance,
   not a new agent-run claim that every original multi-device/offline/rebuild scenario was repeated.
-- On 2026-11-07 the owner accepted the synthetic scan performance result below as sufficient to close the plan.
-  No real agent transcript was read or scanned for that measurement. Real multi-agent workload performance is
-  not independently verified by it.
+- On 2026-11-07 the owner accepted the synthetic scan performance result below. No real agent transcript was read or
+  scanned for that measurement, and real multi-agent workload performance is not independently verified by it.
 - Second-Apple-ID signing verification is deferred to [#50](https://github.com/PerfectPan/snorlax/issues/50).
   This acceptance does not certify that signing case.
 
-The completed initial spec and Plan 0001 are retired; their history remains in Git, while current product
-invariants live in [snorlax architecture](../architecture/snorlax.md) and the test suite. Retirement does not close
-unrelated follow-up issues.
+Current product invariants live in [snorlax architecture](../architecture.md) and the test suite.
 
 ## Synthetic scanner measurement
 
@@ -32,9 +29,9 @@ measurement deleted its temporary home afterwards.
 | Full | 100,000 | 100 | 999 ms | 159,547,392 bytes | 944,823 bytes |
 | Unchanged incremental | 0 | 100 | 39 ms | 164,773,888 bytes | 944,823 bytes |
 
-There were no decode failures. Missing-root results for the other five agents were expected: this fixture only
-created Claude-format sources. This is one synthetic run, not a statistical benchmark, a multi-agent benchmark,
-an end-to-end refresh measurement or a real-log performance guarantee. Refresh remains at 300 seconds.
+There were no decode failures. Missing-root results for the other five agents supported at that revision were expected:
+this fixture only created Claude-format sources. This is one synthetic run, not a statistical benchmark, a multi-agent
+benchmark, an end-to-end refresh measurement or a real-log performance guarantee. Refresh remains at 300 seconds.
 
 `node scripts/measure-scan.ts` scans local agent homes and prints aggregate counts, elapsed time, sampled peak
 RSS and state size.
@@ -56,10 +53,10 @@ fixtures verify repeated rebuilds and sync retries without double counting, dele
 boundaries and unchanged summary windows. Native SwiftUI views were rendered with synthetic data in light and
 dark appearances for layout inspection. This is not a production-data run or signing validation.
 
-## Follow-ups outside the retired plan
+## Deferred follow-ups
 
 - [#23](https://github.com/PerfectPan/snorlax/issues/23): custom prices for unknown models.
 - [#35](https://github.com/PerfectPan/snorlax/issues/35): first npm publication and Linux installation validation.
 - [#50](https://github.com/PerfectPan/snorlax/issues/50): second-Apple-ID signing verification.
 
-These issues retain their own completion criteria; accepting the original plan does not mark them implemented.
+These issues retain their own completion criteria and remain open outside the accepted baseline.

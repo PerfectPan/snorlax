@@ -23,7 +23,7 @@ snorlax reads coding-agent logs, so these rules apply to every change and to eve
   global timers). Never assert on real elapsed time.
 - A test or command that sets a temporary `HOME` removes it afterwards:
   `H=$(mktemp -d); HOME=$H <command>; s=$?; rm -rf "$H"; exit $s`.
-- Uploads carry only the bucket fields defined in `docs/architecture/snorlax.md` and `packages/protocol/src/bucket.ts` (numbers, device id, UTC hour,
+- Uploads carry only the bucket fields defined in `docs/architecture.md` and `packages/protocol/src/bucket.ts` (numbers, device id, UTC hour,
   agent id, model name). Never add prompts, paths, project names, or session ids to anything that leaves the machine.
 - Cloudflare credentials, Apple signing, npm Trusted Publishing, branch protection, and merging are owner steps.
   Prepare the change and the exact command; do not run deploys or publish.
@@ -121,7 +121,6 @@ For non-trivial changes:
 - JavaScript or TypeScript projects take shared lint, format, and `tsconfig` rules from the `PerfectPan/lint-config` repository; see its README. Extend those shared configs instead of copying them.
 - Do not introduce a shared abstraction unless it removes real duplication, clarifies a boundary, or matches an existing project pattern.
 - When a file starts mixing multiple responsibilities or layers, split by responsibility rather than by arbitrary size.
-- Non-trivial architectural or multi-PR changes use a Plan in `docs/plans/` to record design choices before implementation; routine fixes and localized changes do not.
 
 ## Documentation
 
