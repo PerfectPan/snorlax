@@ -23,7 +23,7 @@ Settings shows the device name from `snorlax status`. That field is read-only. T
 
 The app watches the data directory (200 ms debounce, 60 s fallback). A snapshot whose `schemaVersion` is newer than 1 is refused with "The collector is newer than the app; update the app." and is not copied. An accepted snapshot is copied to `snapshot.json` in the App Group container, then `WidgetCenter.reloadAllTimelines()` runs. When the data directory's snapshot is gone — `snorlax uninstall --data` or a hand deletion while the app runs — the app deletes that App Group copy and reloads the timelines, so the widget shows "No snapshot yet". If the App Group copy cannot be deleted, Settings shows the filesystem error instead of silently claiming cleanup succeeded. macOS protects the container, so the CLI cannot delete it; when the app is already deleted before `snorlax uninstall --data` runs, remove the leftover `snapshot.json` in `~/Library/Group Containers/<team id>io.github.perfectpan.snorlax/` by hand.
 
-The widget reads that copy. Small: today's tokens and cost. Medium: today, 7 days, and the top three agents; both caption the snapshot with `as of 15:22`. A missing file, an unavailable container, and a newer snapshot each show their own message, and a snapshot whose day (in the snapshot's time zone) is over shows `—` for Today. One timeline entry, policy `.after(now + 15 minutes)`. The S1 owner run is still pending, so the widget does not use the home-relative read entitlement.
+The widget reads that copy. Small: today's tokens and cost. Medium: today, 7 days, and the top three agents; both caption the snapshot with `as of 15:22`. A missing file, an unavailable container, and a newer snapshot each show their own message, and a snapshot whose day (in the snapshot's time zone) is over shows `—` for Today. One timeline entry, policy `.after(now + 15 minutes)`. The widget reads its snapshot from the App Group container and does not use a home-relative read entitlement.
 
 On launch, when `<data>/node-path` is missing or its Node is older than 22.13, the app runs `/bin/zsh -lc 'command -v node'` (5 s timeout), checks the version, and writes `node-path`. When none is found, the menu shows "Install Node.js 22.13 or later". Discovery runs in the background; the snapshot loads first. `zsh -lc` loads `.zshenv` and `.zprofile` but not `.zshrc`, so a Node that only `.zshrc` initializes — nvm without an `.zprofile` line, for example — is not found; write `<data>/node-path` by hand in that case. `<data>` is `SNORLAX_HOME`, or `~/Library/Application Support/snorlax`.
 
@@ -95,7 +95,7 @@ Turn signing on before answering whether the App Group works, whether `SMAppServ
 7. Open Settings → Diagnostics. The App Group id should be `<TeamID>.io.github.perfectpan.snorlax`. A path means the container exists. Record that. "App Group container is unavailable for this signature" means the Personal Team could not use the group.
 8. To see numbers before a real refresh, copy `packages/protocol/fixtures/snapshot.json` to `<data>/snapshot.json` (the file the menu reads — the App Group copy is the app's output, not its input). The menu reads it on the next open (or within about a minute) and publishes the copy the widget shows. The title becomes `81.2M`.
 9. Widget gallery: Edit Widgets, search for Snorlax, add the small or medium size. It shows the copied snapshot. If Snorlax is absent, record that.
-10. Settings → Launch at login. That is the only `register()` call. Allow the item in System Settings if it asks. The agent runs `snorlax refresh` immediately and every 300 seconds; on this branch `refresh` scans this Mac's real agent logs under the account that runs it, so turn the toggle on only when that is intended. Record whether the status becomes `enabled`.
+10. Settings → Launch at login. That is the only `register()` call. Allow the item in System Settings if it asks. The agent runs `snorlax refresh` immediately and every 300 seconds; note that `refresh` scans this Mac's real agent logs under the account that runs it, so turn the toggle on only when that is intended. Record whether the status becomes `enabled`.
 11. Turn Launch at login off when the check is finished. Confirm the service is gone:
 
 ```bash
@@ -105,7 +105,5 @@ launchctl print "gui/$(id -u)/io.github.perfectpan.snorlax.refresh"
 The print should say the service could not be found. Do not copy the plist into `~/Library/LaunchAgents`.
 
 12. Record the three answers in the validation issue or PR: App Group container, `SMAppService` registration, widget gallery. Second-Apple-ID verification is tracked in [#50](https://github.com/PerfectPan/snorlax/issues/50); the current acceptance scope is in [validation.md](../../docs/development/validation.md).
-
-If a spike widget is still on the desktop, remove it. Its kind was `io.github.perfectpan.snorlax.spike`.
 
 Heatmap cost details show `unpriced` when every request lacks pricing and `≥` for mixed priced/unpriced usage. Older snapshots without daily pricing counts show cost as unavailable; token intensities remain usable.

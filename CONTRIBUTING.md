@@ -111,16 +111,13 @@ maintainer's call. See [`docs/development/release.md`](docs/development/release.
 ## Plan Lifecycle And Retirement
 
 1. Draft a plan from [`docs/plans/0000-template.md`](docs/plans/0000-template.md) only when triggered by the [Change Design Gate](#change-design-gate). Keep `Status: blocked` while a material scope, interface, data, or rollout decision is unresolved.
-2. Review the goals, boundaries, and key decisions before implementing; update the plan if design choices change mid-flight.
+2. Review the goals, boundaries, and key decisions before implementing; update an active plan mid-flight only when remaining multi-PR or multi-session work still needs re-alignment.
 3. Implement within that scope, adding tests and updating current-state `docs/` in the same change.
-4. Retire the plan as soon as its code scope lands on the default branch. Do not keep a completed plan in `docs/plans/` waiting on deferred manual checks or future polish. In the final delivery PR/MR:
-   - Move any remaining manual verification or follow-up work to issues.
-   - Migrate lasting knowledge that code cannot express (invariants, ownership/trust boundaries, tradeoffs, external quirks, validation limits) into current-state `docs/` (and local `Why:` comments in code).
-   - Delete the completed plan file. Git history and the delivery PR/MR keep the full execution record.
+4. Retire the plan in its final delivery PR/MR as soon as its code scope lands on the default branch; move deferred manual checks and future polish to issues rather than keeping the plan open. Follow [`docs/AGENTS.md` §4](docs/AGENTS.md#4-retiring-a-plan).
 
 ## Change Design Gate
 
-Most changes need only a clear PR/MR description (`## Summary` and `## Validation`), not a separate document.
+Most changes need only a clear PR/MR description (`## Summary` and `## Validation`), not a separate document. Write a Plan only when upfront alignment with a human is needed before implementing. Do not write a Plan for adjustments requested during implementation or review—reflect those directly in code, durable docs, and the PR/MR description.
 
 | Change scope | Required artifact |
 | --- | --- |
@@ -157,7 +154,7 @@ Keep each documentation surface focused:
 - Use `docs/plans/` for active implementation plans while non-trivial work is in flight; retire them when code lands.
 - Use `docs/` (`guides/`, `reference/`, `architecture/`, `development/`) for durable current-state knowledge that code alone cannot express.
 
-Follow `docs/README.md` when adding or reorganizing project documentation. Update docs in the same change as behavior, configuration, command, API, deployment, architecture, or operational changes. Keep examples runnable when possible; otherwise, label them as illustrative and explain the validation gap.
+Follow [`docs/AGENTS.md`](docs/AGENTS.md) for category placement, writing standards, and retiring plans into durable docs, and list new documents in [`docs/README.md`](docs/README.md). Update docs in the same change as behavior, configuration, command, API, deployment, architecture, or operational changes.
 
 ## Pull Request Expectations
 

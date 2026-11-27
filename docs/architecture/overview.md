@@ -117,10 +117,10 @@ There is no retry loop inside one refresh. Network, timeout and backend quota fa
 next scheduled run. The snapshot remains usable offline. Re-pairing replaces a device registration/token, resets
 remote state and marks every local bucket dirty, including buckets older than the displayed 180-day heatmap.
 Unpairing deletes the device token before clearing the backend URL and regenerates a local-only snapshot.
-See [pairing](../development/pairing.md) for partial failures, revocation and moving the backend origin.
+See [pairing](../guides/pairing.md) for partial failures, revocation and moving the backend origin.
 
 Backend deployments, secrets, account setup and npm publishing are owner operations. See the
-[Worker runbook](../development/worker.md) and [release runbook](../development/release.md).
+[Worker runbook](../guides/worker.md) and [release runbook](../development/release.md).
 The single-user Workers/D1 deployment is current scope; presence tracking, teams/multi-user backends, Windows,
 the Mac App Store, subscription quota/rate-limit hooks, cloud-only agents (such as Cursor), and a self-hosted Node
 server are out of scope and require separate design work.
@@ -161,11 +161,10 @@ See the [macOS guide](../../apps/macos/README.md) for the signed owner-run proce
   cursor before syncing. Before backend recovery or re-pairing, preserve a consistent, verified backup of each
   device's ledger. Full recovery needs every device's own data or a verified backup of that data. If a device is
   unavailable, preserve any surviving cached remote history before re-pairing; do not clear it and assume another
-  device can automatically upload it. See [the recovery warning](../development/pairing.md#backend-recovery-warning).
+  device can automatically upload it. See [the recovery warning](../guides/pairing.md#backend-recovery-warning).
 - Monitor the actual Cloudflare quotas rather than treating a capacity estimate as a guarantee. At three devices,
   300-second refreshes and ten changed buckets per refresh, the original estimate was about 17,000 D1 row writes,
   35,000 reads and 3,500 Worker requests per day; workload and provider limits can change.
 
 For acceptance scope, synthetic performance results and deferred follow-ups, see
-[validation](../development/validation.md). Retired specs and execution plans are retained by Git history, not a
-second archive, and code comments do not cite them by section or scenario number.
+[validation](../development/validation.md).

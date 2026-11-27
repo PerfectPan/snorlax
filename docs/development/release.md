@@ -193,21 +193,19 @@ publisher does not authorize another.
 ## Bot Pull Requests
 
 - **Version PR**: see step 3 above. Its title already passes `gh repo-checks pr-title`; bot PRs skip the description check.
-- **Dependabot npm PRs**: one weekly PR carries every minor and patch npm update, and a second one every major.
-  Dependabot officially supports pnpm 7–10; on pnpm 12 its support is limited (dependabot-core#16397), so a PR may
-  edit `package.json` files or the catalog in `pnpm-workspace.yaml` without regenerating the root
-  `pnpm-lock.yaml`. Check out the branch, run `pnpm install`, and commit the lockfile so CI runs green. A
-  `vite-plus` bump and the matching `vite` alias
-  (`npm:@voidzero-dev/vite-plus-core`) land in separate PRs; add the alias bump to the first branch before
-  merging so the two stay in lockstep. Add a `patch` changeset for `@rivus/snorlax` when an update changes what it
-  bundles or its runtime behavior.
-- **Dependabot GitHub Actions PRs** move an action to its next major version tag (for example `actions/checkout@v7` to
-  `@v8`); minor and patch releases need no PR because workflows reference the major tag. `publish.yml` references the
-  shared release workflow's `v1` tag the same way, and that workflow pins the changesets actions itself. Merge them
-  for this repository's own workflows (`ci.yml`, `publish.yml`). Close PRs that touch `review.yml` or another file
-  synced from [PerfectPan/project-template](https://github.com/PerfectPan/project-template), with a comment that the
-  bump comes from upstream, and sync the file once upstream has it. Dependabot cannot ignore an action per file, so
-  these PRs keep appearing.
+- **Renovate npm PRs**: `renovate.json` enables the `npm` and `github-actions` managers, runs Mondays 00:00–06:59
+  `Asia/Shanghai`, waits 7 days after a release (`minimumReleaseAge`, above `pnpm-workspace.yaml`'s 1-day install
+  policy), uses `rangeStrategy: "bump"`, caps concurrent PRs at 5, and keeps `automerge: false` (`osvVulnerabilityAlerts`
+  is enabled). Minor/patch updates and majors are grouped separately; dedicated groups cover the `vite-plus` toolchain
+  (`packages:vitePlus` plus the `@voidzero-dev/vite-plus-core` catalog alias so `vite-plus` and `vite` stay in lockstep)
+  and `pnpm` (`packageManager`). Node runtime pins (`engines`, `devEngines.runtime`, `.node-version`, major `@types/node`)
+  and `@perfectpan/lint-config` (Git dependency upgraded alongside code fixes) are disabled for bot updates. Bot PRs
+  carry no changeset; add a `patch` changeset for `@rivus/snorlax` before merging when an update changes bundled output
+  or runtime behavior.
+- **Renovate GitHub Actions PRs**: minor/patch updates share one group and majors open individually. Workflows reference
+  actions by their major version tag (for example `actions/checkout@v7` to `@v8`), and `publish.yml` references the shared
+  release workflow's `@v1` tag. Merge updates for this repository's own workflows (`ci.yml`, `publish.yml`); keep `review.yml`
+  and template-synced files aligned with [PerfectPan/project-template](https://github.com/PerfectPan/project-template).
 
 ## Failure Recovery
 
